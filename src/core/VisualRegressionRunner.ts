@@ -58,13 +58,13 @@ export class VisualRegressionRunner {
             console.log(
               `${chalk.green('✓')} ${result.storyTitle} (${
                 result.storyId
-              }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`
+              }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
             );
           } else {
             console.log(
               `${chalk.red('✗')} ${result.storyTitle} (${
                 result.storyId
-              }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`
+              }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
             );
             if (result.error) {
               console.log(chalk.gray(`    ${result.error}`));
@@ -85,7 +85,7 @@ export class VisualRegressionRunner {
           console.log(
             `${chalk.red('✗')} ${failedResult.storyTitle} (${
               failedResult.storyId
-            }) ${chalk.gray('— ' + formatDuration(failedResult.durationMs))}`
+            }) ${chalk.gray('— ' + formatDuration(failedResult.durationMs))}`,
           );
           if (failedResult.error) {
             console.log(chalk.gray(`    ${failedResult.error}`));
@@ -93,10 +93,7 @@ export class VisualRegressionRunner {
           failures += 1;
         }
 
-        if (
-          this.config.maxFailures > 0 &&
-          failures >= this.config.maxFailures
-        ) {
+        if (this.config.maxFailures > 0 && failures >= this.config.maxFailures) {
           stopRequested = true;
           break;
         }
@@ -106,9 +103,7 @@ export class VisualRegressionRunner {
     await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
 
     if (this.config.maxFailures > 0 && failures >= this.config.maxFailures) {
-      console.log(
-        `Reached max failures (${this.config.maxFailures}). Stopping early.`
-      );
+      console.log(`Reached max failures (${this.config.maxFailures}). Stopping early.`);
     }
 
     return {
@@ -129,8 +124,7 @@ export class VisualRegressionRunner {
 
     try {
       // Set viewport
-      const viewportSize =
-        this.config.viewportSizes[this.config.defaultViewport];
+      const viewportSize = this.config.viewportSizes[this.config.defaultViewport];
       await page.setViewportSize(viewportSize);
 
       // Set timezone and locale
@@ -198,9 +192,8 @@ export class VisualRegressionRunner {
     if (this.config.includeStories && this.config.includeStories.length > 0) {
       filtered = filtered.filter((story) =>
         this.config.includeStories!.some(
-          (pattern) =>
-            story.id.includes(pattern) || story.title.includes(pattern)
-        )
+          (pattern) => story.id.includes(pattern) || story.title.includes(pattern),
+        ),
       );
     }
 
@@ -208,9 +201,8 @@ export class VisualRegressionRunner {
       filtered = filtered.filter(
         (story) =>
           !this.config.excludeStories!.some(
-            (pattern) =>
-              story.id.includes(pattern) || story.title.includes(pattern)
-          )
+            (pattern) => story.id.includes(pattern) || story.title.includes(pattern),
+          ),
       );
     }
 

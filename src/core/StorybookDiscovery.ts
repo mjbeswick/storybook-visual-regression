@@ -1,10 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import type {
-  StorybookIndex,
-  StorybookEntry,
-  VisualRegressionConfig,
-} from '../types/index.js';
+import type { StorybookIndex, StorybookEntry, VisualRegressionConfig } from '../types/index.js';
 
 export class StorybookDiscovery {
   constructor(private config: VisualRegressionConfig) {}
@@ -23,14 +19,12 @@ export class StorybookDiscovery {
       // Fallback to built files
       try {
         const indexFile = join(process.cwd(), 'storybook-static/index.json');
-        const indexData: StorybookIndex = JSON.parse(
-          readFileSync(indexFile, 'utf8')
-        );
+        const indexData: StorybookIndex = JSON.parse(readFileSync(indexFile, 'utf8'));
         return this.extractStoriesFromIndex(indexData);
       } catch (fallbackError) {
         console.error('Error reading Storybook data:', error);
         console.log(
-          'Make sure Storybook dev server is running or run "npm run build-storybook" first'
+          'Make sure Storybook dev server is running or run "npm run build-storybook" first',
         );
         throw new Error('Unable to discover stories from Storybook');
       }
@@ -56,9 +50,7 @@ export class StorybookDiscovery {
       // Fallback to built files
       try {
         const indexFile = join(process.cwd(), 'storybook-static/index.json');
-        const indexData: StorybookIndex = JSON.parse(
-          readFileSync(indexFile, 'utf8')
-        );
+        const indexData: StorybookIndex = JSON.parse(readFileSync(indexFile, 'utf8'));
         const entry = indexData.entries[storyId];
         return entry?.importPath;
       } catch (fallbackError) {
@@ -77,19 +69,15 @@ export class StorybookDiscovery {
     try {
       const storySource = readFileSync(
         join(process.cwd(), importPath.replace(/^\.\//, '')),
-        'utf8'
+        'utf8',
       );
 
       // Look for viewport configuration in story parameters
       const viewportMatch = storySource.match(
-        /globals\s*:\s*\{[^}]*viewport\s*:\s*\{[^}]*value\s*:\s*['"](\w+)['"][^}]*\}[^}]*\}/
+        /globals\s*:\s*\{[^}]*viewport\s*:\s*\{[^}]*value\s*:\s*['"](\w+)['"][^}]*\}[^}]*\}/,
       );
 
-      if (
-        viewportMatch &&
-        viewportMatch[1] &&
-        this.config.viewportSizes[viewportMatch[1]]
-      ) {
+      if (viewportMatch && viewportMatch[1] && this.config.viewportSizes[viewportMatch[1]]) {
         return viewportMatch[1];
       }
     } catch {
@@ -106,9 +94,8 @@ export class StorybookDiscovery {
     if (this.config.includeStories && this.config.includeStories.length > 0) {
       filtered = filtered.filter((story) =>
         this.config.includeStories!.some(
-          (pattern) =>
-            story.id.includes(pattern) || story.title.includes(pattern)
-        )
+          (pattern) => story.id.includes(pattern) || story.title.includes(pattern),
+        ),
       );
     }
 
@@ -117,9 +104,8 @@ export class StorybookDiscovery {
       filtered = filtered.filter(
         (story) =>
           !this.config.excludeStories!.some(
-            (pattern) =>
-              story.id.includes(pattern) || story.title.includes(pattern)
-          )
+            (pattern) => story.id.includes(pattern) || story.title.includes(pattern),
+          ),
       );
     }
 

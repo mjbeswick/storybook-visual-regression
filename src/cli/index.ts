@@ -45,9 +45,7 @@ async function runTests(options: any) {
     // Discovering stories
     const stories = await discovery.discoverStories();
 
-    console.log(
-      chalk.gray(`Found ${stories.length} stories. Running tests...`)
-    );
+    console.log(chalk.gray(`Found ${stories.length} stories. Running tests...`));
     const results = await runner.runTests();
 
     await runner.cleanup();
@@ -56,7 +54,7 @@ async function runTests(options: any) {
     console.log(
       `${chalk.bold('Results:')} ${results.passed}/${
         results.total
-      } passed ${chalk.gray('— ' + formatDuration(totalDuration))}`
+      } passed ${chalk.gray('— ' + formatDuration(totalDuration))}`,
     );
 
     if (results.failed > 0) {
@@ -70,18 +68,14 @@ async function runTests(options: any) {
           }
         });
 
-      console.log(
-        chalk.yellow('\n💡 To update snapshots, run with --update-snapshots')
-      );
+      console.log(chalk.yellow('\n💡 To update snapshots, run with --update-snapshots'));
       process.exit(1);
     } else {
       console.log(chalk.green('🎉 All tests passed!'));
     }
   } catch (error) {
     console.log(chalk.red('Test execution failed'));
-    console.error(
-      chalk.red(error instanceof Error ? error.message : 'Unknown error')
-    );
+    console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
     process.exit(1);
   } finally {
     // Ensure cleanup happens even if there's an error
@@ -175,7 +169,7 @@ test.describe('Storybook stories', () => {
       {
         stdio: 'inherit',
         env: process.env,
-      }
+      },
     );
     child.on('exit', (code) => {
       if (code === 0) resolve();
@@ -190,46 +184,19 @@ program
   .description('Run visual regression tests')
   .option('-p, --port <port>', 'Storybook server port', '9009')
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
-  .option(
-    '-o, --output <dir>',
-    'Output directory for results',
-    'visual-regression'
-  )
-  .option(
-    '-b, --browser <browser>',
-    'Browser to use (chromium|firefox|webkit)',
-    'chromium'
-  )
-  .option(
-    '-t, --threshold <number>',
-    'Visual difference threshold (0-1)',
-    '0.2'
-  )
+  .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
+  .option('-b, --browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
+  .option('-t, --threshold <number>', 'Visual difference threshold (0-1)', '0.2')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
   .option('--timeout <ms>', 'Test timeout in milliseconds', '30000')
   .option('--action-timeout <ms>', 'Action timeout in milliseconds', '5000')
-  .option(
-    '--navigation-timeout <ms>',
-    'Navigation timeout in milliseconds',
-    '10000'
-  )
-  .option(
-    '-c, --command <command>',
-    'Command to start Storybook server',
-    'npm run storybook'
-  )
-  .option(
-    '--server-timeout <ms>',
-    'Server startup timeout in milliseconds',
-    '60000'
-  )
+  .option('--navigation-timeout <ms>', 'Navigation timeout in milliseconds', '10000')
+  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
+  .option('--server-timeout <ms>', 'Server startup timeout in milliseconds', '60000')
   .option('--headless', 'Run in headless mode', true)
   .option('--headed', 'Run in headed mode (overrides headless)')
   .option('--disable-animations', 'Disable animations in screenshots', true)
-  .option(
-    '--enable-animations',
-    'Enable animations in screenshots (overrides disable-animations)'
-  )
+  .option('--enable-animations', 'Enable animations in screenshots (overrides disable-animations)')
   .option('--wait-network-idle', 'Wait for network idle before capturing', true)
   .option('--no-wait-network-idle', "Don't wait for network idle")
   .option('--content-stabilization', 'Wait for content to stabilize', true)
@@ -237,47 +204,26 @@ program
   .option(
     '--frozen-time <time>',
     'Frozen time for deterministic results',
-    '2024-01-15T10:30:00.000Z'
+    '2024-01-15T10:30:00.000Z',
   )
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
-  .option(
-    '--include <patterns>',
-    'Include stories matching patterns (comma-separated)'
-  )
-  .option(
-    '--exclude <patterns>',
-    'Exclude stories matching patterns (comma-separated)'
-  )
-  .option(
-    '--viewport <size>',
-    'Default viewport size (widthxheight)',
-    '1024x768'
-  )
+  .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
+  .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
+  .option('--viewport <size>', 'Default viewport size (widthxheight)', '1024x768')
   .option('--retries <number>', 'Number of retries on failure', '2')
   .option('--update-snapshots', 'Update snapshot files instead of comparing')
   .option('--grep <pattern>', 'Run tests matching pattern')
   .option('--reporter <reporter>', 'Test reporter (line|dot|json|html)', 'line')
-  .option(
-    '--use-playwright-reporter',
-    'Run via Playwright Test and pipe its output'
-  )
+  .option('--use-playwright-reporter', 'Run via Playwright Test and pipe its output')
   .option('--verbose', 'Verbose output')
-  .option(
-    '--max-failures <number>',
-    'Stop after N failures (<=0 disables)',
-    '3'
-  )
+  .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '3')
   .action(async (options) => runTests(options));
 
 program
   .command('install-browsers')
   .description('Install Playwright browsers')
-  .option(
-    '-b, --browser <browser>',
-    'Browser to install (chromium|firefox|webkit|all)',
-    'chromium'
-  )
+  .option('-b, --browser <browser>', 'Browser to install (chromium|firefox|webkit|all)', 'chromium')
   .action(async (options) => {
     const spinner = ora(`Installing ${options.browser} browser...`).start();
 
@@ -289,9 +235,7 @@ program
       spinner.succeed(`Successfully installed ${options.browser} browser`);
     } catch (error) {
       spinner.fail('Browser installation failed');
-      console.error(
-        chalk.red(error instanceof Error ? error.message : 'Unknown error')
-      );
+      console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
       process.exit(1);
     }
   });
@@ -302,30 +246,14 @@ program
   .description('Update visual regression snapshots')
   .option('-p, --port <port>', 'Storybook server port', '9009')
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
-  .option(
-    '-o, --output <dir>',
-    'Output directory for results',
-    'visual-regression'
-  )
-  .option(
-    '-b, --browser <browser>',
-    'Browser to use (chromium|firefox|webkit)',
-    'chromium'
-  )
+  .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
+  .option('-b, --browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
-  .option(
-    '-c, --command <command>',
-    'Command to start Storybook server',
-    'npm run storybook'
-  )
+  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
   .option('--grep <pattern>', 'Update snapshots for stories matching pattern')
-  .option(
-    '--max-failures <number>',
-    'Stop after N failures (<=0 disables)',
-    '3'
-  )
+  .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '3')
   .action(async (options) => {
     options.updateSnapshots = true;
     await runTests(options);
@@ -373,9 +301,7 @@ function createConfigFromOptions(options: any): VisualRegressionConfig {
     })(),
     excludeStories: options.exclude ? options.exclude.split(',') : undefined,
 
-    disableAnimations: options.enableAnimations
-      ? false
-      : options.disableAnimations,
+    disableAnimations: options.enableAnimations ? false : options.disableAnimations,
     waitForNetworkIdle: options.waitNetworkIdle,
     contentStabilization: options.contentStabilization,
     maxFailures: parseInt(options.maxFailures ?? '3'),
