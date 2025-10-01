@@ -1,0 +1,12 @@
+# build outputs
+/dist
+
+# deps
+/node_modules
+
+# lockfiles
+pnpm-lock.yaml
+yarn.lock
+
+# generated
+coverage
