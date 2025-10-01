@@ -1,0 +1,66 @@
+{
+  "name": "storybook-visual-regression",
+  "version": "1.0.0",
+  "description": "A comprehensive visual regression testing tool for Storybook",
+  "main": "dist/cli/index.js",
+  "type": "module",
+  "bin": {
+    "storybook-visual-regression": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && cp -r src/config dist/",
+    "build:watch": "tsc --watch && cp -r src/config dist/",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "prepublishOnly": "npm run build",
+    "postinstall": "playwright install chromium",
+    "example:basic": "npm run build && node dist/examples/basic.js",
+    "example:advanced": "npm run build && node dist/examples/advanced.js"
+  },
+  "keywords": [
+    "storybook",
+    "visual-regression",
+    "testing",
+    "playwright",
+    "screenshot",
+    "ui-testing",
+    "component-testing"
+  ],
+  "author": "Michael Beswick <mjbeswick@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mjbeswick/storybook-visual-regression.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mjbeswick/storybook-visual-regression/issues"
+  },
+  "homepage": "https://github.com/mjbeswick/storybook-visual-regression#readme",
+  "dependencies": {
+    "@playwright/test": "^1.55.1",
+    "commander": "^12.1.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@typescript-eslint/eslint-plugin": "^8.44.1",
+    "@typescript-eslint/parser": "^8.44.1",
+    "eslint": "^9.36.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.0.5"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
