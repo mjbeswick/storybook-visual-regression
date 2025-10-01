@@ -20,6 +20,7 @@
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
     "postinstall": "playwright install chromium",
     "example:basic": "npm run build && node dist/examples/basic.js",
     "example:advanced": "npm run build && node dist/examples/advanced.js"
