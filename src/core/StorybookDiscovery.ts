@@ -38,7 +38,7 @@ export class StorybookDiscovery {
         console.error('Error reading Storybook data:', error);
         console.log('\nTroubleshooting steps:');
         console.log('1. Make sure Storybook dev server is running:');
-        console.log(`   ${this.config.storybookCommand || 'npm run dev:ui'}`);
+        console.log(`   ${this.config.storybookCommand || 'npm run storybook'}`);
         console.log('2. Check if Storybook is running on the correct port:');
         console.log(`   Expected: ${this.config.storybookUrl}`);
         console.log('3. Or build Storybook first:');

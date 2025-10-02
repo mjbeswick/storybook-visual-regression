@@ -5,32 +5,37 @@ import chalk from 'chalk';
 import ora from 'ora';
 import type { VisualRegressionConfig } from '../types/index.js';
 import { createDefaultConfig } from '../config/defaultConfig.js';
+import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
 import execa from 'execa';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const program = new Command();
 
-function createConfigFromOptions(options: any): VisualRegressionConfig {
+async function createConfigFromOptions(options: any): Promise<VisualRegressionConfig> {
   const defaultConfig = createDefaultConfig();
+  const detector = new StorybookConfigDetector();
+
+  // Detect Storybook configuration from the project
+  const detectedConfig = await detector.detectAndMergeConfig(defaultConfig);
 
   // Construct proper URL with port
-  const port = parseInt(options.port) || defaultConfig.storybookPort;
+  const port = parseInt(options.port) || detectedConfig.storybookPort;
   const baseUrl = options.url || 'http://localhost';
   const storybookUrl = baseUrl.includes(`:${port}`) ? baseUrl : `${baseUrl}:${port}`;
 
   return {
-    ...defaultConfig,
+    ...detectedConfig,
     storybookUrl,
     storybookPort: port,
-    storybookCommand: options.command || defaultConfig.storybookCommand,
-    workers: parseInt(options.workers) || defaultConfig.workers,
-    retries: parseInt(options.retries) || defaultConfig.retries,
-    timeout: parseInt(options.timeout) || defaultConfig.timeout,
-    serverTimeout: parseInt(options.serverTimeout) || defaultConfig.serverTimeout,
+    storybookCommand: options.command || detectedConfig.storybookCommand,
+    workers: parseInt(options.workers) || detectedConfig.workers,
+    retries: parseInt(options.retries) || detectedConfig.retries,
+    timeout: parseInt(options.timeout) || detectedConfig.timeout,
+    serverTimeout: parseInt(options.serverTimeout) || detectedConfig.serverTimeout,
     headless: options.headless !== 'false',
-    timezone: options.timezone || defaultConfig.timezone,
-    locale: options.locale || defaultConfig.locale,
+    timezone: options.timezone || detectedConfig.timezone,
+    locale: options.locale || detectedConfig.locale,
   };
 }
 
@@ -126,8 +131,8 @@ function parseCommand(command: string): { command: string; args: string[] } {
 }
 
 async function runWithPlaywrightReporter(options: any): Promise<void> {
-  const config = createConfigFromOptions(options);
-  const parsedCommand = parseCommand(config.storybookCommand ?? 'npm run dev:ui');
+  const config = await createConfigFromOptions(options);
+  const parsedCommand = parseCommand(config.storybookCommand ?? 'npm run storybook');
 
   // Set environment variables for Playwright
   process.env.PLAYWRIGHT_RETRIES = config.retries.toString();
@@ -216,7 +221,7 @@ program
   .option('--timeout <ms>', 'Test timeout in milliseconds', '30000')
   .option('--action-timeout <ms>', 'Action timeout in milliseconds', '5000')
   .option('--navigation-timeout <ms>', 'Navigation timeout in milliseconds', '10000')
-  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run dev:ui')
+  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
   .option('--server-timeout <ms>', 'Server startup timeout in milliseconds', '120000')
   .option('--headless', 'Run in headless mode', true)
   .option('--headed', 'Run in headed mode (overrides headless)')
@@ -278,7 +283,7 @@ program
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
-  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run dev:ui')
+  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
   .option('--grep <pattern>', 'Update snapshots for stories matching pattern')
   .option('--debug', 'Enable debug logging')
   .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')

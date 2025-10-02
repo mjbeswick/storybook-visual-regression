@@ -1,6 +1,12 @@
 ## storybook-visual-regression
 
-Visual regression testing for Storybook using Playwright. Automatically discovers stories from a running Storybook dev server or a built `storybook-static` folder, captures deterministic screenshots, and reports pass/fail with a simple list-style output. Includes fast parallel execution, retries, fail-fast, and optional Playwright reporter integration.
+A comprehensive visual regression testing tool for any Storybook project using Playwright. Automatically discovers stories from a running Storybook dev server or a built `storybook-static` folder, captures deterministic screenshots, and reports pass/fail with a simple list-style output. Includes fast parallel execution, retries, fail-fast, and optional Playwright reporter integration.
+
+The tool automatically detects your Storybook configuration including:
+
+- Port from package.json scripts
+- Storybook command from package.json
+- Viewport configurations from Storybook config files
 
 ### Requirements
 
@@ -29,7 +35,7 @@ Start Storybook automatically and test:
 
 ```bash
 npx storybook-visual-regression test \
-  --command "npm run dev:ui" \
+  --command "npm run storybook" \
   --url http://localhost \
   --port 9009
 ```
@@ -69,7 +75,7 @@ Common options (defaults shown):
 
 - `-u, --url <url>`: Storybook server URL (default `http://localhost`)
 - `-p, --port <port>`: Storybook port (default `9009`)
-- `-c, --command <cmd>`: command to start Storybook (default `npm run dev:ui`)
+- `-c, --command <cmd>`: command to start Storybook (default `npm run storybook`)
 - `--server-timeout <ms>`: wait for server (default `60000`)
 - `-o, --output <dir>`: results root (default `visual-regression`)
   - Snapshots: `<output>/snapshots`
@@ -101,14 +107,14 @@ Common options (defaults shown):
 - Run locally with a dev server you start yourself:
 
   ```bash
-  npm run dev:ui &
+  npm run storybook &
   npx storybook-visual-regression test --url http://localhost --port 9009
   ```
 
 - Let the tool start Storybook for you:
 
   ```bash
-  npx storybook-visual-regression test --command "npm run dev:ui" --server-timeout 90000
+  npx storybook-visual-regression test --command "npm run storybook" --server-timeout 90000
   ```
 
 - Update only stories matching a pattern:
@@ -157,7 +163,7 @@ jobs:
       - run: npx storybook-visual-regression install-browsers --browser chromium
       - run: |
           npx storybook-visual-regression test \
-            --command "npm run dev:ui" \
+            --command "npm run storybook" \
             --url http://localhost \
             --port 9009 \
             --workers 4 \

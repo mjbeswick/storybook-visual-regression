@@ -5,29 +5,29 @@ export function createDefaultConfig(): VisualRegressionConfig {
     // Storybook server configuration
     storybookUrl: 'http://localhost:9009',
     storybookPort: 9009,
-    storybookCommand: 'npm run dev:ui',
+    storybookCommand: 'npm run storybook',
 
     // Test configuration
     viewportSizes: {
       mobile: { width: 375, height: 667 },
       tablet: { width: 768, height: 1024 },
-      desktop: { width: 1920, height: 1080 },
+      desktop: { width: 1024, height: 768 },
     },
     defaultViewport: 'desktop',
     discoverViewports: true,
 
     // Screenshot configuration
     threshold: 0.2,
-    snapshotPath: './visual-regression-snapshots',
-    resultsPath: './visual-regression-results',
+    snapshotPath: './visual-regression/snapshots',
+    resultsPath: './visual-regression/results',
 
     // Browser configuration
     browser: 'chromium',
     headless: true,
 
     // Timing configuration
-    frozenTime: '2023-01-01T00:00:00Z',
-    timezone: 'UTC',
+    frozenTime: '2024-01-15T10:30:00.000Z',
+    timezone: 'Europe/London',
     locale: 'en-GB',
 
     // Test execution
@@ -37,7 +37,7 @@ export function createDefaultConfig(): VisualRegressionConfig {
     serverTimeout: 120000, // Increased to 2 minutes
 
     // Fail-fast
-    maxFailures: 3,
+    maxFailures: 1,
 
     // Story filtering
     includeStories: [],

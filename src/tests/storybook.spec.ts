@@ -7,17 +7,20 @@ import { expect, test } from '@playwright/test';
 let storyIds: string[] = [];
 // Map storyId -> importPath (path to the .stories.tsx file) when available
 const storyImportPaths: Record<string, string> = {};
-// Viewport sizes mirrored from .storybook/preview.tsx
-const viewportSizes: Record<string, { width: number; height: number }> = {
-  unattended: { width: 1024, height: 768 },
-  attended: { width: 1360, height: 768 },
-  customer: { width: 1920, height: 1200 },
+// Default viewport configurations - will be overridden by discovered configurations
+const defaultViewportSizes: Record<string, { width: number; height: number }> = {
+  mobile: { width: 375, height: 667 },
+  tablet: { width: 768, height: 1024 },
+  desktop: { width: 1024, height: 768 },
 };
-const defaultViewportKey = 'unattended';
+const defaultViewportKey = 'desktop';
+
+// Get Storybook URL from environment or use default
+const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:9009';
 
 try {
   // Try to get stories from dev server first
-  const response = await fetch('http://localhost:9009/index.json');
+  const response = await fetch(`${storybookUrl}/index.json`);
   if (response.ok) {
     const indexData = await response.json();
     const entries = indexData.entries || {};
@@ -46,7 +49,7 @@ try {
     }
   } catch {
     console.error('Error reading Storybook data:', error);
-    console.log('Make sure Storybook dev server is running or run "npm run build:ui" first');
+    console.log('Make sure Storybook dev server is running or run "npm run build-storybook" first');
     process.exit(1);
   }
 }
@@ -65,7 +68,7 @@ storyIds.forEach((storyId: string) => {
         const match = storySource.match(
           /globals\s*:\s*\{[^}]*viewport\s*:\s*\{[^}]*value\s*:\s*['"](\w+)['"][^}]*\}[^}]*\}/,
         );
-        if (match && match[1] && viewportSizes[match[1]]) {
+        if (match && match[1] && defaultViewportSizes[match[1]]) {
           viewportKey = match[1];
         }
       } catch {
@@ -73,7 +76,7 @@ storyIds.forEach((storyId: string) => {
       }
     }
 
-    const size = viewportSizes[viewportKey] || viewportSizes[defaultViewportKey];
+    const size = defaultViewportSizes[viewportKey] || defaultViewportSizes[defaultViewportKey];
     await page.setViewportSize(size);
 
     // Freeze time to ensure consistent timestamps and stable timer-based updates
@@ -81,7 +84,7 @@ storyIds.forEach((storyId: string) => {
       time: new Date('2024-01-15T10:30:00.000Z'),
     });
 
-    const storyUrl = `http://localhost:9009/iframe.html?id=${storyId}&viewMode=story`;
+    const storyUrl = `${storybookUrl}/iframe.html?id=${storyId}&viewMode=story`;
 
     try {
       // Navigate to the story's iframe
