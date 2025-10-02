@@ -20,6 +20,8 @@
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
     "prepublishOnly": "npm run build",
+    "storybook": "storybook dev -p 9009 --ci",
+    "build-storybook": "storybook build",
     "prepare": "npm run build",
     "postinstall": "playwright install chromium",
     "example:basic": "npm run build && node dist/examples/basic.js",
@@ -50,10 +52,16 @@
     "@playwright/test": ">=1.40.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
-    "ora": "^8.1.0"
+    "ora": "^8.1.0",
+    "react-barcode": "^1.6.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@storybook/addon-essentials": "^8.6.14",
+    "@storybook/addon-interactions": "^8.6.14",
+    "@storybook/react": "^8.6.14",
+    "@storybook/react-vite": "^8.6.14",
+    "@storybook/test-runner": "^0.19.1",
     "@types/node": "^24.5.2",
     "@typescript-eslint/eslint-plugin": "^8.45.0",
     "@typescript-eslint/parser": "^8.45.0",
@@ -61,6 +69,9 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
     "prettier": "^3.6.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "storybook": "^8.6.14",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.45.0",
     "vitest": "^3.0.5"

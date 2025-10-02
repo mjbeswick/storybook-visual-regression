@@ -38,6 +38,17 @@ The CLI has two main paths:
 
 **Always prefer the Playwright reporter path** as it handles webServer properly.
 
+### 3.1. Configuration vs Command Line Options
+
+**CRITICAL**: Only use Playwright configuration to pass options, not command line arguments.
+
+- ✅ **Correct**: Pass options via environment variables to Playwright config
+- ✅ **Correct**: Use `updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true'` in config
+- ❌ **Wrong**: Use `--update-snapshots` command line argument
+- ❌ **Wrong**: Use `--workers` command line argument
+
+**Why**: Configuration-based approach is more maintainable and follows Playwright best practices.
+
 ### 4. Error Handling Patterns
 
 - Use `reuseExistingServer: true` in webServer config
@@ -60,6 +71,8 @@ The CLI has two main paths:
 - Push tags with `git push --tags`
 - **NEVER publish automatically - wait for user to explicitly ask for publishing**
 - Only commit and push changes, do not run `npm publish` unless requested
+- **NEVER commit code until you have tested that it works**
+- Test changes locally before committing to ensure functionality
 
 ### 7. Common Issues and Solutions
 
@@ -82,16 +95,16 @@ The CLI has two main paths:
 
 ```bash
 # Basic test
-storybook-visual-regression test -c "npm run storybook"
+storybook-visual-regression test -c "npm run dev:ui"
 
 # With specific port
-storybook-visual-regression test -c "npm run storybook" -p 6006
+storybook-visual-regression test -c "npm run dev:ui" -p 6006
 
 # Update snapshots
-storybook-visual-regression update -c "npm run storybook"
+storybook-visual-regression update -c "npm run dev:ui"
 
 # Use Playwright reporter (recommended)
-storybook-visual-regression test -c "npm run storybook" --use-playwright-reporter
+storybook-visual-regression test -c "npm run dev:ui" --use-playwright-reporter
 ```
 
 ### 9. Development Workflow
@@ -115,3 +128,5 @@ storybook-visual-regression test -c "npm run storybook" --use-playwright-reporte
 - **Error context**: Provide helpful troubleshooting steps
 - **Cleanup**: Always clean up processes and temp files
 - **Playwright reporter**: Prefer the Playwright reporter path over direct CLI
+- **Git hygiene**: Always update .gitignore when adding new generated files or directories
+- **Documentation**: Update README.md when making significant changes to functionality or usage

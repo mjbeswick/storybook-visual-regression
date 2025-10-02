@@ -28,6 +28,8 @@ export type VisualRegressionConfig = {
   // Test configuration
   viewportSizes: ViewportConfig;
   defaultViewport: string;
+  // Whether to dynamically discover viewport configurations from Storybook
+  discoverViewports?: boolean;
 
   // Screenshot configuration
   threshold: number;

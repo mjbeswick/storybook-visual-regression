@@ -1,0 +1,40 @@
+/* Reset and base styles */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Nunito Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  margin: 0;
+}
+
+/* Barcode component styles */
+.barcode-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: #fff;
+  font-family: 'Courier New', monospace;
+}
+
+.barcode {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 5px;
+}
+
+.barcode-bar {
+  display: inline-block;
+  margin-right: 1px;
+}
+
+.barcode-text {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  text-align: center;
+  letter-spacing: 1px;
+}

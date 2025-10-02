@@ -5,7 +5,7 @@ export function createDefaultConfig(): VisualRegressionConfig {
     // Storybook server configuration
     storybookUrl: 'http://localhost:9009',
     storybookPort: 9009,
-    storybookCommand: 'npm run storybook',
+    storybookCommand: 'npm run dev:ui',
 
     // Test configuration
     viewportSizes: {
@@ -14,6 +14,7 @@ export function createDefaultConfig(): VisualRegressionConfig {
       desktop: { width: 1920, height: 1080 },
     },
     defaultViewport: 'desktop',
+    discoverViewports: true,
 
     // Screenshot configuration
     threshold: 0.2,
@@ -33,7 +34,7 @@ export function createDefaultConfig(): VisualRegressionConfig {
     workers: 12,
     retries: 2,
     timeout: 30000,
-    serverTimeout: 60000,
+    serverTimeout: 120000, // Increased to 2 minutes
 
     // Fail-fast
     maxFailures: 3,

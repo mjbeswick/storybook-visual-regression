@@ -36,6 +36,20 @@ export class VisualRegressionRunner {
     }
 
     const discovery = new StorybookDiscovery(this.config);
+
+    // Discover viewport configurations if enabled
+    if (this.config.discoverViewports) {
+      console.log('Discovering viewport configurations from Storybook...');
+      const discoveredViewports = await discovery.discoverViewportConfigurations();
+      if (discoveredViewports && Object.keys(discoveredViewports).length > 0) {
+        this.config.viewportSizes = discoveredViewports;
+        console.log(
+          `Discovered ${Object.keys(discoveredViewports).length} viewport configurations:`,
+          Object.keys(discoveredViewports).join(', '),
+        );
+      }
+    }
+
     const stories = await discovery.discoverStories();
 
     const filteredStories = this.filterStories(stories);
