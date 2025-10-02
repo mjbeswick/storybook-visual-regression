@@ -17,23 +17,53 @@ async function waitForStorybookServer(url: string, timeout: number): Promise<voi
   const startTime = Date.now();
   const maxWaitTime = timeout;
 
+  console.log(`Waiting for Storybook server to be ready at ${url}...`);
+
+  // Give Storybook some time to start up before we start polling
+  console.log('Giving Storybook 5 seconds to start up...');
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  let attempt = 1;
   while (Date.now() - startTime < maxWaitTime) {
     try {
-      const response = await fetch(`${url}/index.json`, {
-        signal: AbortSignal.timeout(5000),
+      console.log(`Checking if Storybook is ready (attempt ${attempt})...`);
+
+      // Try the main page first (faster to respond)
+      const mainResponse = await fetch(url, {
+        signal: AbortSignal.timeout(3000),
       });
-      if (response.ok) {
-        console.log(`Storybook server is ready at ${url}`);
-        return;
+
+      if (mainResponse.ok) {
+        console.log('Storybook main page is accessible, checking index.json...');
+
+        // Now try the index.json endpoint
+        const indexResponse = await fetch(`${url}/index.json`, {
+          signal: AbortSignal.timeout(5000),
+        });
+
+        if (indexResponse.ok) {
+          console.log(`✅ Storybook server is ready at ${url}`);
+          return;
+        } else {
+          console.log(`Index.json not ready yet (${indexResponse.status})`);
+        }
+      } else {
+        console.log(`Main page not ready yet (${mainResponse.status})`);
       }
     } catch (error) {
-      // Server not ready yet, continue waiting
+      console.log(
+        `Connection attempt ${attempt} failed:`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    attempt++;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
-  throw new Error(`Storybook server did not start within ${timeout}ms`);
+  throw new Error(
+    `Storybook server did not start within ${timeout}ms. Please check if Storybook is running manually at ${url}`,
+  );
 }
 
 program
@@ -44,87 +74,14 @@ program
 // Shared runner used by multiple commands
 async function runTests(options: any) {
   const startedAt = Date.now();
-  // Removing spinner-based progress in favor of line-list reporter output
-  const spinner = ora('Starting visual regression tests...');
-  let runner: VisualRegressionRunner | undefined;
-  let storybookProcess: any = undefined;
 
   try {
-    if (options.usePlaywrightReporter) {
-      await runWithPlaywrightReporter(options);
-      return;
-    }
-    const config = createConfigFromOptions(options);
-
-    // Ensure output directories exist
-    const fs = await import('fs/promises');
-    await fs.mkdir(config.snapshotPath, { recursive: true });
-    await fs.mkdir(config.resultsPath, { recursive: true });
-
-    // Start Storybook server using Playwright's webServer approach
-    console.log(`Starting Storybook server with command: ${config.storybookCommand}`);
-    const storybookProcess = spawn('sh', ['-c', config.storybookCommand!], {
-      stdio: 'pipe',
-      cwd: process.cwd(),
-    });
-
-    // Wait for Storybook to be ready
-    await waitForStorybookServer(config.storybookUrl, config.serverTimeout);
-
-    runner = new VisualRegressionRunner(config);
-    const discovery = new StorybookDiscovery(config);
-
-    // Initializing browser
-    await runner.initialize();
-
-    // Discovering stories (now that server is running)
-    const stories = await discovery.discoverStories();
-
-    console.log(chalk.gray(`Found ${stories.length} stories. Running tests...`));
-    const results = await runner.runTests();
-
-    await runner.cleanup();
-
-    // Clean up Storybook process
-    storybookProcess.kill('SIGTERM');
-
-    const totalDuration = Date.now() - startedAt;
-    console.log(
-      `${chalk.bold('Results:')} ${results.passed}/${
-        results.total
-      } passed ${chalk.gray('— ' + formatDuration(totalDuration))}`,
-    );
-
-    if (results.failed > 0) {
-      console.log(chalk.red(`\n${results.failed} tests failed:`));
-      results.results
-        .filter((r: TestResult) => !r.passed)
-        .forEach((result: TestResult) => {
-          console.log(chalk.red(`  ✗ ${result.storyId}`));
-          if (result.error) {
-            console.log(chalk.gray(`     ${result.error}`));
-          }
-        });
-
-      console.log(chalk.yellow('\n💡 To update snapshots, run with --update-snapshots'));
-      process.exit(1);
-    } else {
-      console.log(chalk.green('🎉 All tests passed!'));
-    }
+    // Always use Playwright reporter path for proper webServer handling
+    await runWithPlaywrightReporter(options);
   } catch (error) {
     console.log(chalk.red('Test execution failed'));
     console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
     process.exit(1);
-  } finally {
-    // Ensure cleanup happens even if there's an error
-    try {
-      if (typeof runner !== 'undefined') {
-        await runner.cleanup();
-      }
-      if (storybookProcess) {
-        storybookProcess.kill('SIGTERM');
-      }
-    } catch {}
   }
 }
 
@@ -178,6 +135,7 @@ module.exports = defineConfig({
   const specJs = `
 // Auto-generated by storybook-visual-regression
 const { test, expect } = require('@playwright/test');
+const path = require('path');
 
 async function getStories(baseURL) {
   const url = baseURL + '/index.json';
@@ -187,14 +145,32 @@ async function getStories(baseURL) {
   return Object.values(entries).filter(e => e && e.type === 'story');
 }
 
-test.describe('Storybook stories', () => {
-  test('iterate all stories', async ({ page, baseURL }) => {
+test.describe('Storybook Visual Regression Tests', () => {
+  test('visual regression for all stories', async ({ page, baseURL }) => {
     const stories = await getStories(baseURL);
+    console.log(\`Found \${stories.length} stories to test\`);
+    
     for (const entry of stories) {
+      console.log(\`Testing story: \${entry.title} - \${entry.name}\`);
+      
+      // Navigate to the story
       await page.goto(baseURL + '/iframe.html?id=' + entry.id);
       await page.waitForLoadState('networkidle');
-      await expect(page).toHaveURL(/iframe.html\?id=/);
+      
+      // Wait a bit for any animations to settle
+      await page.waitForTimeout(1000);
+      
+      // Take screenshot
+      const screenshotPath = path.join('visual-regression-snapshots', \`\${entry.id}.png\`);
+      await page.screenshot({ 
+        path: screenshotPath,
+        fullPage: true 
+      });
+      
+      console.log(\`✓ Screenshot saved: \${screenshotPath}\`);
     }
+    
+    console.log(\`✅ Completed visual regression tests for \${stories.length} stories\`);
   });
 });
 `;

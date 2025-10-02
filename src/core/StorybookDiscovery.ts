@@ -8,12 +8,12 @@ export class StorybookDiscovery {
   async discoverStories(): Promise<StorybookEntry[]> {
     try {
       console.log(`Connecting to Storybook at ${this.config.storybookUrl}`);
-      
+
       // Get stories from dev server
       const response = await fetch(`${this.config.storybookUrl}/index.json`, {
         signal: AbortSignal.timeout(10000), // 10 second timeout
       });
-      
+
       if (response.ok) {
         const indexData: StorybookIndex = await response.json();
         console.log(`Successfully loaded stories from ${this.config.storybookUrl}`);
