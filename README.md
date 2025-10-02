@@ -81,10 +81,12 @@ Common options (defaults shown):
   - Snapshots: `<output>/snapshots`
   - Results: `<output>/results`
 - `-w, --workers <n>`: parallel workers (default `12`)
-- `--retries <n>`: retries on failure (default `2`)
+- `--retries <n>`: retries on failure (default `0`)
 - `--max-failures <n>`: stop early after N failures (default `1`, <=0 disables)
 - `--timezone <tz>`: e.g. `Europe/London` (default `Europe/London`)
 - `--locale <bcp47>`: e.g. `en-GB` (default `en-GB`)
+- `--reporter <reporter>`: Playwright reporter (list|line|dot|json|junit) (default `list`)
+- `--quiet`: suppress verbose failure output, show only test progress
 - `--debug`: print environment information before running Playwright
 
 ### Example workflows
@@ -108,9 +110,15 @@ Common options (defaults shown):
   npx storybook-visual-regression update --grep button
   ```
 
-- Use Playwright’s reporter (same discovery, delegated execution):
+- Run with quiet output (suppress verbose failure details):
   ```bash
-  npx storybook-visual-regression test --use-playwright-reporter --reporter list
+  npx storybook-visual-regression test --quiet
+  ```
+
+- Use different Playwright reporters:
+  ```bash
+  npx storybook-visual-regression test --reporter line
+  npx storybook-visual-regression test --reporter dot
   ```
 
 ### Outputs
@@ -161,6 +169,8 @@ jobs:
 - Playwright not installed → Add `@playwright/test` and run `npx storybook-visual-regression install-browsers`.
 - Flaky screenshots → Use `--disable-animations`, `--wait-network-idle`, increase `--timeout`, or set `--frozen-time` and a fixed `--timezone`/`--locale`.
 - Exiting early → Increase or disable `--max-failures` (set `<= 0`).
+- Storybook server stops during tests → Use `--max-failures 0` to prevent early termination, or check for port conflicts.
+- Verbose failure output → Use `--quiet` flag to suppress detailed error messages and see only test progress.
 
 ### License
 
