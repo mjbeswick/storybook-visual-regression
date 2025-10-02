@@ -24,9 +24,32 @@ async function createConfigFromOptions(
   const detectedConfig = await detector.detectAndMergeConfig(defaultConfig);
 
   // Construct proper URL with port
-  const port = parseInt(options.port) || detectedConfig.storybookPort;
-  const baseUrl = options.url || 'http://localhost';
-  const storybookUrl = baseUrl.includes(`:${port}`) ? baseUrl : `${baseUrl}:${port}`;
+  // 1) Prefer explicit --port option
+  // 2) Otherwise, if --url contains an explicit port, infer it
+  // 3) Fallback to detectedConfig.storybookPort
+  const urlFromOptions: string | undefined = options.url;
+  const inferredPortFromUrl = (() => {
+    if (!urlFromOptions) return undefined;
+    try {
+      const parsed = new URL(urlFromOptions);
+      return parsed.port ? parseInt(parsed.port) : undefined;
+    } catch {
+      // If URL() fails (e.g. missing protocol), best-effort regex to capture :<port>
+      const match = String(urlFromOptions).match(/:(\d{2,5})(?:\/?|$)/);
+      return match ? parseInt(match[1]) : undefined;
+    }
+  })();
+
+  const port = Number.isInteger(parseInt(options.port))
+    ? parseInt(options.port)
+    : inferredPortFromUrl ?? detectedConfig.storybookPort;
+
+  const baseUrl = urlFromOptions || 'http://localhost';
+  const storybookUrl = (() => {
+    // If url explicitly specifies a port, keep it as-is. Else append inferred/selected port.
+    if (inferredPortFromUrl) return baseUrl;
+    return baseUrl.includes(`:${port}`) ? baseUrl : `${baseUrl.replace(/\/$/, '')}:${port}`;
+  })();
 
   return {
     ...detectedConfig,
@@ -138,7 +161,35 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
 
   const config = await createConfigFromOptions(options, originalCwd);
   const storybookCommand = config.storybookCommand || 'npm run storybook';
-  const storybookLaunchCommand = `${storybookCommand} -- --ci --port ${config.storybookPort}`;
+
+  // Build the Storybook launch command while:
+  // - Ensuring --ci is present if not already
+  // - Appending --port only when not already specified in the provided command
+  function buildStorybookLaunchCommand(baseCommand: string, targetPort: number): string {
+    const hasPortFlag = /(\s|^)(-p|--port)(\s|=)/.test(baseCommand);
+    const hasCiFlag = /(\s|^)--ci(\s|$)/.test(baseCommand);
+
+    const extraArgs: string[] = [];
+    if (!hasCiFlag) extraArgs.push('--ci');
+    if (!hasPortFlag && Number.isFinite(targetPort)) extraArgs.push('--port', String(targetPort));
+
+    if (extraArgs.length === 0) return baseCommand;
+
+    // If using npm/yarn/pnpm run, inject separator " -- " before args (unless already present)
+    const isRunnerScript = /\b(npm|pnpm|yarn)\b.*\brun\b/.test(baseCommand);
+    const hasSeparator = /\s--\s/.test(baseCommand);
+
+    if (isRunnerScript && !hasSeparator) {
+      return `${baseCommand} -- ${extraArgs.join(' ')}`;
+    }
+    // Otherwise append with a space
+    return `${baseCommand} ${extraArgs.join(' ')}`;
+  }
+
+  const storybookLaunchCommand = buildStorybookLaunchCommand(
+    storybookCommand,
+    config.storybookPort,
+  );
 
   // Set environment variables for Playwright
   process.env.PLAYWRIGHT_RETRIES = config.retries.toString();
@@ -196,8 +247,8 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
     const child = execa('npx', playwrightArgs, {
       cwd: projectRoot, // Run from the main project directory where CLI is installed
       stdin: 'inherit',
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdout: 'inherit',
+      stderr: 'inherit',
       // Force Playwright to use absolute paths and not create its own config
       env: {
         ...process.env,
@@ -221,8 +272,7 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
       },
     });
 
-    child.stdout?.pipe(process.stdout);
-    child.stderr?.pipe(process.stderr);
+    // stdio inherited; no manual piping required
 
     await child;
 
