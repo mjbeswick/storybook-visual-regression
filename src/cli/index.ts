@@ -137,16 +137,40 @@ module.exports = defineConfig({
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 
+async function waitForStorybookIndex(baseURL, timeout = 30000) {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < timeout) {
+    try {
+      const url = baseURL + '/index.json';
+      const res = await fetch(url);
+      
+      if (res.ok) {
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          return data;
+        }
+      }
+    } catch (error) {
+      // Continue waiting
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  throw new Error('Storybook index.json not available after timeout');
+}
+
 async function getStories(baseURL) {
-  const url = baseURL + '/index.json';
-  const res = await fetch(url);
-  const data = await res.json();
+  const data = await waitForStorybookIndex(baseURL);
   const entries = data.entries || {};
   return Object.values(entries).filter(e => e && e.type === 'story');
 }
 
 test.describe('Storybook Visual Regression Tests', () => {
   test('visual regression for all stories', async ({ page, baseURL }) => {
+    console.log('Waiting for Storybook to be ready...');
     const stories = await getStories(baseURL);
     console.log(\`Found \${stories.length} stories to test\`);
     
