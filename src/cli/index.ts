@@ -34,7 +34,10 @@ type CliOptions = {
   browser?: string;
 };
 
-async function createConfigFromOptions(options: CliOptions, cwd: string): Promise<VisualRegressionConfig> {
+async function createConfigFromOptions(
+  options: CliOptions,
+  cwd: string,
+): Promise<VisualRegressionConfig> {
   const defaultConfig = createDefaultConfig();
   const detector = new StorybookConfigDetector(cwd);
 
@@ -137,7 +140,7 @@ async function _waitForStorybookServer(url: string, timeout: number): Promise<vo
       } else {
         console.log(`Main page not ready yet (${mainResponse.status})`);
       }
-    } catch (_error) {
+    } catch (error) {
       console.log(
         `Connection attempt ${attempt} failed:`,
         error instanceof Error ? error.message : String(error),
@@ -167,7 +170,7 @@ async function runTests(options: CliOptions): Promise<void> {
     await runWithPlaywrightReporter(options);
   } catch (error) {
     console.log(chalk.red('Test execution failed'));
-    console.error(chalk.red(_error instanceof Error ? _error.message : 'Unknown error'));
+    console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
     process.exit(1);
   }
 }
@@ -424,7 +427,8 @@ program
 
     try {
       const { execSync } = await import('child_process');
-      const browser = (options as CliOptions).browser === 'all' ? '' : (options as CliOptions).browser;
+      const browser =
+        (options as CliOptions).browser === 'all' ? '' : (options as CliOptions).browser;
       execSync(`playwright install ${browser}`, { stdio: 'inherit' });
 
       spinner.succeed(`Successfully installed ${(options as CliOptions).browser} browser`);
@@ -462,7 +466,8 @@ program
   .action(async (options) => {
     // Enable snapshot updates only via this command
     process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = 'true';
-    if ((options as CliOptions).reporter) process.env.PLAYWRIGHT_REPORTER = String((options as CliOptions).reporter);
+    if ((options as CliOptions).reporter)
+      process.env.PLAYWRIGHT_REPORTER = String((options as CliOptions).reporter);
     await runTests(options as CliOptions);
   });
 

@@ -62,7 +62,10 @@ function loadStorybookFromStatic(): StorybookIndex {
   return data;
 }
 
-function extractStoryMetadata(data: StorybookIndex): Record<string, string> {
+function extractStoryMetadata(data: StorybookIndex): {
+  storyIds: string[];
+  importPaths: Record<string, string>;
+} {
   const entries = data.entries ?? {};
   const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
   const importPaths: Record<string, string> = {};

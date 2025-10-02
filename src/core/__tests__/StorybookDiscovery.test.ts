@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StorybookDiscovery } from '../StorybookDiscovery.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { VisualRegressionConfig, StorybookIndex } from '../../types';
+import { VisualRegressionConfig, StorybookIndex, StorybookEntry } from '../../types';
 
 // Mock fs functions
 vi.mock('fs', async () => {
@@ -253,8 +253,11 @@ describe('StorybookDiscovery', () => {
         entries: {
           'malformed-entry': {
             id: 'malformed-entry',
+            title: '',
+            name: '',
+            type: 'story' as const,
             // Missing required fields
-          } as unknown,
+          } as StorybookEntry,
         },
       };
 

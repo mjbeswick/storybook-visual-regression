@@ -21,7 +21,7 @@ function _parseJsonEnv<T>(key: string, fallback: T): T {
 
   try {
     return JSON.parse(value) as T;
-  } catch (_error) {
+  } catch (error) {
     console.warn(
       `⚠️  Unable to parse environment variable ${key}:`,
       error instanceof Error ? error.message : String(error),
