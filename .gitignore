@@ -7,3 +7,4 @@ dist/
 .env.*
 # OS
 .DS_Store
+test/visual-regression/

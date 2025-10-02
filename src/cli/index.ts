@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
+import { existsSync, rmSync } from 'fs';
 import type { VisualRegressionConfig } from '../types/index.js';
 import { createDefaultConfig } from '../config/defaultConfig.js';
 import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
@@ -12,9 +13,12 @@ import { dirname, join } from 'path';
 
 const program = new Command();
 
-async function createConfigFromOptions(options: any): Promise<VisualRegressionConfig> {
+async function createConfigFromOptions(
+  options: any,
+  cwd: string,
+): Promise<VisualRegressionConfig> {
   const defaultConfig = createDefaultConfig();
-  const detector = new StorybookConfigDetector();
+  const detector = new StorybookConfigDetector(cwd);
 
   // Detect Storybook configuration from the project
   const detectedConfig = await detector.detectAndMergeConfig(defaultConfig);
@@ -31,9 +35,9 @@ async function createConfigFromOptions(options: any): Promise<VisualRegressionCo
     storybookCommand: options.command || detectedConfig.storybookCommand,
     workers: parseInt(options.workers) || detectedConfig.workers,
     retries: parseInt(options.retries) || detectedConfig.retries,
-    timeout: parseInt(options.timeout) || detectedConfig.timeout,
-    serverTimeout: parseInt(options.serverTimeout) || detectedConfig.serverTimeout,
-    headless: options.headless !== 'false',
+    timeout: detectedConfig.timeout,
+    serverTimeout: parseInt(options.webserverTimeout ?? '') || detectedConfig.serverTimeout,
+    headless: detectedConfig.headless,
     timezone: options.timezone || detectedConfig.timezone,
     locale: options.locale || detectedConfig.locale,
   };
@@ -125,14 +129,16 @@ function formatDuration(durationMs: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-function parseCommand(command: string): { command: string; args: string[] } {
-  // Always use shell execution for better compatibility
-  return { command: 'sh', args: ['-c', command] };
-}
-
 async function runWithPlaywrightReporter(options: any): Promise<void> {
-  const config = await createConfigFromOptions(options);
-  const parsedCommand = parseCommand(config.storybookCommand ?? 'npm run storybook');
+  // Get the main project directory where the CLI is installed
+  const originalCwd = process.cwd();
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const projectRoot = join(__dirname, '..', '..');
+
+  const config = await createConfigFromOptions(options, originalCwd);
+  const storybookCommand = config.storybookCommand || 'npm run storybook';
+  const storybookLaunchCommand = `${storybookCommand} -- --ci --port ${config.storybookPort}`;
 
   // Set environment variables for Playwright
   process.env.PLAYWRIGHT_RETRIES = config.retries.toString();
@@ -143,10 +149,10 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
   process.env.PLAYWRIGHT_HEADLESS = config.headless ? 'true' : 'false';
   process.env.PLAYWRIGHT_TIMEZONE = config.timezone;
   process.env.PLAYWRIGHT_LOCALE = config.locale;
-  process.env.STORYBOOK_COMMAND = `sh -c "${config.storybookCommand} --ci --port ${config.storybookPort}"`;
-  process.env.STORYBOOK_CWD = process.cwd();
+  process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
+  process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
-  process.env.ORIGINAL_CWD = process.cwd();
+  process.env.ORIGINAL_CWD = originalCwd;
 
   // Debug logging
   if (options.debug) {
@@ -166,7 +172,15 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
     });
   }
 
-  console.log(chalk.gray('Running Playwright Test with static configuration...'));
+  console.log('');
+  console.log(chalk.bold('▶️  Launching Playwright Test'));
+  console.log(
+    `${chalk.dim('  •')} Storybook command: ${chalk.cyan(storybookLaunchCommand)} (${chalk.dim(
+      storybookCommand,
+    )})`,
+  );
+  console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
+  console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
 
   try {
     const playwrightArgs = ['playwright', 'test'];
@@ -175,14 +189,22 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
     // Get the path to our config file relative to this CLI file
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
-    const configPath = join(__dirname, '..', '..', 'storybook-visual-regression.config.ts');
+    const projectRoot = join(__dirname, '..', '..');
+    const configPath = join(projectRoot, 'svr.config.ts');
     playwrightArgs.push('--config', configPath);
 
-    const result = await execa('npx', playwrightArgs, {
-      cwd: process.cwd(), // Run from the current working directory where CLI is executed
-      stdio: 'inherit',
+    const child = execa('npx', playwrightArgs, {
+      cwd: projectRoot, // Run from the main project directory where CLI is installed
+      stdin: 'inherit',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      // Force Playwright to use absolute paths and not create its own config
       env: {
         ...process.env,
+        // Prevent Playwright from creating its own config in the wrong location
+        PLAYWRIGHT_CONFIG_FILE: configPath,
+        // Force Playwright to use the correct working directory
+        PLAYWRIGHT_TEST_DIR: join(projectRoot, 'src', 'tests'),
         PLAYWRIGHT_RETRIES: config.retries.toString(),
         PLAYWRIGHT_WORKERS: config.workers.toString(),
         PLAYWRIGHT_MAX_FAILURES: (options.maxFailures || 1).toString(),
@@ -191,15 +213,35 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
         PLAYWRIGHT_HEADLESS: config.headless ? 'true' : 'false',
         PLAYWRIGHT_TIMEZONE: config.timezone,
         PLAYWRIGHT_LOCALE: config.locale,
-        PLAYWRIGHT_OUTPUT_DIR: options.output || 'visual-regression',
-        STORYBOOK_COMMAND: `sh -c "${config.storybookCommand} --ci --port ${config.storybookPort}"`,
-        STORYBOOK_CWD: process.cwd(),
+        PLAYWRIGHT_OUTPUT_DIR: join(originalCwd, options.output || 'visual-regression'),
+        STORYBOOK_COMMAND: storybookLaunchCommand,
+        STORYBOOK_CWD: originalCwd,
         STORYBOOK_TIMEOUT: config.serverTimeout.toString(),
-        ORIGINAL_CWD: process.cwd(),
+        ORIGINAL_CWD: originalCwd,
       },
     });
 
+    child.stdout?.pipe(process.stdout);
+    child.stderr?.pipe(process.stderr);
+
+    await child;
+
     console.log(chalk.green('✅ Visual regression tests completed successfully'));
+
+    if (options.updateSnapshots) {
+      const resultsDir = join(originalCwd, options.output || 'visual-regression', 'results');
+      if (existsSync(resultsDir)) {
+        try {
+          rmSync(resultsDir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          console.warn(
+            chalk.yellow(
+              `⚠️  Unable to clean Playwright results directory at ${resultsDir}: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}`,
+            ),
+          );
+        }
+      }
+    }
   } catch (error) {
     console.error(chalk.red('❌ Test execution failed'));
     if (error instanceof Error) {
@@ -215,41 +257,14 @@ program
   .option('-p, --port <port>', 'Storybook server port', '9009')
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
-  .option('-b, --browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
-  .option('-t, --threshold <number>', 'Visual difference threshold (0-1)', '0.2')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
-  .option('--timeout <ms>', 'Test timeout in milliseconds', '30000')
-  .option('--action-timeout <ms>', 'Action timeout in milliseconds', '5000')
-  .option('--navigation-timeout <ms>', 'Navigation timeout in milliseconds', '10000')
   .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
-  .option('--server-timeout <ms>', 'Server startup timeout in milliseconds', '120000')
-  .option('--headless', 'Run in headless mode', true)
-  .option('--headed', 'Run in headed mode (overrides headless)')
-  .option('--disable-animations', 'Disable animations in screenshots', true)
-  .option('--enable-animations', 'Enable animations in screenshots (overrides disable-animations)')
-  .option('--wait-network-idle', 'Wait for network idle before capturing', true)
-  .option('--no-wait-network-idle', "Don't wait for network idle")
-  .option('--content-stabilization', 'Wait for content to stabilize', true)
-  .option('--no-content-stabilization', "Don't wait for content stabilization")
-  .option(
-    '--frozen-time <time>',
-    'Frozen time for deterministic results',
-    '2024-01-15T10:30:00.000Z',
-  )
+  .option('--webserver-timeout <ms>', 'Playwright webServer startup timeout in milliseconds', '120000')
+  .option('--retries <number>', 'Number of retries on failure', '2')
+  .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
-  .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
-  .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
-  .option('--viewport <size>', 'Default viewport size (widthxheight)', '1024x768')
-  .option('--retries <number>', 'Number of retries on failure', '2')
-  .option('--update-snapshots', 'Update snapshot files instead of comparing')
-  .option('--grep <pattern>', 'Run tests matching pattern')
-  .option('--reporter <reporter>', 'Test reporter (line|dot|json|html)', 'line')
-  .option('--use-playwright-reporter', 'Run via Playwright Test and pipe its output')
   .option('--debug', 'Enable debug logging')
-  .option('--discover-viewports', 'Discover viewport configurations from Storybook', true)
-  .option('--no-discover-viewports', 'Use hardcoded viewport configurations')
-  .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')
   .action(async (options) => runTests(options));
 
 program
@@ -279,14 +294,14 @@ program
   .option('-p, --port <port>', 'Storybook server port', '9009')
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
-  .option('-b, --browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
-  .option('--locale <locale>', 'Browser locale', 'en-GB')
-  .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
-  .option('--grep <pattern>', 'Update snapshots for stories matching pattern')
-  .option('--debug', 'Enable debug logging')
+  .option('--webserver-timeout <ms>', 'Playwright webServer startup timeout in milliseconds', '120000')
+  .option('--retries <number>', 'Number of retries on failure', '2')
   .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')
+  .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
+  .option('--locale <locale>', 'Browser locale', 'en-GB')
+  .option('--debug', 'Enable debug logging')
   .action(async (options) => {
     options.updateSnapshots = true;
     await runTests(options);

@@ -34,7 +34,7 @@ export function createDefaultConfig(): VisualRegressionConfig {
     workers: 12,
     retries: 2,
     timeout: 30000,
-    serverTimeout: 120000, // Increased to 2 minutes
+    serverTimeout: 120000,
 
     // Fail-fast
     maxFailures: 1,

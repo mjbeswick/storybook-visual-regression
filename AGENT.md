@@ -64,6 +64,33 @@ The CLI has two main paths:
 - `src/config/defaultConfig.ts` - Default configuration
 - `src/types/index.ts` - TypeScript definitions
 
+### 5.1. Output Directory Structure
+
+**CRITICAL**: The CLI should only create one directory: `visual-regression` in the directory where the CLI is executed.
+
+**Expected Structure**:
+
+```
+visual-regression/
+├── snapshots/           # Baseline snapshot images
+│   ├── story-1.png
+│   ├── story-2.png
+│   └── ...
+└── results/            # Playwright test results
+    ├── test-results/
+    ├── reports/
+    └── ...
+```
+
+**Directory Behavior**:
+
+- ✅ **Correct**: Create `visual-regression/` in the current working directory where CLI is executed
+- ✅ **Correct**: Use `-o` flag to specify custom output directory: `-o "test/visual-regression"`
+- ❌ **Wrong**: Create `.svr-playwright/` or any other configuration directories
+- ❌ **Wrong**: Create output directories in the main project directory when run from subdirectories
+
+**Why**: This keeps the tool clean and predictable - users know exactly where their visual regression data will be stored.
+
 ### 6. Build and Publish Process
 
 - Always run `npm run build` before publishing

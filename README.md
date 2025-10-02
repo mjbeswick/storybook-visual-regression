@@ -76,31 +76,16 @@ Common options (defaults shown):
 - `-u, --url <url>`: Storybook server URL (default `http://localhost`)
 - `-p, --port <port>`: Storybook port (default `9009`)
 - `-c, --command <cmd>`: command to start Storybook (default `npm run storybook`)
-- `--server-timeout <ms>`: wait for server (default `60000`)
+- `--webserver-timeout <ms>`: wait for Storybook to boot (default `120000`)
 - `-o, --output <dir>`: results root (default `visual-regression`)
   - Snapshots: `<output>/snapshots`
   - Results: `<output>/results`
-- `-b, --browser <name>`: `chromium|firefox|webkit` (default `chromium`)
-- `--headless` / `--headed`: browser mode (default headless)
-- `-t, --threshold <0-1>`: visual diff threshold (default `0.2`)
-- `--viewport <WxH>`: default viewport (default `1024x768`)
-- `--workers <n>`: parallel workers (default `12`)
+- `-w, --workers <n>`: parallel workers (default `12`)
 - `--retries <n>`: retries on failure (default `2`)
-- `--timeout <ms>`: test timeout (default `30000`)
-- `--action-timeout <ms>`: action timeout (default `5000`)
-- `--navigation-timeout <ms>`: navigation timeout (default `10000`)
-- `--frozen-time <iso>`: deterministic time (default `2024-01-15T10:30:00.000Z`)
+- `--max-failures <n>`: stop early after N failures (default `1`, <=0 disables)
 - `--timezone <tz>`: e.g. `Europe/London` (default `Europe/London`)
 - `--locale <bcp47>`: e.g. `en-GB` (default `en-GB`)
-- `--include <patterns>`: include ids/titles (comma‑separated)
-- `--exclude <patterns>`: exclude ids/titles (comma‑separated)
-- `--grep <pattern>`: run stories matching pattern
-- `--disable-animations` / `--enable-animations`: control animations (default disabled)
-- `--wait-network-idle` / `--no-wait-network-idle`: wait strategy (default wait)
-- `--content-stabilization` / `--no-content-stabilization` (default enabled)
-- `--max-failures <n>`: stop early after N failures (default `3`, <=0 disables)
-- `--use-playwright-reporter`: run via Playwright Test and pipe its reporter
-- `--reporter <name>`: reporter when piping via Playwright (`list|dot|json|html`) (default `line`)
+- `--debug`: print environment information before running Playwright
 
 ### Example workflows
 
