@@ -8,6 +8,29 @@ The tool automatically detects your Storybook configuration including:
 - Storybook command from package.json
 - Viewport configurations from Storybook config files
 
+Example output:
+
+```bash
+$ storybook-visual-regression test -c "npm run storybook" --url http://localhost:9009/
+
+🚀 Starting Playwright visual regression tests
+  • Storybook command: npm run storybook (npm run storybook)
+  • Working directory: /Users/uk45006208/Projects/storybook-visual-regression/test
+  • Waiting for Storybook output...
+
+Running 5 tests using 5 workers
+
+  ✓  1 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-2 (1.2s)
+  ✓  2 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-4 (1.2s)
+  ✓  3 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-5 (1.2s)
+  ✓  4 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-1 (1.2s)
+  ✓  5 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-3 (1.2s)
+
+  5 passed (9.7s)
+
+🎉 Visual regression tests completed successfully
+```
+
 ### Requirements
 
 - **Node**: >= 20

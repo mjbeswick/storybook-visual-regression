@@ -7,7 +7,7 @@ import { existsSync, rmSync } from 'fs';
 import type { VisualRegressionConfig } from '../types/index.js';
 import { createDefaultConfig } from '../config/defaultConfig.js';
 import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
-import execa from 'execa';
+import { execa } from 'execa';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
