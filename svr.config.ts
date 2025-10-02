@@ -34,8 +34,7 @@ export default defineConfig({
   },
   webServer: process.env.STORYBOOK_COMMAND
     ? {
-        command: 'sh',
-        args: ['-c', process.env.STORYBOOK_COMMAND],
+        command: process.env.STORYBOOK_COMMAND,
         url: `${(process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '')}/index.json`,
         reuseExistingServer: true,
         timeout: parseInt(process.env.STORYBOOK_TIMEOUT || '120000'),

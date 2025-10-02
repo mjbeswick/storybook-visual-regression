@@ -60,6 +60,6 @@ test.describe('Storybook Visual Regression Tests', () => {
       console.log(`✓ Screenshot saved: ${screenshotPath}`);
     }
     
-    console.log(`✅ Completed visual regression tests for ${stories.length} stories`);
+    console.log(`✓ Completed visual regression tests for ${stories.length} stories`);
   });
 });

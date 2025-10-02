@@ -115,7 +115,22 @@ test.describe('Storybook Visual Regression', () => {
       });
 
       await page.waitForLoadState('networkidle');
-      await page.waitForSelector('body', { timeout: 10_000 });
+
+      // Wait for body to be visible (not hidden with error display)
+      await page.waitForSelector('body:not(.sb-show-errordisplay)', { timeout: 15_000 });
+
+      // Additional check to ensure we're not on an error page
+      const isErrorPage = await page.evaluate(() => {
+        return (
+          document.body.classList.contains('sb-show-errordisplay') ||
+          document.querySelector('[data-testid="error"]') !== null ||
+          document.querySelector('.sb-show-errordisplay') !== null
+        );
+      });
+
+      if (isErrorPage) {
+        throw new Error('Storybook is displaying an error page');
+      }
 
       await page.evaluate(() => {
         const html = document.documentElement;

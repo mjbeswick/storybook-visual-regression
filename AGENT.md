@@ -6,9 +6,9 @@
 
 **CRITICAL**: Always use Playwright's built-in `webServer` configuration to manage Storybook lifecycle, not manual server management.
 
-- ✅ **Correct**: Use `webServer` in Playwright config to start/stop Storybook
-- ❌ **Wrong**: Manually spawn Storybook processes and manage lifecycle
-- ❌ **Wrong**: Try to connect to already-running Storybook instances
+- ✓ **Correct**: Use `webServer` in Playwright config to start/stop Storybook
+- ✘ **Wrong**: Manually spawn Storybook processes and manage lifecycle
+- ✘ **Wrong**: Try to connect to already-running Storybook instances
 
 **Why**: Playwright's webServer handles:
 
@@ -42,10 +42,10 @@ The CLI has two main paths:
 
 **CRITICAL**: Only use Playwright configuration to pass options, not command line arguments.
 
-- ✅ **Correct**: Pass options via environment variables to Playwright config
-- ✅ **Correct**: Use `updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true'` in config
-- ❌ **Wrong**: Use `--update-snapshots` command line argument
-- ❌ **Wrong**: Use `--workers` command line argument
+- ✓ **Correct**: Pass options via environment variables to Playwright config
+- ✓ **Correct**: Use `updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true'` in config
+- ✘ **Wrong**: Use `--update-snapshots` command line argument
+- ✘ **Wrong**: Use `--workers` command line argument
 
 **Why**: Configuration-based approach is more maintainable and follows Playwright best practices.
 
@@ -84,10 +84,10 @@ visual-regression/
 
 **Directory Behavior**:
 
-- ✅ **Correct**: Create `visual-regression/` in the current working directory where CLI is executed
-- ✅ **Correct**: Use `-o` flag to specify custom output directory: `-o "test/visual-regression"`
-- ❌ **Wrong**: Create `.svr-playwright/` or any other configuration directories
-- ❌ **Wrong**: Create output directories in the main project directory when run from subdirectories
+- ✓ **Correct**: Create `visual-regression/` in the current working directory where CLI is executed
+- ✓ **Correct**: Use `-o` flag to specify custom output directory: `-o "test/visual-regression"`
+- ✘ **Wrong**: Create `.svr-playwright/` or any other configuration directories
+- ✘ **Wrong**: Create output directories in the main project directory when run from subdirectories
 
 **Why**: This keeps the tool clean and predictable - users know exactly where their visual regression data will be stored.
 
