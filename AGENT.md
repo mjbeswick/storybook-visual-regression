@@ -58,7 +58,8 @@ The CLI has two main paths:
 - Always run `npm run build` before publishing
 - Use `npm version patch/minor/major` for versioning
 - Push tags with `git push --tags`
-- Publish with `npm publish`
+- **NEVER publish automatically - wait for user to explicitly ask for publishing**
+- Only commit and push changes, do not run `npm publish` unless requested
 
 ### 7. Common Issues and Solutions
 
