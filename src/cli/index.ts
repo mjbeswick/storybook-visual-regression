@@ -12,6 +12,30 @@ import { spawn } from 'child_process';
 
 const program = new Command();
 
+// Helper function to wait for Storybook server to be ready
+async function waitForStorybookServer(url: string, timeout: number): Promise<void> {
+  const startTime = Date.now();
+  const maxWaitTime = timeout;
+
+  while (Date.now() - startTime < maxWaitTime) {
+    try {
+      const response = await fetch(`${url}/index.json`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (response.ok) {
+        console.log(`Storybook server is ready at ${url}`);
+        return;
+      }
+    } catch (error) {
+      // Server not ready yet, continue waiting
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  throw new Error(`Storybook server did not start within ${timeout}ms`);
+}
+
 program
   .name('storybook-visual-regression')
   .description('Visual regression testing tool for Storybook')
@@ -23,6 +47,7 @@ async function runTests(options: any) {
   // Removing spinner-based progress in favor of line-list reporter output
   const spinner = ora('Starting visual regression tests...');
   let runner: VisualRegressionRunner | undefined;
+  let storybookProcess: any = undefined;
 
   try {
     if (options.usePlaywrightReporter) {
@@ -36,19 +61,32 @@ async function runTests(options: any) {
     await fs.mkdir(config.snapshotPath, { recursive: true });
     await fs.mkdir(config.resultsPath, { recursive: true });
 
+    // Start Storybook server using Playwright's webServer approach
+    console.log(`Starting Storybook server with command: ${config.storybookCommand}`);
+    const storybookProcess = spawn('sh', ['-c', config.storybookCommand!], {
+      stdio: 'pipe',
+      cwd: process.cwd(),
+    });
+
+    // Wait for Storybook to be ready
+    await waitForStorybookServer(config.storybookUrl, config.serverTimeout);
+
     runner = new VisualRegressionRunner(config);
     const discovery = new StorybookDiscovery(config);
 
     // Initializing browser
     await runner.initialize();
 
-    // Discovering stories
+    // Discovering stories (now that server is running)
     const stories = await discovery.discoverStories();
 
     console.log(chalk.gray(`Found ${stories.length} stories. Running tests...`));
     const results = await runner.runTests();
 
     await runner.cleanup();
+
+    // Clean up Storybook process
+    storybookProcess.kill('SIGTERM');
 
     const totalDuration = Date.now() - startedAt;
     console.log(
@@ -82,6 +120,9 @@ async function runTests(options: any) {
     try {
       if (typeof runner !== 'undefined') {
         await runner.cleanup();
+      }
+      if (storybookProcess) {
+        storybookProcess.kill('SIGTERM');
       }
     } catch {}
   }
@@ -260,12 +301,22 @@ program
   });
 
 function createConfigFromOptions(options: any): VisualRegressionConfig {
+  // Extract port from storybook command if not explicitly provided
+  let detectedPort = options.port;
+  if (!detectedPort && options.command) {
+    const portMatch = options.command.match(/-p\s+(\d+)|--port\s+(\d+)/);
+    if (portMatch) {
+      detectedPort = portMatch[1] || portMatch[2];
+      console.log(`Detected port ${detectedPort} from storybook command`);
+    }
+  }
+
   const viewportRaw = options.viewport ?? '1024x768';
   const [width, height] = String(viewportRaw).split('x').map(Number);
 
   return {
-    storybookUrl: `${options.url}:${options.port}`,
-    storybookPort: parseInt(options.port),
+    storybookUrl: `${options.url}:${detectedPort || options.port}`,
+    storybookPort: parseInt(detectedPort || options.port),
     storybookCommand: options.command,
     serverTimeout: parseInt(options.serverTimeout),
 

@@ -7,25 +7,38 @@ export class StorybookDiscovery {
 
   async discoverStories(): Promise<StorybookEntry[]> {
     try {
-      // Try to get stories from dev server first
-      const response = await fetch(`${this.config.storybookUrl}/index.json`);
+      console.log(`Connecting to Storybook at ${this.config.storybookUrl}`);
+      
+      // Get stories from dev server
+      const response = await fetch(`${this.config.storybookUrl}/index.json`, {
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      });
+      
       if (response.ok) {
         const indexData: StorybookIndex = await response.json();
+        console.log(`Successfully loaded stories from ${this.config.storybookUrl}`);
         return this.extractStoriesFromIndex(indexData);
       } else {
-        throw new Error('Dev server not available');
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
     } catch (error) {
       // Fallback to built files
       try {
+        console.log('Trying fallback to built Storybook files...');
         const indexFile = join(process.cwd(), 'storybook-static/index.json');
         const indexData: StorybookIndex = JSON.parse(readFileSync(indexFile, 'utf8'));
+        console.log('Successfully loaded stories from built files');
         return this.extractStoriesFromIndex(indexData);
       } catch (fallbackError) {
         console.error('Error reading Storybook data:', error);
-        console.log(
-          'Make sure Storybook dev server is running or run "npm run build-storybook" first',
-        );
+        console.log('\nTroubleshooting steps:');
+        console.log('1. Make sure Storybook dev server is running:');
+        console.log(`   ${this.config.storybookCommand || 'npm run storybook'}`);
+        console.log('2. Check if Storybook is running on the correct port:');
+        console.log(`   Expected: ${this.config.storybookUrl}`);
+        console.log('3. Or build Storybook first:');
+        console.log('   npm run build-storybook');
+        console.log('4. Check your Storybook configuration for the correct port');
         throw new Error('Unable to discover stories from Storybook');
       }
     }
