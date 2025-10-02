@@ -69,10 +69,46 @@ async function discoverStories(): Promise<{
 
 const { storyIds, storyImportPaths } = await discoverStories();
 
+// Apply filtering based on CLI options
+function filterStories(stories: string[]): string[] {
+  let filtered = [...stories];
+
+  // Apply include patterns
+  if (process.env.STORYBOOK_INCLUDE) {
+    const includePatterns = process.env.STORYBOOK_INCLUDE.split(',').map((p) => p.trim());
+    filtered = filtered.filter((storyId) =>
+      includePatterns.some((pattern) => storyId.toLowerCase().includes(pattern.toLowerCase())),
+    );
+  }
+
+  // Apply exclude patterns
+  if (process.env.STORYBOOK_EXCLUDE) {
+    const excludePatterns = process.env.STORYBOOK_EXCLUDE.split(',').map((p) => p.trim());
+    filtered = filtered.filter(
+      (storyId) =>
+        !excludePatterns.some((pattern) => storyId.toLowerCase().includes(pattern.toLowerCase())),
+    );
+  }
+
+  // Apply grep pattern (regex)
+  if (process.env.STORYBOOK_GREP) {
+    try {
+      const regex = new RegExp(process.env.STORYBOOK_GREP, 'i');
+      filtered = filtered.filter((storyId) => regex.test(storyId));
+    } catch (error) {
+      console.warn(`Invalid regex pattern: ${process.env.STORYBOOK_GREP}`);
+    }
+  }
+
+  return filtered;
+}
+
+const filteredStoryIds = filterStories(storyIds);
+
 test.describe('Storybook Visual Regression', () => {
   test.describe.configure({ mode: 'parallel' });
 
-  if (storyIds.length === 0) {
+  if (filteredStoryIds.length === 0) {
     test('No stories discovered', () => {
       throw new Error(
         'No stories were discovered in Storybook. Ensure Storybook is running or build storybook-static first.',
@@ -81,7 +117,7 @@ test.describe('Storybook Visual Regression', () => {
     return;
   }
 
-  for (const storyId of storyIds) {
+  for (const storyId of filteredStoryIds) {
     test(storyId, async ({ page }) => {
       let viewportKey = defaultViewportKey;
       const importPath = storyImportPaths[storyId];

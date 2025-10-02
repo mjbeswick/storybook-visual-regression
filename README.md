@@ -51,8 +51,8 @@ Filter stories by id/title substring (comma-separated):
 ```bash
 npx storybook-visual-regression test --include button,card --exclude wip
 
-# or grep-style single pattern
-npx storybook-visual-regression test --grep button--primary
+# or regex pattern
+npx storybook-visual-regression test --grep "button.*primary"
 ```
 
 ### What it does
@@ -88,6 +88,9 @@ Common options (defaults shown):
 - `--reporter <reporter>`: Playwright reporter (list|line|dot|json|junit) (default `list`)
 - `--quiet`: suppress verbose failure output, show only test progress
 - `--debug`: print environment information before running Playwright
+- `--include <patterns>`: include stories matching patterns (comma-separated)
+- `--exclude <patterns>`: exclude stories matching patterns (comma-separated)
+- `--grep <pattern>`: filter stories by regex pattern
 
 ### Example workflows
 

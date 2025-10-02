@@ -219,6 +219,9 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
   process.env.PLAYWRIGHT_LOCALE = config.locale;
   if (options.reporter) process.env.PLAYWRIGHT_REPORTER = String(options.reporter);
   if (options.quiet) process.env.PLAYWRIGHT_REPORTER = 'src/reporters/filtered-reporter.ts';
+  if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
+  if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
+  if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
   process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
   process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
@@ -343,7 +346,7 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
     await child;
 
     console.log('');
-    console.log(chalk.green('✓ Visual regression tests completed successfully'));
+    console.log(chalk.green('🎉 Visual regression tests completed successfully'));
 
     if (options.updateSnapshots) {
       const resultsDir = join(originalCwd, options.output || 'visual-regression', 'results');
@@ -361,7 +364,7 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
     }
   } catch (error) {
     console.log('');
-    console.error(chalk.red('✘ Test execution failed'));
+    console.error(chalk.red('💥 Test execution failed'));
     process.exit(1);
   }
 }
@@ -386,6 +389,9 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
+  .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
+  .option('--grep <pattern>', 'Filter stories by regex pattern')
   .action(async (options) => runTests(options));
 
 program
@@ -429,6 +435,9 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
+  .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
+  .option('--grep <pattern>', 'Filter stories by regex pattern')
   .action(async (options) => {
     // Enable snapshot updates only via this command
     process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = 'true';
