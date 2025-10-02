@@ -3,10 +3,6 @@ import { join } from 'path';
 
 import { expect, test } from '@playwright/test';
 
-// Get story IDs from Storybook dev server
-let storyIds: string[] = [];
-// Map storyId -> importPath (path to the .stories.tsx file) when available
-const storyImportPaths: Record<string, string> = {};
 // Default viewport configurations - will be overridden by discovered configurations
 const defaultViewportSizes: Record<string, { width: number; height: number }> = {
   mobile: { width: 375, height: 667 },
@@ -18,44 +14,77 @@ const defaultViewportKey = 'desktop';
 // Get Storybook URL from environment or use default
 const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:9009';
 
-try {
-  // Try to get stories from dev server first
-  const response = await fetch(`${storybookUrl}/index.json`);
-  if (response.ok) {
-    const indexData = await response.json();
-    const entries = indexData.entries || {};
-    storyIds = Object.keys(entries).filter((id) => entries[id].type === 'story');
-    for (const id of storyIds) {
-      const entry = entries[id];
-      if (entry && typeof entry.importPath === 'string') {
-        storyImportPaths[id] = entry.importPath;
-      }
-    }
-  } else {
-    throw new Error('Dev server not available');
-  }
-} catch (error) {
-  // Fallback to built files
+// Function to get story IDs from Storybook
+async function getStoryIds(): Promise<string[]> {
   try {
-    const indexFile = join(process.cwd(), 'storybook-static/index.json');
-    const indexData = JSON.parse(readFileSync(indexFile, 'utf8'));
-    const entries = indexData.entries || {};
-    storyIds = Object.keys(entries).filter((id) => entries[id].type === 'story');
-    for (const id of storyIds) {
-      const entry = entries[id];
-      if (entry && typeof entry.importPath === 'string') {
-        storyImportPaths[id] = entry.importPath;
-      }
+    // Try to get stories from dev server first
+    const response = await fetch(`${storybookUrl}/index.json`);
+    if (response.ok) {
+      const indexData = await response.json();
+      const entries = indexData.entries || {};
+      return Object.keys(entries).filter((id) => entries[id].type === 'story');
+    } else {
+      throw new Error('Dev server not available');
     }
-  } catch {
-    console.error('Error reading Storybook data:', error);
-    console.log('Make sure Storybook dev server is running or run "npm run build-storybook" first');
-    process.exit(1);
+  } catch (error) {
+    // Fallback to built files
+    try {
+      const indexFile = join(process.cwd(), 'storybook-static/index.json');
+      const indexData = JSON.parse(readFileSync(indexFile, 'utf8'));
+      const entries = indexData.entries || {};
+      return Object.keys(entries).filter((id) => entries[id].type === 'story');
+    } catch {
+      console.error('Error reading Storybook data:', error);
+      console.log('Make sure Storybook dev server is running or run "npm run build-storybook" first');
+      throw new Error('Unable to discover stories from Storybook');
+    }
   }
 }
 
-storyIds.forEach((storyId: string) => {
-  test(`${storyId}`, async ({ page }) => {
+// Function to get story import paths
+async function getStoryImportPaths(): Promise<Record<string, string>> {
+  const storyImportPaths: Record<string, string> = {};
+  try {
+    const response = await fetch(`${storybookUrl}/index.json`);
+    if (response.ok) {
+      const indexData = await response.json();
+      const entries = indexData.entries || {};
+      for (const id of Object.keys(entries)) {
+        const entry = entries[id];
+        if (entry && typeof entry.importPath === 'string') {
+          storyImportPaths[id] = entry.importPath;
+        }
+      }
+    }
+  } catch (error) {
+    // Fallback to built files
+    try {
+      const indexFile = join(process.cwd(), 'storybook-static/index.json');
+      const indexData = JSON.parse(readFileSync(indexFile, 'utf8'));
+      const entries = indexData.entries || {};
+      for (const id of Object.keys(entries)) {
+        const entry = entries[id];
+        if (entry && typeof entry.importPath === 'string') {
+          storyImportPaths[id] = entry.importPath;
+        }
+      }
+    } catch {
+      // ignore read/parse errors
+    }
+  }
+  return storyImportPaths;
+}
+
+// Single test that runs all stories
+test('Storybook Visual Regression Tests', async ({ page }) => {
+  const storyIds = await getStoryIds();
+  const storyImportPaths = await getStoryImportPaths();
+  
+  console.log(`Found ${storyIds.length} stories to test`);
+
+  for (const storyId of storyIds) {
+    console.log(`Testing story: ${storyId}`);
+    
     // Determine viewport key from story source (if specified), else use default
     let viewportKey = defaultViewportKey;
     const importPath = storyImportPaths[storyId];
@@ -139,7 +168,8 @@ storyIds.forEach((storyId: string) => {
       });
 
       // Take screenshot and compare with baseline
-      await expect(page).toHaveScreenshot(`${storyId.replace(/[^a-zA-Z0-9]/g, '-')}.png`, {
+      const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
+      await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`, {
         animations: 'disabled',
       });
     } catch (error) {
@@ -148,6 +178,7 @@ storyIds.forEach((storyId: string) => {
         console.log(`\n💡 To update this snapshot, run:`);
         console.log(`   npm run test:visual-regression:update -- --grep "${storyId}"`);
       }
+      throw error; // Re-throw to fail the test
     }
-  });
+  }
 });
