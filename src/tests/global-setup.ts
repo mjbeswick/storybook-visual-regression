@@ -89,6 +89,7 @@ async function globalSetup(config: FullConfig) {
 
   try {
     console.log(`  ${chalk.dim('•')} Checking running Storybook dev server...`);
+    // Playwright webServer should have ensured readiness; do a single fetch to load index
     indexData = await loadStorybookFromServer(baseURL);
     source = 'server';
     console.log(`  ${chalk.green('✓')} Dev server is ready`);
@@ -132,7 +133,9 @@ async function globalSetup(config: FullConfig) {
   process.env.STORYBOOK_TOTAL_STORIES = String(storyIds.length);
 
   const sourceLabel = source === 'server' ? 'dev server' : 'static export';
-  console.log(`  ${chalk.green('✓')} Found ${chalk.bold(storyIds.length)} stories via ${sourceLabel}`);
+  console.log(
+    `  ${chalk.green('✓')} Found ${chalk.bold(storyIds.length)} stories via ${sourceLabel}`,
+  );
   console.log('');
 }
 

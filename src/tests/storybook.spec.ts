@@ -30,8 +30,44 @@ function parseJsonEnv<T>(key: string, fallback: T): T {
   }
 }
 
-const storyIds = parseJsonEnv<string[]>('STORYBOOK_STORY_IDS', []);
-const storyImportPaths = parseJsonEnv<Record<string, string>>('STORYBOOK_IMPORT_PATHS', {});
+function arraysFromIndex(index: any): {
+  storyIds: string[];
+  storyImportPaths: Record<string, string>;
+} {
+  const entries = (index && typeof index === 'object' && index.entries) || {};
+  const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
+  const storyImportPaths: Record<string, string> = {};
+  for (const id of storyIds) {
+    const entry = entries[id];
+    if (entry && typeof entry.importPath === 'string') storyImportPaths[id] = entry.importPath;
+  }
+  return { storyIds, storyImportPaths };
+}
+
+async function discoverStories(): Promise<{
+  storyIds: string[];
+  storyImportPaths: Record<string, string>;
+}> {
+  // Try server first (webServer should already be ready)
+  const base = storybookUrl.replace(/\/$/, '');
+  try {
+    const resp = await fetch(`${base}/index.json`, { signal: AbortSignal.timeout(10_000) });
+    if (!resp.ok) throw new Error(`index.json returned ${resp.status}`);
+    const json = await resp.json();
+    return arraysFromIndex(json);
+  } catch {
+    // Fallback to static export if present
+    try {
+      const raw = readFileSync(join(projectRoot, 'storybook-static', 'index.json'), 'utf8');
+      const json = JSON.parse(raw);
+      return arraysFromIndex(json);
+    } catch {
+      return { storyIds: [], storyImportPaths: {} };
+    }
+  }
+}
+
+const { storyIds, storyImportPaths } = await discoverStories();
 
 test.describe('Storybook Visual Regression', () => {
   test.describe.configure({ mode: 'parallel' });

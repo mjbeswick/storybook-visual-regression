@@ -13,10 +13,7 @@ import { dirname, join } from 'path';
 
 const program = new Command();
 
-async function createConfigFromOptions(
-  options: any,
-  cwd: string,
-): Promise<VisualRegressionConfig> {
+async function createConfigFromOptions(options: any, cwd: string): Promise<VisualRegressionConfig> {
   const defaultConfig = createDefaultConfig();
   const detector = new StorybookConfigDetector(cwd);
 
@@ -28,6 +25,11 @@ async function createConfigFromOptions(
   // 2) Otherwise, if --url contains an explicit port, infer it
   // 3) Fallback to detectedConfig.storybookPort
   const urlFromOptions: string | undefined = options.url;
+  // Detect if user explicitly provided -p/--port on the CLI (vs. Commander default)
+  const userSpecifiedPortFlag = (() => {
+    const argvJoined = process.argv.slice(2).join(' ');
+    return /(\s|^)(-p|--port)(\s|=)/.test(argvJoined);
+  })();
   const inferredPortFromUrl = (() => {
     if (!urlFromOptions) return undefined;
     try {
@@ -40,9 +42,10 @@ async function createConfigFromOptions(
     }
   })();
 
-  const port = Number.isInteger(parseInt(options.port))
-    ? parseInt(options.port)
-    : inferredPortFromUrl ?? detectedConfig.storybookPort;
+  const port =
+    userSpecifiedPortFlag && Number.isInteger(parseInt(options.port))
+      ? parseInt(options.port)
+      : (inferredPortFromUrl ?? detectedConfig.storybookPort);
 
   const baseUrl = urlFromOptions || 'http://localhost';
   const storybookUrl = (() => {
@@ -51,15 +54,24 @@ async function createConfigFromOptions(
     return baseUrl.includes(`:${port}`) ? baseUrl : `${baseUrl.replace(/\/$/, '')}:${port}`;
   })();
 
+  const parseNumberOption = (value: unknown): number | undefined => {
+    const n = typeof value === 'string' ? parseInt(value, 10) : Number(value);
+    return Number.isFinite(n) && !Number.isNaN(n) ? n : undefined;
+  };
+
+  const workersOpt = parseNumberOption(options.workers);
+  const retriesOpt = parseNumberOption(options.retries);
+  const serverTimeoutOpt = parseNumberOption(options.webserverTimeout);
+
   return {
     ...detectedConfig,
     storybookUrl,
     storybookPort: port,
     storybookCommand: options.command || detectedConfig.storybookCommand,
-    workers: parseInt(options.workers) || detectedConfig.workers,
-    retries: parseInt(options.retries) || detectedConfig.retries,
+    workers: workersOpt ?? detectedConfig.workers,
+    retries: retriesOpt ?? detectedConfig.retries,
     timeout: detectedConfig.timeout,
-    serverTimeout: parseInt(options.webserverTimeout ?? '') || detectedConfig.serverTimeout,
+    serverTimeout: serverTimeoutOpt ?? detectedConfig.serverTimeout,
     headless: detectedConfig.headless,
     timezone: options.timezone || detectedConfig.timezone,
     locale: options.locale || detectedConfig.locale,
@@ -166,12 +178,17 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
   // - Ensuring --ci is present if not already
   // - Appending --port only when not already specified in the provided command
   function buildStorybookLaunchCommand(baseCommand: string, targetPort: number): string {
-    const hasPortFlag = /(\s|^)(-p|--port)(\s|=)/.test(baseCommand);
-    const hasCiFlag = /(\s|^)--ci(\s|$)/.test(baseCommand);
+    const hasPortFlagInCommand = /(\s|^)(-p|--port)(\s|=)/.test(baseCommand);
+    // Only append --port when the user explicitly provided -p/--port on the CLI
+    const userSpecifiedPortFlag = (() => {
+      const argvJoined = process.argv.slice(2).join(' ');
+      return /(\s|^)(-p|--port)(\s|=)/.test(argvJoined);
+    })();
 
     const extraArgs: string[] = [];
-    if (!hasCiFlag) extraArgs.push('--ci');
-    if (!hasPortFlag && Number.isFinite(targetPort)) extraArgs.push('--port', String(targetPort));
+    if (!hasPortFlagInCommand && userSpecifiedPortFlag && Number.isFinite(targetPort)) {
+      extraArgs.push('--port', String(targetPort));
+    }
 
     if (extraArgs.length === 0) return baseCommand;
 
@@ -195,11 +212,12 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
   process.env.PLAYWRIGHT_RETRIES = config.retries.toString();
   process.env.PLAYWRIGHT_WORKERS = config.workers.toString();
   process.env.PLAYWRIGHT_MAX_FAILURES = (options.maxFailures || 1).toString();
-  process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = options.updateSnapshots ? 'true' : 'false';
+  // Snapshot updates are controlled exclusively by the `update` command
   process.env.STORYBOOK_URL = config.storybookUrl;
   process.env.PLAYWRIGHT_HEADLESS = config.headless ? 'true' : 'false';
   process.env.PLAYWRIGHT_TIMEZONE = config.timezone;
   process.env.PLAYWRIGHT_LOCALE = config.locale;
+  if (options.reporter) process.env.PLAYWRIGHT_REPORTER = String(options.reporter);
   process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
   process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
@@ -221,6 +239,53 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
       STORYBOOK_CWD: process.env.STORYBOOK_CWD,
       STORYBOOK_TIMEOUT: process.env.STORYBOOK_TIMEOUT,
     });
+
+    // Log the effective Playwright config we will run with
+    const effectivePlaywrightConfig = {
+      testDir: join(projectRoot, 'src', 'tests'),
+      outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR
+        ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
+        : join(process.env.ORIGINAL_CWD || originalCwd, 'visual-regression', 'results'),
+      reporter: 'list',
+      retries: parseInt(process.env.PLAYWRIGHT_RETRIES || '0'),
+      workers: parseInt(process.env.PLAYWRIGHT_WORKERS || '12'),
+      maxFailures: parseInt(process.env.PLAYWRIGHT_MAX_FAILURES || '1'),
+      updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ? 'all' : 'none',
+      use: {
+        baseURL: process.env.STORYBOOK_URL || 'http://localhost:9009',
+        headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
+        timezoneId: process.env.PLAYWRIGHT_TIMEZONE || 'Europe/London',
+        locale: process.env.PLAYWRIGHT_LOCALE || 'en-GB',
+        screenshot: 'only-on-failure',
+      },
+      webServer: process.env.STORYBOOK_COMMAND
+        ? {
+            command: 'sh',
+            args: ['-c', process.env.STORYBOOK_COMMAND],
+            url: `${(process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '')}/index.json`,
+            reuseExistingServer: true,
+            timeout: parseInt(process.env.STORYBOOK_TIMEOUT || '120000'),
+            cwd: process.env.STORYBOOK_CWD,
+            stdout: 'inherit',
+            stderr: 'inherit',
+            env: {
+              NODE_ENV: 'development',
+              NODE_NO_WARNINGS: '1',
+            },
+            ignoreHTTPSErrors: true,
+          }
+        : undefined,
+    };
+    console.log(chalk.blue('🔍 Debug: Playwright config:'));
+    console.log(
+      chalk.gray(
+        JSON.stringify(
+          effectivePlaywrightConfig,
+          (_key, value) => (typeof value === 'string' ? value : value),
+          2,
+        ),
+      ),
+    );
   }
 
   console.log('');
@@ -259,7 +324,8 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
         PLAYWRIGHT_RETRIES: config.retries.toString(),
         PLAYWRIGHT_WORKERS: config.workers.toString(),
         PLAYWRIGHT_MAX_FAILURES: (options.maxFailures || 1).toString(),
-        PLAYWRIGHT_UPDATE_SNAPSHOTS: options.updateSnapshots ? 'true' : 'false',
+        // Respect pre-set PLAYWRIGHT_UPDATE_SNAPSHOTS (set by `update` command)
+        // Do not override here so updates actually occur
         STORYBOOK_URL: config.storybookUrl,
         PLAYWRIGHT_HEADLESS: config.headless ? 'true' : 'false',
         PLAYWRIGHT_TIMEZONE: config.timezone,
@@ -276,6 +342,7 @@ async function runWithPlaywrightReporter(options: any): Promise<void> {
 
     await child;
 
+    console.log('');
     console.log(chalk.green('✅ Visual regression tests completed successfully'));
 
     if (options.updateSnapshots) {
@@ -309,11 +376,16 @@ program
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
   .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
-  .option('--webserver-timeout <ms>', 'Playwright webServer startup timeout in milliseconds', '120000')
-  .option('--retries <number>', 'Number of retries on failure', '2')
+  .option(
+    '--webserver-timeout <ms>',
+    'Playwright webServer startup timeout in milliseconds',
+    '120000',
+  )
+  .option('--retries <number>', 'Number of retries on failure', '0')
   .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
+  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--debug', 'Enable debug logging')
   .action(async (options) => runTests(options));
 
@@ -346,14 +418,21 @@ program
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
   .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
-  .option('--webserver-timeout <ms>', 'Playwright webServer startup timeout in milliseconds', '120000')
-  .option('--retries <number>', 'Number of retries on failure', '2')
+  .option(
+    '--webserver-timeout <ms>',
+    'Playwright webServer startup timeout in milliseconds',
+    '120000',
+  )
+  .option('--retries <number>', 'Number of retries on failure', '0')
   .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
+  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--debug', 'Enable debug logging')
   .action(async (options) => {
-    options.updateSnapshots = true;
+    // Enable snapshot updates only via this command
+    process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = 'true';
+    if (options.reporter) process.env.PLAYWRIGHT_REPORTER = String(options.reporter);
     await runTests(options);
   });
 

@@ -14,7 +14,7 @@ export default defineConfig({
   retries: parseInt(process.env.PLAYWRIGHT_RETRIES || '0'),
   workers: parseInt(process.env.PLAYWRIGHT_WORKERS || '12'),
   maxFailures: parseInt(process.env.PLAYWRIGHT_MAX_FAILURES || '1'),
-  reporter: 'list',
+  reporter: (process.env.PLAYWRIGHT_REPORTER as any) || 'list',
   updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ? 'all' : 'none',
   use: {
     baseURL: process.env.STORYBOOK_URL || 'http://localhost:9009',
@@ -36,7 +36,7 @@ export default defineConfig({
     ? {
         command: 'sh',
         args: ['-c', process.env.STORYBOOK_COMMAND],
-        url: process.env.STORYBOOK_URL || 'http://localhost:9009',
+        url: `${(process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '')}/index.json`,
         reuseExistingServer: true,
         timeout: parseInt(process.env.STORYBOOK_TIMEOUT || '120000'),
         cwd: process.env.STORYBOOK_CWD,
@@ -50,5 +50,6 @@ export default defineConfig({
         ignoreHTTPSErrors: true,
       }
     : undefined,
-  globalSetup: join(__dirname, 'src', 'tests', 'global-setup.ts'),
+  // globalSetup intentionally disabled; discovery now happens during tests after webServer is ready
+  // globalSetup: join(__dirname, 'src', 'tests', 'global-setup.ts'),
 });
