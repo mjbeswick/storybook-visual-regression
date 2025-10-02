@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
+import type { PathLike, PathOrFileDescriptor } from 'fs';
 
 // Global test setup
 beforeAll(() => {
@@ -72,12 +73,14 @@ export const mockFileSystem = (files: Record<string, string>): void => {
   const mockedExistsSync = vi.mocked(existsSync);
   const mockedReadFileSync = vi.mocked(readFileSync);
 
-  mockedExistsSync.mockImplementation((path: string) => {
-    return Object.keys(files).some((filePath) => path.includes(filePath));
+  mockedExistsSync.mockImplementation((path: PathLike) => {
+    const pathStr = path.toString();
+    return Object.keys(files).some((filePath) => pathStr.includes(filePath));
   });
 
-  mockedReadFileSync.mockImplementation((path: string) => {
-    const filePath = Object.keys(files).find((filePath) => path.includes(filePath));
+  mockedReadFileSync.mockImplementation((path: PathOrFileDescriptor) => {
+    const pathStr = path.toString();
+    const filePath = Object.keys(files).find((filePath) => pathStr.includes(filePath));
     return filePath ? files[filePath] : '';
   });
 };

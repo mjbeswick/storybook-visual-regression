@@ -140,10 +140,10 @@ async function _waitForStorybookServer(url: string, timeout: number): Promise<vo
       } else {
         console.log(`Main page not ready yet (${mainResponse.status})`);
       }
-    } catch (error) {
+    } catch (_error) {
       console.log(
         `Connection attempt ${attempt} failed:`,
-        error instanceof Error ? error.message : String(error),
+        _error instanceof Error ? _error.message : String(_error),
       );
     }
 

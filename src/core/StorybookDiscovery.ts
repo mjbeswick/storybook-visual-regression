@@ -35,7 +35,7 @@ export class StorybookDiscovery {
         console.log('Successfully loaded stories from built files');
         return this.extractStoriesFromIndex(indexData);
       } catch (fallbackError) {
-        console.error('Error reading Storybook data:', error);
+        console.error('Error reading Storybook data:', fallbackError);
         console.log('\nTroubleshooting steps:');
         console.log('1. Make sure Storybook dev server is running:');
         console.log(`   ${this.config.storybookCommand || 'npm run storybook'}`);
@@ -116,7 +116,7 @@ export class StorybookDiscovery {
     } catch (_error) {
       console.log(
         'Could not load viewport configurations from Storybook:',
-        error instanceof Error ? error.message : String(error),
+        _error instanceof Error ? _error.message : String(_error),
       );
     }
 
@@ -130,7 +130,7 @@ export class StorybookDiscovery {
     } catch (_error) {
       console.log(
         'Could not load viewport configurations from config files:',
-        error instanceof Error ? error.message : String(error),
+        _error instanceof Error ? _error.message : String(_error),
       );
     }
 
