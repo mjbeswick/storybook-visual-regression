@@ -91,35 +91,29 @@ Common options (defaults shown):
 
 ### Example workflows
 
-- Run locally with a dev server you start yourself:
+Create snapshots for first time:
 
-  ```bash
-  npm run storybook &
-  npx storybook-visual-regression test --url http://localhost --port 9009
-  ```
+```bash
+npx storybook-visual-regression update --command "npm run storybook" --url http://localhost:9009
+```
 
-- Let the tool start Storybook for you:
+or update snapshots after intentional UI changes:
 
-  ```bash
-  npx storybook-visual-regression test --command "npm run storybook" --server-timeout 90000
-  ```
+```bash
+npx storybook-visual-regression test --command "npm run storybook" --url http://localhost:9009 --grep "MyComponent"
+```
 
-- Update only stories matching a pattern:
+Run all stories:
 
-  ```bash
-  npx storybook-visual-regression update --grep button
-  ```
+```bash
+npx storybook-visual-regression test --command "npm run storybook" --url http://localhost:9009
+```
 
-- Run with quiet output (suppress verbose failure details):
-  ```bash
-  npx storybook-visual-regression test --quiet
-  ```
+Run all stories with a specific grep pattern:
 
-- Use different Playwright reporters:
-  ```bash
-  npx storybook-visual-regression test --reporter line
-  npx storybook-visual-regression test --reporter dot
-  ```
+```bash
+npx storybook-visual-regression test --command "npm run storybook" --url http://localhost:9009 --grep "MyComponent"
+```
 
 ### Outputs
 
