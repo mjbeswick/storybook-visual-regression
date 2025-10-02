@@ -3,9 +3,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { VisualRegressionRunner } from '../core/VisualRegressionRunner.js';
-import { StorybookDiscovery } from '../core/StorybookDiscovery.js';
-import type { VisualRegressionConfig, TestResult } from '../types/index.js';
+import type { VisualRegressionConfig } from '../types/index.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { spawn } from 'child_process';
@@ -150,8 +148,8 @@ export default defineConfig({
     locale: '${config.locale}',
   },
   webServer: {
-    command: 'npm',
-    args: ['run', 'storybook'],
+    command: '${parsedCommand.command}',
+    args: ${JSON.stringify(parsedCommand.args)},
     url: '${config.storybookUrl}',
     reuseExistingServer: true,
     timeout: ${config.serverTimeout},
@@ -232,12 +230,12 @@ test.describe('Storybook Visual Regression Tests', () => {
   console.log(chalk.gray('Running Playwright Test with reporter=list...'));
   await new Promise<void>((resolve, reject) => {
     const playwrightArgs = ['playwright', 'test', '--config', configPath, '--reporter', 'list'];
-    
+
     // Add workers override if specified
     if (config.workers && config.workers !== 12) {
       playwrightArgs.push('--workers', config.workers.toString());
     }
-    
+
     const child = spawn('npx', playwrightArgs, {
       stdio: 'inherit',
       env: process.env,
