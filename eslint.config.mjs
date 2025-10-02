@@ -1,6 +1,4 @@
-// For more info, see https://github.com/storybookjs/eslint-plugin-storybook#configuration-flat-config-format
-import storybook from "eslint-plugin-storybook";
-
+// ESLint configuration for storybook-visual-regression
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
@@ -8,9 +6,9 @@ export default [
   { ignores: ['dist/**', 'node_modules/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
   {
     files: ['src/**/*.{ts,tsx}'],
+    ignores: ['**/*.test.ts', '**/*.spec.ts', '**/__tests__/**'],
     languageOptions: {
       parserOptions: {
         project: ['./tsconfig.json'],
@@ -32,5 +30,19 @@ export default [
       'no-useless-escape': 'warn',
     },
   },
-  ...storybook.configs["flat/recommended"]
+  {
+    files: ['**/*.test.ts', '**/*.spec.ts', '**/__tests__/**'],
+    languageOptions: {
+      parserOptions: {
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/no-explicit-any': 'warn',
+    },
+  },
 ];

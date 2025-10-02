@@ -26,7 +26,7 @@ export class StorybookDiscovery {
       } else {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-    } catch (error) {
+    } catch (_error) {
       // Fallback to built files
       try {
         console.log('Trying fallback to built Storybook files...');
@@ -64,7 +64,7 @@ export class StorybookDiscovery {
         const entry = indexData.entries[storyId];
         return entry?.importPath;
       }
-    } catch (error) {
+    } catch (_error) {
       // Fallback to built files
       try {
         const indexFile = join(process.cwd(), 'storybook-static/index.json');
@@ -113,7 +113,7 @@ export class StorybookDiscovery {
         console.log('Successfully loaded viewport configurations from Storybook');
         return viewportConfig;
       }
-    } catch (error) {
+    } catch (_error) {
       console.log(
         'Could not load viewport configurations from Storybook:',
         error instanceof Error ? error.message : String(error),
@@ -127,7 +127,7 @@ export class StorybookDiscovery {
         console.log('Successfully loaded viewport configurations from Storybook config files');
         return viewportConfig;
       }
-    } catch (error) {
+    } catch (_error) {
       console.log(
         'Could not load viewport configurations from config files:',
         error instanceof Error ? error.message : String(error),
@@ -157,7 +157,7 @@ export class StorybookDiscovery {
           }
         }
       }
-    } catch (error) {
+    } catch (_error) {
       // Ignore errors and try other methods
     }
 
@@ -182,7 +182,7 @@ export class StorybookDiscovery {
           if (viewportConfig) {
             return viewportConfig;
           }
-        } catch (error) {
+        } catch (_error) {
           // Continue to next file
         }
       }

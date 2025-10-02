@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { execa } from 'execa';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { _execa } from 'execa';
+import { _fileURLToPath } from 'url';
+import { _dirname, _join } from 'path';
 
 // Mock execa
 vi.mock('execa', () => ({
@@ -35,15 +35,15 @@ describe('CLI Options and Filtering', () => {
       ];
 
       const includePatterns = ['button*', 'input*'];
-      const filtered = stories.filter(story => 
-        includePatterns.some(pattern => {
+      const filtered = stories.filter((story) =>
+        includePatterns.some((pattern) => {
           const regex = new RegExp(pattern.replace(/\*/g, '.*'));
           return regex.test(story.id);
-        })
+        }),
       );
 
       expect(filtered).toHaveLength(2);
-      expect(filtered.map(s => s.id)).toEqual(['button--primary', 'input--text']);
+      expect(filtered.map((s) => s.id)).toEqual(['button--primary', 'input--text']);
     });
 
     it('should filter stories by exclude patterns', () => {
@@ -54,15 +54,16 @@ describe('CLI Options and Filtering', () => {
       ];
 
       const excludePatterns = ['button*'];
-      const filtered = stories.filter(story => 
-        !excludePatterns.some(pattern => {
-          const regex = new RegExp(pattern.replace(/\*/g, '.*'));
-          return regex.test(story.id);
-        })
+      const filtered = stories.filter(
+        (story) =>
+          !excludePatterns.some((pattern) => {
+            const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+            return regex.test(story.id);
+          }),
       );
 
       expect(filtered).toHaveLength(2);
-      expect(filtered.map(s => s.id)).toEqual(['input--text', 'card--default']);
+      expect(filtered.map((s) => s.id)).toEqual(['input--text', 'card--default']);
     });
 
     it('should filter stories by regex pattern', () => {
@@ -74,7 +75,7 @@ describe('CLI Options and Filtering', () => {
 
       const regexPattern = 'button.*';
       const regex = new RegExp(regexPattern);
-      const filtered = stories.filter(story => regex.test(story.id));
+      const filtered = stories.filter((story) => regex.test(story.id));
 
       expect(filtered).toHaveLength(1);
       expect(filtered[0].id).toBe('button--primary');
@@ -89,23 +90,24 @@ describe('CLI Options and Filtering', () => {
 
       const includePatterns = ['button*', 'input*', 'card*'];
       const excludePatterns = ['button*'];
-      
-      let filtered = stories.filter(story => 
-        includePatterns.some(pattern => {
+
+      let filtered = stories.filter((story) =>
+        includePatterns.some((pattern) => {
           const regex = new RegExp(pattern.replace(/\*/g, '.*'));
           return regex.test(story.id);
-        })
+        }),
       );
 
-      filtered = filtered.filter(story => 
-        !excludePatterns.some(pattern => {
-          const regex = new RegExp(pattern.replace(/\*/g, '.*'));
-          return regex.test(story.id);
-        })
+      filtered = filtered.filter(
+        (story) =>
+          !excludePatterns.some((pattern) => {
+            const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+            return regex.test(story.id);
+          }),
       );
 
       expect(filtered).toHaveLength(2);
-      expect(filtered.map(s => s.id)).toEqual(['input--text', 'card--default']);
+      expect(filtered.map((s) => s.id)).toEqual(['input--text', 'card--default']);
     });
 
     it('should handle invalid regex patterns gracefully', () => {
@@ -115,10 +117,10 @@ describe('CLI Options and Filtering', () => {
       ];
 
       const invalidPattern = '[invalid';
-      
+
       expect(() => {
         const regex = new RegExp(invalidPattern);
-        stories.filter(story => regex.test(story.id));
+        stories.filter((story) => regex.test(story.id));
       }).toThrow();
     });
   });

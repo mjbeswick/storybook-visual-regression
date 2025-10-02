@@ -79,7 +79,7 @@ export class StorybookConfigDetector {
       }
 
       return null;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -114,7 +114,7 @@ export class StorybookConfigDetector {
       }
 
       return null;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -146,7 +146,7 @@ export class StorybookConfigDetector {
           if (viewportConfig && Object.keys(viewportConfig).length > 0) {
             return viewportConfig;
           }
-        } catch (error) {
+        } catch (_error) {
           // Continue to next file
         }
       }

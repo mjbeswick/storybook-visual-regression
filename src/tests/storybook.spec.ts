@@ -13,7 +13,7 @@ const defaultViewportKey = 'desktop';
 const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:9009';
 const projectRoot = process.env.ORIGINAL_CWD || process.cwd();
 
-function parseJsonEnv<T>(key: string, fallback: T): T {
+function _parseJsonEnv<T>(key: string, fallback: T): T {
   const value = process.env[key];
   if (!value) {
     return fallback;
@@ -21,7 +21,7 @@ function parseJsonEnv<T>(key: string, fallback: T): T {
 
   try {
     return JSON.parse(value) as T;
-  } catch (error) {
+  } catch (_error) {
     console.warn(
       `⚠️  Unable to parse environment variable ${key}:`,
       error instanceof Error ? error.message : String(error),
@@ -30,11 +30,11 @@ function parseJsonEnv<T>(key: string, fallback: T): T {
   }
 }
 
-function arraysFromIndex(index: any): {
+function arraysFromIndex(index: unknown): {
   storyIds: string[];
   storyImportPaths: Record<string, string>;
 } {
-  const entries = (index && typeof index === 'object' && index.entries) || {};
+  const entries = (index && typeof index === 'object' && 'entries' in index && index.entries) || {};
   const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
   const storyImportPaths: Record<string, string> = {};
   for (const id of storyIds) {
@@ -95,7 +95,7 @@ function filterStories(stories: string[]): string[] {
     try {
       const regex = new RegExp(process.env.STORYBOOK_GREP, 'i');
       filtered = filtered.filter((storyId) => regex.test(storyId));
-    } catch (error) {
+    } catch (_error) {
       console.warn(`Invalid regex pattern: ${process.env.STORYBOOK_GREP}`);
     }
   }

@@ -12,19 +12,19 @@ class FilteredReporter implements Reporter {
   private passed = 0;
   private failed = 0;
 
-  onBegin(config: FullConfig, suite: Suite) {
+  onBegin(config: FullConfig, suite: Suite): void {
     console.log(`Running ${suite.allTests().length} tests using ${config.workers} workers\n`);
   }
 
-  onStdOut(chunk: string | Buffer, test?: TestCase, result?: TestResult) {
+  onStdOut(_chunk: string | Buffer, _test?: TestCase, _result?: TestResult): void {
     // Suppress stdout
   }
 
-  onStdErr(chunk: string | Buffer, test?: TestCase, result?: TestResult) {
+  onStdErr(_chunk: string | Buffer, _test?: TestCase, _result?: TestResult): void {
     // Suppress stderr
   }
 
-  onTestEnd(test: TestCase, result: TestResult) {
+  onTestEnd(test: TestCase, result: TestResult): void {
     if (result.status === 'failed') {
       this.failures.push(test);
       this.failed++;
@@ -35,7 +35,7 @@ class FilteredReporter implements Reporter {
     }
   }
 
-  onEnd(result: FullResult) {
+  onEnd(result: FullResult): void {
     console.log(`\n${this.passed} passed, ${this.failed} failed`);
 
     if (result.status === 'passed') {

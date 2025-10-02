@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StorybookDiscovery } from './StorybookDiscovery.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import type { VisualRegressionConfig, StorybookIndex, StorybookEntry } from '../types/index.js';
+import type { VisualRegressionConfig, StorybookIndex, StorybookEntry } from '../types/index';
 
 // Mock fs functions
 vi.mock('fs', async () => {
@@ -287,7 +287,7 @@ describe('StorybookDiscovery', () => {
       const result = discovery.filterStories(stories);
 
       expect(result).toHaveLength(2);
-      expect(result.map(s => s.id)).toEqual(['button--primary', 'input--text']);
+      expect(result.map((s) => s.id)).toEqual(['button--primary', 'input--text']);
     });
 
     it('should filter stories by exclude patterns', () => {
@@ -306,7 +306,7 @@ describe('StorybookDiscovery', () => {
       const result = discovery.filterStories(stories);
 
       expect(result).toHaveLength(2);
-      expect(result.map(s => s.id)).toEqual(['input--text', 'card--default']);
+      expect(result.map((s) => s.id)).toEqual(['input--text', 'card--default']);
     });
 
     it('should combine include and exclude patterns', () => {
@@ -326,7 +326,7 @@ describe('StorybookDiscovery', () => {
       const result = discovery.filterStories(stories);
 
       expect(result).toHaveLength(2);
-      expect(result.map(s => s.id)).toEqual(['input--text', 'card--default']);
+      expect(result.map((s) => s.id)).toEqual(['input--text', 'card--default']);
     });
 
     it('should return all stories when no filters are applied', () => {

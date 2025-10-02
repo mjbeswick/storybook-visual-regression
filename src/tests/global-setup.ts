@@ -62,7 +62,7 @@ function loadStorybookFromStatic(): StorybookIndex {
   return data;
 }
 
-function extractStoryMetadata(data: StorybookIndex) {
+function extractStoryMetadata(data: StorybookIndex): Record<string, string> {
   const entries = data.entries ?? {};
   const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
   const importPaths: Record<string, string> = {};
@@ -77,7 +77,7 @@ function extractStoryMetadata(data: StorybookIndex) {
   return { storyIds, importPaths };
 }
 
-async function globalSetup(config: FullConfig) {
+async function globalSetup(_config: FullConfig): Promise<void> {
   const baseURL = process.env.STORYBOOK_URL || 'http://localhost:9009';
 
   console.log('');

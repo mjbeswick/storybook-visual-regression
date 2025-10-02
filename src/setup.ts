@@ -1,15 +1,16 @@
 import { beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync, readFileSync } from 'fs';
 
 // Global test setup
 beforeAll(() => {
   // Set up global test environment
   process.env.NODE_ENV = 'test';
-  
+
   // Mock global fetch if not available
   if (!global.fetch) {
     global.fetch = globalThis.fetch || (() => Promise.reject(new Error('fetch not available')));
   }
-  
+
   // Mock AbortSignal.timeout if not available
   if (!AbortSignal.timeout) {
     AbortSignal.timeout = (ms: number) => {
@@ -36,7 +37,7 @@ afterEach(() => {
 });
 
 // Global test utilities
-export const createMockConfig = (overrides = {}) => ({
+export const createMockConfig = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   storybookUrl: 'http://localhost:6006',
   storybookPort: 6006,
   storybookCommand: 'npm run storybook',
@@ -49,7 +50,7 @@ export const createMockConfig = (overrides = {}) => ({
   ...overrides,
 });
 
-export const createMockStory = (overrides = {}) => ({
+export const createMockStory = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   id: 'example-button--primary',
   title: 'Example/Button',
   name: 'Primary',
@@ -59,28 +60,29 @@ export const createMockStory = (overrides = {}) => ({
   ...overrides,
 });
 
-export const createMockStorybookIndex = (stories: any[] = []) => ({
-  v: 4,
-  entries: stories.reduce((acc: any, story: any) => {
-    acc[story.id] = story;
+export const createMockStorybookIndex = (stories: unknown[] = []): Record<string, unknown> => ({
+  entries: stories.reduce((acc: Record<string, unknown>, story: unknown) => {
+    const storyObj = story as Record<string, unknown>;
+    acc[storyObj.id as string] = story;
     return acc;
   }, {}),
 });
 
-export const mockFileSystem = (files: Record<string, string>) => {
-  const { existsSync, readFileSync } = vi.mocked(require('fs'));
-  
-  existsSync.mockImplementation((path: string) => {
-    return Object.keys(files).some(filePath => path.includes(filePath));
+export const mockFileSystem = (files: Record<string, string>): void => {
+  const mockedExistsSync = vi.mocked(existsSync);
+  const mockedReadFileSync = vi.mocked(readFileSync);
+
+  mockedExistsSync.mockImplementation((path: string) => {
+    return Object.keys(files).some((filePath) => path.includes(filePath));
   });
-  
-  readFileSync.mockImplementation((path: string) => {
-    const filePath = Object.keys(files).find(filePath => path.includes(filePath));
+
+  mockedReadFileSync.mockImplementation((path: string) => {
+    const filePath = Object.keys(files).find((filePath) => path.includes(filePath));
     return filePath ? files[filePath] : '';
   });
 };
 
-export const mockFetch = (responses: Record<string, any>) => {
+export const mockFetch = (responses: Record<string, unknown>): void => {
   global.fetch = vi.fn().mockImplementation((url: string) => {
     const response = responses[url];
     if (response) {
@@ -93,7 +95,7 @@ export const mockFetch = (responses: Record<string, any>) => {
   });
 };
 
-export const mockPlaywright = () => {
+export const mockPlaywright = (): { mockBrowser: unknown; mockContext: unknown; mockPage: unknown } => {
   const mockPage = {
     goto: vi.fn().mockResolvedValue(undefined),
     setViewportSize: vi.fn().mockResolvedValue(undefined),

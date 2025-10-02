@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import FilteredReporter from './filtered-reporter.js';
-import type { FullConfig, FullResult, Suite, TestCase, TestResult } from '@playwright/test/reporter';
+import type {
+  FullConfig,
+  FullResult,
+  Suite,
+  TestCase,
+  TestResult,
+} from '@playwright/test/reporter';
 
 describe('FilteredReporter', () => {
   let reporter: FilteredReporter;
@@ -258,10 +264,7 @@ describe('FilteredReporter', () => {
 
       const rootSuite: Suite = {
         title: 'Root',
-        allTests: () => [
-          { title: 'Test 1' } as TestCase,
-          { title: 'Test 2' } as TestCase,
-        ],
+        allTests: () => [{ title: 'Test 1' } as TestCase, { title: 'Test 2' } as TestCase],
       } as Suite;
 
       const test1: TestCase = {

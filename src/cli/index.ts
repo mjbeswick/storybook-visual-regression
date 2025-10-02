@@ -13,7 +13,28 @@ import { dirname, join } from 'path';
 
 const program = new Command();
 
-async function createConfigFromOptions(options: any, cwd: string): Promise<VisualRegressionConfig> {
+type CliOptions = {
+  url?: string;
+  port?: string;
+  command?: string;
+  workers?: string;
+  retries?: string;
+  webserverTimeout?: string;
+  timezone?: string;
+  locale?: string;
+  maxFailures?: string;
+  reporter?: string;
+  quiet?: boolean;
+  include?: string;
+  exclude?: string;
+  grep?: string;
+  debug?: boolean;
+  output?: string;
+  updateSnapshots?: boolean;
+  browser?: string;
+};
+
+async function createConfigFromOptions(options: CliOptions, cwd: string): Promise<VisualRegressionConfig> {
   const defaultConfig = createDefaultConfig();
   const detector = new StorybookConfigDetector(cwd);
 
@@ -43,8 +64,8 @@ async function createConfigFromOptions(options: any, cwd: string): Promise<Visua
   })();
 
   const port =
-    userSpecifiedPortFlag && Number.isInteger(parseInt(options.port))
-      ? parseInt(options.port)
+    userSpecifiedPortFlag && Number.isInteger(parseInt(options.port || ''))
+      ? parseInt(options.port || '')
       : (inferredPortFromUrl ?? detectedConfig.storybookPort);
 
   const baseUrl = urlFromOptions || 'http://localhost';
@@ -79,7 +100,7 @@ async function createConfigFromOptions(options: any, cwd: string): Promise<Visua
 }
 
 // Helper function to wait for Storybook server to be ready
-async function waitForStorybookServer(url: string, timeout: number): Promise<void> {
+async function _waitForStorybookServer(url: string, timeout: number): Promise<void> {
   const startTime = Date.now();
   const maxWaitTime = timeout;
 
@@ -116,7 +137,7 @@ async function waitForStorybookServer(url: string, timeout: number): Promise<voi
       } else {
         console.log(`Main page not ready yet (${mainResponse.status})`);
       }
-    } catch (error) {
+    } catch (_error) {
       console.log(
         `Connection attempt ${attempt} failed:`,
         error instanceof Error ? error.message : String(error),
@@ -138,20 +159,20 @@ program
   .version('1.0.0');
 
 // Shared runner used by multiple commands
-async function runTests(options: any) {
-  const startedAt = Date.now();
+async function runTests(options: CliOptions): Promise<void> {
+  const _startedAt = Date.now();
 
   try {
     // Always use Playwright reporter path for proper webServer handling
     await runWithPlaywrightReporter(options);
   } catch (error) {
     console.log(chalk.red('Test execution failed'));
-    console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
+    console.error(chalk.red(_error instanceof Error ? _error.message : 'Unknown error'));
     process.exit(1);
   }
 }
 
-function formatDuration(durationMs: number): string {
+function _formatDuration(durationMs: number): string {
   if (durationMs < 1000) {
     return `${durationMs}ms`;
   }
@@ -164,7 +185,7 @@ function formatDuration(durationMs: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-async function runWithPlaywrightReporter(options: any): Promise<void> {
+async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   // Get the main project directory where the CLI is installed
   const originalCwd = process.cwd();
   const __filename = fileURLToPath(import.meta.url);
@@ -392,24 +413,24 @@ program
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
-  .action(async (options) => runTests(options));
+  .action(async (options) => runTests(options as CliOptions));
 
 program
   .command('install-browsers')
   .description('Install Playwright browsers')
   .option('-b, --browser <browser>', 'Browser to install (chromium|firefox|webkit|all)', 'chromium')
   .action(async (options) => {
-    const spinner = ora(`Installing ${options.browser} browser...`).start();
+    const spinner = ora(`Installing ${(options as CliOptions).browser} browser...`).start();
 
     try {
       const { execSync } = await import('child_process');
-      const browser = options.browser === 'all' ? '' : options.browser;
+      const browser = (options as CliOptions).browser === 'all' ? '' : (options as CliOptions).browser;
       execSync(`playwright install ${browser}`, { stdio: 'inherit' });
 
-      spinner.succeed(`Successfully installed ${options.browser} browser`);
-    } catch (error) {
+      spinner.succeed(`Successfully installed ${(options as CliOptions).browser} browser`);
+    } catch (_error) {
       spinner.fail('Browser installation failed');
-      console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
+      console.error(chalk.red(_error instanceof Error ? _error.message : 'Unknown error'));
       process.exit(1);
     }
   });
@@ -441,8 +462,8 @@ program
   .action(async (options) => {
     // Enable snapshot updates only via this command
     process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = 'true';
-    if (options.reporter) process.env.PLAYWRIGHT_REPORTER = String(options.reporter);
-    await runTests(options);
+    if ((options as CliOptions).reporter) process.env.PLAYWRIGHT_REPORTER = String((options as CliOptions).reporter);
+    await runTests(options as CliOptions);
   });
 
 program.parse();

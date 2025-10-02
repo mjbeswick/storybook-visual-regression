@@ -1,4 +1,4 @@
-import { chromium, firefox, webkit, Browser, Page } from 'playwright';
+import { chromium, firefox, webkit, Browser } from 'playwright';
 import type {
   VisualRegressionConfig,
   TestResult,
@@ -60,7 +60,7 @@ export class VisualRegressionRunner {
     const storiesQueue = [...filteredStories];
     const workerCount = Math.max(1, this.config.workers ?? 1);
 
-    const runWorker = async () => {
+    const runWorker = async (): Promise<void> => {
       while (!stopRequested) {
         const story = storiesQueue.shift();
         if (!story) break;
@@ -147,8 +147,8 @@ export class VisualRegressionRunner {
         const locale = 'en-US';
         Object.defineProperty(Intl, 'DateTimeFormat', {
           value: class extends Intl.DateTimeFormat {
-            constructor(...args: any[]) {
-              super(...args);
+            constructor(...args: unknown[]) {
+              super(...(args as ConstructorParameters<typeof Intl.DateTimeFormat>));
               if (args.length === 0) {
                 super(locale, { timeZone: timezone });
               }
@@ -223,7 +223,7 @@ export class VisualRegressionRunner {
     return filtered;
   }
 
-  private getBrowserType() {
+  private getBrowserType(): typeof chromium | typeof firefox | typeof webkit {
     switch (this.config.browser) {
       case 'firefox':
         return firefox;
