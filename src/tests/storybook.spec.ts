@@ -35,7 +35,9 @@ async function getStoryIds(): Promise<string[]> {
       return Object.keys(entries).filter((id) => entries[id].type === 'story');
     } catch {
       console.error('Error reading Storybook data:', error);
-      console.log('Make sure Storybook dev server is running or run "npm run build-storybook" first');
+      console.log(
+        'Make sure Storybook dev server is running or run "npm run build-storybook" first',
+      );
       throw new Error('Unable to discover stories from Storybook');
     }
   }
@@ -79,12 +81,12 @@ async function getStoryImportPaths(): Promise<Record<string, string>> {
 test('Storybook Visual Regression Tests', async ({ page }) => {
   const storyIds = await getStoryIds();
   const storyImportPaths = await getStoryImportPaths();
-  
+
   console.log(`Found ${storyIds.length} stories to test`);
 
   for (const storyId of storyIds) {
     console.log(`Testing story: ${storyId}`);
-    
+
     // Determine viewport key from story source (if specified), else use default
     let viewportKey = defaultViewportKey;
     const importPath = storyImportPaths[storyId];
@@ -115,70 +117,61 @@ test('Storybook Visual Regression Tests', async ({ page }) => {
 
     const storyUrl = `${storybookUrl}/iframe.html?id=${storyId}&viewMode=story`;
 
-    try {
-      // Navigate to the story's iframe
-      await page.goto(storyUrl, {
-        waitUntil: 'networkidle',
-        timeout: 10_000,
-      });
+    // Navigate to the story's iframe
+    await page.goto(storyUrl, {
+      waitUntil: 'networkidle',
+      timeout: 10_000,
+    });
 
-      // Wait for the story to load
-      await page.waitForLoadState('networkidle');
+    // Wait for the story to load
+    await page.waitForLoadState('networkidle');
 
-      // Wait for the body to load
-      await page.waitForSelector('body', { timeout: 10_000 });
+    // Wait for the body to load
+    await page.waitForSelector('body', { timeout: 10_000 });
 
-      await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('networkidle');
 
-      // Prevent scrollbars and scroll-induced size changes in the story iframe
-      await page.evaluate(() => {
-        const html = document.documentElement;
-        const body = document.body;
-        if (html) html.style.overflow = 'hidden';
-        if (body) body.style.overflow = 'hidden';
-      });
+    // Prevent scrollbars and scroll-induced size changes in the story iframe
+    await page.evaluate(() => {
+      const html = document.documentElement;
+      const body = document.body;
+      if (html) html.style.overflow = 'hidden';
+      if (body) body.style.overflow = 'hidden';
+    });
 
-      // Wait for content size to stabilize by sampling size three times
-      await page.evaluate(async () => {
-        const measure = (): string => {
-          const se = document.scrollingElement || document.documentElement;
-          const h = Math.max(
-            se?.scrollHeight ?? 0,
-            document.documentElement.scrollHeight,
-            document.body.scrollHeight,
-          );
-          const w = Math.max(
-            se?.scrollWidth ?? 0,
-            document.documentElement.scrollWidth,
-            document.body.scrollWidth,
-          );
-          return `${w}x${h}`;
-        };
+    // Wait for content size to stabilize by sampling size three times
+    await page.evaluate(async () => {
+      const measure = (): string => {
+        const se = document.scrollingElement || document.documentElement;
+        const h = Math.max(
+          se?.scrollHeight ?? 0,
+          document.documentElement.scrollHeight,
+          document.body.scrollHeight,
+        );
+        const w = Math.max(
+          se?.scrollWidth ?? 0,
+          document.documentElement.scrollWidth,
+          document.body.scrollWidth,
+        );
+        return `${w}x${h}`;
+      };
 
-        const sleep = (ms: number): Promise<void> =>
-          new Promise((resolve) => setTimeout(resolve, ms));
+      const sleep = (ms: number): Promise<void> =>
+        new Promise((resolve) => setTimeout(resolve, ms));
 
-        const a = measure();
-        await sleep(150);
-        const b = measure();
-        await sleep(150);
-        const c = measure();
-        // Returning a value is fine, caller does not use it
-        return a === b && b === c;
-      });
+      const a = measure();
+      await sleep(150);
+      const b = measure();
+      await sleep(150);
+      const c = measure();
+      // Returning a value is fine, caller does not use it
+      return a === b && b === c;
+    });
 
-      // Take screenshot and compare with baseline
-      const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
-      await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`, {
-        animations: 'disabled',
-      });
-    } catch (error) {
-      console.error(storyUrl);
-      if (error instanceof Error && error.message.includes('Screenshot comparison failed')) {
-        console.log(`\n💡 To update this snapshot, run:`);
-        console.log(`   npm run test:visual-regression:update -- --grep "${storyId}"`);
-      }
-      throw error; // Re-throw to fail the test
-    }
+    // Take screenshot and compare with baseline
+    const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
+    await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`, {
+      animations: 'disabled',
+    });
   }
 });
