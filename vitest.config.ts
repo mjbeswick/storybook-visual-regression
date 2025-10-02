@@ -6,6 +6,15 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: ['./src/setup.ts'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/test/**',
+      '**/src/tests/**',
+      '**/test/.svr-playwright/**',
+      '**/*.spec.ts',
+      '**/*.spec.js',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

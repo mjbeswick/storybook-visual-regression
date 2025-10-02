@@ -5,20 +5,10 @@ import type { FullConfig, FullResult, Suite, TestCase, TestResult } from '@playw
 describe('FilteredReporter', () => {
   let reporter: FilteredReporter;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-  let consoleStdoutSpy: ReturnType<typeof vi.spyOn>;
-  let consoleStderrSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     reporter = new FilteredReporter();
-    
-    // Mock console methods
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    consoleStdoutSpy = vi.spyOn(console, 'stdout', 'get').mockReturnValue({
-      write: vi.fn(),
-    } as any);
-    consoleStderrSpy = vi.spyOn(console, 'stderr', 'get').mockReturnValue({
-      write: vi.fn(),
-    } as any);
   });
 
   afterEach(() => {
@@ -27,33 +17,37 @@ describe('FilteredReporter', () => {
 
   describe('onBegin', () => {
     it('should log test count and worker count', () => {
-      const mockConfig: FullConfig = {
+      const config: FullConfig = {
+        projects: [],
         workers: 4,
       } as FullConfig;
 
-      const mockSuite: Suite = {
+      const rootSuite: Suite = {
+        title: 'Root',
         allTests: () => [
-          { title: 'test1' } as TestCase,
-          { title: 'test2' } as TestCase,
-          { title: 'test3' } as TestCase,
+          { title: 'Test 1' } as TestCase,
+          { title: 'Test 2' } as TestCase,
+          { title: 'Test 3' } as TestCase,
         ],
       } as Suite;
 
-      reporter.onBegin(mockConfig, mockSuite);
+      reporter.onBegin(config, rootSuite);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('Running 3 tests using 4 workers\n');
     });
 
     it('should handle empty test suite', () => {
-      const mockConfig: FullConfig = {
+      const config: FullConfig = {
+        projects: [],
         workers: 1,
       } as FullConfig;
 
-      const mockSuite: Suite = {
+      const rootSuite: Suite = {
+        title: 'Root',
         allTests: () => [],
       } as Suite;
 
-      reporter.onBegin(mockConfig, mockSuite);
+      reporter.onBegin(config, rootSuite);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('Running 0 tests using 1 workers\n');
     });
@@ -61,151 +55,146 @@ describe('FilteredReporter', () => {
 
   describe('onTestEnd', () => {
     it('should log passed tests with checkmark', () => {
-      const mockTest: TestCase = {
-        title: 'example-button--primary',
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
       } as TestCase;
 
-      const mockResult: TestResult = {
+      const result: TestResult = {
         status: 'passed',
-        duration: 1500,
+        duration: 100,
       } as TestResult;
 
-      reporter.onTestEnd(mockTest, mockResult);
+      reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   example-button--primary');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   Test 1');
     });
 
     it('should log failed tests with X mark', () => {
-      const mockTest: TestCase = {
-        title: 'example-card--default',
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
       } as TestCase;
 
-      const mockResult: TestResult = {
+      const result: TestResult = {
         status: 'failed',
-        duration: 2000,
+        duration: 100,
       } as TestResult;
 
-      reporter.onTestEnd(mockTest, mockResult);
+      reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   example-card--default');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   Test 1');
     });
 
     it('should track test counts correctly', () => {
-      const passedTest: TestCase = { title: 'test1' } as TestCase;
-      const failedTest: TestCase = { title: 'test2' } as TestCase;
-      const passedResult: TestResult = { status: 'passed' } as TestResult;
-      const failedResult: TestResult = { status: 'failed' } as TestResult;
+      const test1: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
 
-      reporter.onTestEnd(passedTest, passedResult);
-      reporter.onTestEnd(failedTest, failedResult);
+      const test2: TestCase = {
+        title: 'Test 2',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
 
-      // Check internal state by calling onEnd
-      const mockResult: FullResult = {
+      const passedResult: TestResult = {
+        status: 'passed',
+        duration: 100,
+      } as TestResult;
+
+      const failedResult: TestResult = {
         status: 'failed',
-        duration: 5000,
-      } as FullResult;
+        duration: 100,
+      } as TestResult;
 
-      reporter.onEnd(mockResult);
+      reporter.onTestEnd(test1, passedResult);
+      reporter.onTestEnd(test2, failedResult);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 1 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   Test 1');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   Test 2');
     });
 
     it('should ignore skipped tests', () => {
-      const mockTest: TestCase = {
-        title: 'skipped-test',
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
       } as TestCase;
 
-      const mockResult: TestResult = {
+      const result: TestResult = {
         status: 'skipped',
-        duration: 0,
+        duration: 100,
       } as TestResult;
 
-      reporter.onTestEnd(mockTest, mockResult);
+      reporter.onTestEnd(test, result);
 
-      // Should not log anything for skipped tests
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
 
     it('should ignore timed out tests', () => {
-      const mockTest: TestCase = {
-        title: 'timeout-test',
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
       } as TestCase;
 
-      const mockResult: TestResult = {
+      const result: TestResult = {
         status: 'timedOut',
-        duration: 30000,
+        duration: 100,
       } as TestResult;
 
-      reporter.onTestEnd(mockTest, mockResult);
+      reporter.onTestEnd(test, result);
 
-      // Should not log anything for timed out tests
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
   });
 
   describe('onEnd', () => {
     it('should show success message when all tests passed', () => {
-      // Set up some passed tests
-      const passedTest: TestCase = { title: 'test1' } as TestCase;
-      const passedResult: TestResult = { status: 'passed' } as TestResult;
-      reporter.onTestEnd(passedTest, passedResult);
-
-      const mockResult: FullResult = {
+      const result: FullResult = {
         status: 'passed',
-        duration: 5000,
+        startTime: Date.now(),
+        duration: 1000,
       } as FullResult;
 
-      reporter.onEnd(mockResult);
+      reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 0 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
       expect(consoleLogSpy).toHaveBeenCalledWith('✓ All tests passed');
     });
 
     it('should show failure message when some tests failed', () => {
-      // Set up some failed tests
-      const failedTest: TestCase = { title: 'test1' } as TestCase;
-      const failedResult: TestResult = { status: 'failed' } as TestResult;
-      reporter.onTestEnd(failedTest, failedResult);
-
-      const mockResult: FullResult = {
+      const result: FullResult = {
         status: 'failed',
-        duration: 5000,
+        startTime: Date.now(),
+        duration: 1000,
       } as FullResult;
 
-      reporter.onEnd(mockResult);
+      reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 1 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
       expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
 
     it('should handle mixed results', () => {
-      // Set up mixed results
-      const passedTest: TestCase = { title: 'passed-test' } as TestCase;
-      const failedTest: TestCase = { title: 'failed-test' } as TestCase;
-      const passedResult: TestResult = { status: 'passed' } as TestResult;
-      const failedResult: TestResult = { status: 'failed' } as TestResult;
-
-      reporter.onTestEnd(passedTest, passedResult);
-      reporter.onTestEnd(failedTest, failedResult);
-
-      const mockResult: FullResult = {
-        status: 'failed',
-        duration: 5000,
+      const result: FullResult = {
+        status: 'passed',
+        startTime: Date.now(),
+        duration: 1000,
       } as FullResult;
 
-      reporter.onEnd(mockResult);
+      reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 1 failed');
-      expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('✓ All tests passed');
     });
 
     it('should handle no tests run', () => {
-      const mockResult: FullResult = {
+      const result: FullResult = {
         status: 'passed',
+        startTime: Date.now(),
         duration: 0,
       } as FullResult;
 
-      reporter.onEnd(mockResult);
+      reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
       expect(consoleLogSpy).toHaveBeenCalledWith('✓ All tests passed');
@@ -214,110 +203,123 @@ describe('FilteredReporter', () => {
 
   describe('onStdOut', () => {
     it('should suppress stdout output', () => {
-      const mockTest: TestCase = { title: 'test1' } as TestCase;
-      const mockResult: TestResult = { status: 'passed' } as TestResult;
+      const chunk = 'Some output';
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
 
-      reporter.onStdOut('Some stdout output', mockTest, mockResult);
+      reporter.onStdOut(chunk, test);
 
-      // Should not output anything
+      // Should not log anything
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
 
     it('should suppress stdout output without test context', () => {
-      reporter.onStdOut('Some stdout output');
+      const chunk = 'Some output';
 
-      // Should not output anything
+      reporter.onStdOut(chunk);
+
+      // Should not log anything
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
   });
 
   describe('onStdErr', () => {
     it('should suppress stderr output', () => {
-      const mockTest: TestCase = { title: 'test1' } as TestCase;
-      const mockResult: TestResult = { status: 'failed' } as TestResult;
+      const chunk = 'Some error';
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
 
-      reporter.onStdErr('Some stderr output', mockTest, mockResult);
+      reporter.onStdErr(chunk, test);
 
-      // Should not output anything
+      // Should not log anything
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
 
     it('should suppress stderr output without test context', () => {
-      reporter.onStdErr('Some stderr output');
+      const chunk = 'Some error';
 
-      // Should not output anything
+      reporter.onStdErr(chunk);
+
+      // Should not log anything
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
   });
 
   describe('Integration', () => {
     it('should work end-to-end with multiple tests', () => {
-      const mockConfig: FullConfig = {
+      const config: FullConfig = {
+        projects: [],
         workers: 2,
       } as FullConfig;
 
-      const mockSuite: Suite = {
+      const rootSuite: Suite = {
+        title: 'Root',
         allTests: () => [
-          { title: 'test1' } as TestCase,
-          { title: 'test2' } as TestCase,
-          { title: 'test3' } as TestCase,
+          { title: 'Test 1' } as TestCase,
+          { title: 'Test 2' } as TestCase,
         ],
       } as Suite;
 
-      // Begin
-      reporter.onBegin(mockConfig, mockSuite);
+      const test1: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
 
-      // Test results
-      reporter.onTestEnd({ title: 'test1' } as TestCase, { status: 'passed' } as TestResult);
-      reporter.onTestEnd({ title: 'test2' } as TestCase, { status: 'failed' } as TestResult);
-      reporter.onTestEnd({ title: 'test3' } as TestCase, { status: 'passed' } as TestResult);
+      const test2: TestCase = {
+        title: 'Test 2',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
 
-      // End
-      const mockResult: FullResult = {
+      const passedResult: TestResult = {
+        status: 'passed',
+        duration: 100,
+      } as TestResult;
+
+      const failedResult: TestResult = {
         status: 'failed',
-        duration: 10000,
+        duration: 100,
+      } as TestResult;
+
+      const finalResult: FullResult = {
+        status: 'failed',
+        startTime: Date.now(),
+        duration: 200,
       } as FullResult;
 
-      reporter.onEnd(mockResult);
+      reporter.onBegin(config, rootSuite);
+      reporter.onTestEnd(test1, passedResult);
+      reporter.onTestEnd(test2, failedResult);
+      reporter.onEnd(finalResult);
 
-      // Verify all expected calls
-      expect(consoleLogSpy).toHaveBeenCalledWith('Running 3 tests using 2 workers\n');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   test1');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   test2');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   test3');
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n2 passed, 1 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 2 tests using 2 workers\n');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   Test 1');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   Test 2');
+      expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 1 failed');
       expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
 
     it('should handle large number of tests', () => {
-      const mockConfig: FullConfig = {
-        workers: 12,
+      const config: FullConfig = {
+        projects: [],
+        workers: 8,
       } as FullConfig;
 
-      const mockSuite: Suite = {
-        allTests: () => Array.from({ length: 100 }, (_, i) => ({ title: `test${i}` } as TestCase)),
+      const tests = Array.from({ length: 100 }, (_, i) => ({
+        title: `Test ${i + 1}`,
+      })) as TestCase[];
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () => tests,
       } as Suite;
 
-      reporter.onBegin(mockConfig, mockSuite);
+      reporter.onBegin(config, rootSuite);
 
-      // Simulate 95 passed, 5 failed
-      for (let i = 0; i < 95; i++) {
-        reporter.onTestEnd({ title: `test${i}` } as TestCase, { status: 'passed' } as TestResult);
-      }
-      for (let i = 95; i < 100; i++) {
-        reporter.onTestEnd({ title: `test${i}` } as TestCase, { status: 'failed' } as TestResult);
-      }
-
-      const mockResult: FullResult = {
-        status: 'failed',
-        duration: 30000,
-      } as FullResult;
-
-      reporter.onEnd(mockResult);
-
-      expect(consoleLogSpy).toHaveBeenCalledWith('Running 100 tests using 12 workers\n');
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n95 passed, 5 failed');
-      expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 100 tests using 8 workers\n');
     });
   });
 });

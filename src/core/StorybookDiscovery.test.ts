@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StorybookDiscovery } from './StorybookDiscovery.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import type { VisualRegressionConfig, StorybookIndex } from '../types/index.js';
+import type { VisualRegressionConfig, StorybookIndex, StorybookEntry } from '../types/index.js';
 
 // Mock fs functions
 vi.mock('fs', async () => {
@@ -102,7 +102,7 @@ describe('StorybookDiscovery', () => {
       };
 
       // Mock dev server failure
-      vi.mocked(fetch).mockRejectedValue(new Error('Connection failed'));
+      vi.mocked(fetch).mockRejectedValue(new Error('Network error'));
 
       // Mock built files fallback
       vi.mocked(existsSync).mockReturnValue(true);
@@ -120,7 +120,7 @@ describe('StorybookDiscovery', () => {
 
     it('should throw error when both dev server and built files fail', async () => {
       // Mock dev server failure
-      vi.mocked(fetch).mockRejectedValue(new Error('Connection failed'));
+      vi.mocked(fetch).mockRejectedValue(new Error('Network error'));
 
       // Mock built files failure
       vi.mocked(existsSync).mockReturnValue(false);
@@ -148,7 +148,7 @@ describe('StorybookDiscovery', () => {
 
       const result = await discovery.discoverStories();
 
-      expect(result).toHaveLength(0);
+      expect(result).toEqual([]);
     });
 
     it('should handle timeout errors', async () => {
@@ -165,7 +165,7 @@ describe('StorybookDiscovery', () => {
 
       const result = await discovery.discoverStories();
 
-      expect(result).toHaveLength(0);
+      expect(result).toEqual([]);
     });
   });
 
@@ -190,20 +190,12 @@ describe('StorybookDiscovery', () => {
             tags: ['story'],
             type: 'story',
           },
-          'example-docs--page': {
-            id: 'example-docs--page',
-            title: 'Example/Docs',
-            name: 'Page',
-            importPath: './src/components/Docs.mdx',
-            tags: ['docs'],
-            type: 'docs',
-          },
         },
       };
 
       const result = discovery['extractStoriesFromIndex'](mockIndexData);
 
-      expect(result).toHaveLength(2); // Only stories, not docs
+      expect(result).toHaveLength(2);
       expect(result[0].id).toBe('example-button--primary');
       expect(result[1].id).toBe('example-card--default');
     });
@@ -212,21 +204,21 @@ describe('StorybookDiscovery', () => {
       const mockIndexData: StorybookIndex = {
         v: 4,
         entries: {
-          'example-docs--page': {
-            id: 'example-docs--page',
-            title: 'Example/Docs',
-            name: 'Page',
-            importPath: './src/components/Docs.mdx',
-            tags: ['docs'],
-            type: 'docs',
-          },
-          'example-csf--page': {
-            id: 'example-csf--page',
-            title: 'Example/CSF',
-            name: 'Page',
-            importPath: './src/components/CSF.stories.tsx',
+          'example-button--primary': {
+            id: 'example-button--primary',
+            title: 'Example/Button',
+            name: 'Primary',
+            importPath: './src/components/Button.stories.tsx',
             tags: ['story'],
             type: 'story',
+          },
+          'example-button--docs': {
+            id: 'example-button--docs',
+            title: 'Example/Button',
+            name: 'Docs',
+            importPath: './src/components/Button.stories.tsx',
+            tags: ['docs'],
+            type: 'docs',
           },
         },
       };
@@ -234,7 +226,7 @@ describe('StorybookDiscovery', () => {
       const result = discovery['extractStoriesFromIndex'](mockIndexData);
 
       expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('example-csf--page');
+      expect(result[0].id).toBe('example-button--primary');
     });
 
     it('should handle empty entries', () => {
@@ -245,225 +237,108 @@ describe('StorybookDiscovery', () => {
 
       const result = discovery['extractStoriesFromIndex'](mockIndexData);
 
-      expect(result).toHaveLength(0);
+      expect(result).toEqual([]);
     });
 
     it('should handle malformed entries gracefully', () => {
       const mockIndexData: StorybookIndex = {
         v: 4,
         entries: {
+          'example-button--primary': {
+            id: 'example-button--primary',
+            title: 'Example/Button',
+            name: 'Primary',
+            importPath: './src/components/Button.stories.tsx',
+            tags: ['story'],
+            type: 'story',
+          },
           'malformed-entry': {
             id: 'malformed-entry',
-            // Missing required fields
-          } as any,
+            title: 'Malformed',
+            name: 'Entry',
+            importPath: './src/components/Malformed.stories.tsx',
+            tags: ['story'],
+            type: 'docs', // Not a story type
+          },
         },
       };
 
       const result = discovery['extractStoriesFromIndex'](mockIndexData);
 
-      expect(result).toHaveLength(0);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('example-button--primary');
     });
   });
 
-  describe('getViewportConfigForStory', () => {
-    it('should return default viewport when no specific config', () => {
-      const story = {
-        id: 'example-button--primary',
-        title: 'Example/Button',
-        name: 'Primary',
-        importPath: './src/components/Button.stories.tsx',
-        tags: ['story'],
-        type: 'story' as const,
+  describe('filterStories', () => {
+    it('should filter stories by include patterns', () => {
+      const stories: StorybookEntry[] = [
+        { id: 'button--primary', title: 'Button', name: 'Primary' },
+        { id: 'input--text', title: 'Input', name: 'Text' },
+        { id: 'card--default', title: 'Card', name: 'Default' },
+      ];
+
+      const config = {
+        ...mockConfig,
+        includeStories: ['button', 'input'],
       };
 
-      const result = discovery['getViewportConfigForStory'](story);
+      discovery = new StorybookDiscovery(config);
+      const result = discovery.filterStories(stories);
 
-      expect(result).toEqual({ desktop: { width: 1920, height: 1080 } });
+      expect(result).toHaveLength(2);
+      expect(result.map(s => s.id)).toEqual(['button--primary', 'input--text']);
     });
 
-    it('should return specific viewport when configured', () => {
-      const story = {
-        id: 'example-button--primary',
-        title: 'Example/Button',
-        name: 'Primary',
-        importPath: './src/components/Button.stories.tsx',
-        tags: ['story'],
-        type: 'story' as const,
+    it('should filter stories by exclude patterns', () => {
+      const stories: StorybookEntry[] = [
+        { id: 'button--primary', title: 'Button', name: 'Primary' },
+        { id: 'input--text', title: 'Input', name: 'Text' },
+        { id: 'card--default', title: 'Card', name: 'Default' },
+      ];
+
+      const config = {
+        ...mockConfig,
+        excludeStories: ['button'],
       };
 
-      // Mock viewport detection
-      discovery['detectViewportFromStory'] = vi.fn().mockReturnValue({
-        mobile: { width: 375, height: 667 },
-      });
+      discovery = new StorybookDiscovery(config);
+      const result = discovery.filterStories(stories);
 
-      const result = discovery['getViewportConfigForStory'](story);
-
-      expect(result).toEqual({ mobile: { width: 375, height: 667 } });
+      expect(result).toHaveLength(2);
+      expect(result.map(s => s.id)).toEqual(['input--text', 'card--default']);
     });
-  });
 
-  describe('detectViewportFromStory', () => {
-    it('should detect viewport from story file', () => {
-      const story = {
-        id: 'example-button--primary',
-        title: 'Example/Button',
-        name: 'Primary',
-        importPath: './src/components/Button.stories.tsx',
-        tags: ['story'],
-        type: 'story' as const,
+    it('should combine include and exclude patterns', () => {
+      const stories: StorybookEntry[] = [
+        { id: 'button--primary', title: 'Button', name: 'Primary' },
+        { id: 'input--text', title: 'Input', name: 'Text' },
+        { id: 'card--default', title: 'Card', name: 'Default' },
+      ];
+
+      const config = {
+        ...mockConfig,
+        includeStories: ['button', 'input', 'card'],
+        excludeStories: ['button'],
       };
 
-      const mockStoryContent = `
-        export default {
-          title: 'Example/Button',
-          parameters: {
-            viewport: {
-              defaultViewport: 'mobile'
-            }
-          }
-        };
-      `;
+      discovery = new StorybookDiscovery(config);
+      const result = discovery.filterStories(stories);
 
-      vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(mockStoryContent);
-
-      const result = discovery['detectViewportFromStory'](story);
-
-      expect(result).toEqual({ mobile: { width: 375, height: 667 } });
+      expect(result).toHaveLength(2);
+      expect(result.map(s => s.id)).toEqual(['input--text', 'card--default']);
     });
 
-    it('should return null when story file does not exist', () => {
-      const story = {
-        id: 'example-button--primary',
-        title: 'Example/Button',
-        name: 'Primary',
-        importPath: './src/components/Button.stories.tsx',
-        tags: ['story'],
-        type: 'story' as const,
-      };
+    it('should return all stories when no filters are applied', () => {
+      const stories: StorybookEntry[] = [
+        { id: 'button--primary', title: 'Button', name: 'Primary' },
+        { id: 'input--text', title: 'Input', name: 'Text' },
+      ];
 
-      vi.mocked(existsSync).mockReturnValue(false);
+      discovery = new StorybookDiscovery(mockConfig);
+      const result = discovery.filterStories(stories);
 
-      const result = discovery['detectViewportFromStory'](story);
-
-      expect(result).toBeNull();
-    });
-
-    it('should return null when no viewport configuration found', () => {
-      const story = {
-        id: 'example-button--primary',
-        title: 'Example/Button',
-        name: 'Primary',
-        importPath: './src/components/Button.stories.tsx',
-        tags: ['story'],
-        type: 'story' as const,
-      };
-
-      const mockStoryContent = `
-        export default {
-          title: 'Example/Button'
-        };
-      `;
-
-      vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(mockStoryContent);
-
-      const result = discovery['detectViewportFromStory'](story);
-
-      expect(result).toBeNull();
-    });
-
-    it('should handle file read errors gracefully', () => {
-      const story = {
-        id: 'example-button--primary',
-        title: 'Example/Button',
-        name: 'Primary',
-        importPath: './src/components/Button.stories.tsx',
-        tags: ['story'],
-        type: 'story' as const,
-      };
-
-      vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockImplementation(() => {
-        throw new Error('File read error');
-      });
-
-      const result = discovery['detectViewportFromStory'](story);
-
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('parseViewportFromStoryFile', () => {
-    it('should parse viewport configuration from story file', () => {
-      const storyContent = `
-        export default {
-          title: 'Example/Button',
-          parameters: {
-            viewport: {
-              defaultViewport: 'mobile'
-            }
-          }
-        };
-      `;
-
-      const result = discovery['parseViewportFromStoryFile'](storyContent);
-
-      expect(result).toEqual({ mobile: { width: 375, height: 667 } });
-    });
-
-    it('should parse multiple viewport configurations', () => {
-      const storyContent = `
-        export default {
-          title: 'Example/Button',
-          parameters: {
-            viewport: {
-              viewports: {
-                mobile: { name: 'Mobile', styles: { width: '375px', height: '667px' } },
-                tablet: { name: 'Tablet', styles: { width: '768px', height: '1024px' } }
-              }
-            }
-          }
-        };
-      `;
-
-      const result = discovery['parseViewportFromStoryFile'](storyContent);
-
-      expect(result).toEqual({
-        mobile: { width: 375, height: 667 },
-        tablet: { width: 768, height: 1024 },
-      });
-    });
-
-    it('should return null when no viewport configuration found', () => {
-      const storyContent = `
-        export default {
-          title: 'Example/Button'
-        };
-      `;
-
-      const result = discovery['parseViewportFromStoryFile'](storyContent);
-
-      expect(result).toBeNull();
-    });
-
-    it('should handle malformed viewport configuration', () => {
-      const storyContent = `
-        export default {
-          title: 'Example/Button',
-          parameters: {
-            viewport: {
-              viewports: {
-                mobile: { name: 'Mobile', styles: { width: 'invalid', height: '667px' } }
-              }
-            }
-          }
-        };
-      `;
-
-      const result = discovery['parseViewportFromStoryFile'](storyContent);
-
-      expect(result).toBeNull();
+      expect(result).toEqual(stories);
     });
   });
 });

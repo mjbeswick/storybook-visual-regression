@@ -32,23 +32,19 @@ export default defineConfig({
       animations: 'disabled',
     },
   },
-  webServer: process.env.STORYBOOK_COMMAND
-    ? {
-        command: process.env.STORYBOOK_COMMAND,
-        url: `${(process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '')}/index.json`,
-        reuseExistingServer: true,
-        timeout: parseInt(process.env.STORYBOOK_TIMEOUT || '120000'),
-        cwd: process.env.STORYBOOK_CWD,
-        stdout: 'inherit',
-        stderr: 'inherit',
-        env: {
-          ...process.env,
-          NODE_ENV: 'development',
-          NODE_NO_WARNINGS: '1',
-        },
-        ignoreHTTPSErrors: true,
-      }
-    : undefined,
-  // globalSetup intentionally disabled; discovery now happens during tests after webServer is ready
-  // globalSetup: join(__dirname, 'src', 'tests', 'global-setup.ts'),
+  webServer: {
+    command: process.env.STORYBOOK_COMMAND || 'npm run storybook',
+    url: `${(process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '')}/index.json`,
+    reuseExistingServer: true,
+    timeout: parseInt(process.env.STORYBOOK_TIMEOUT || '120000'),
+    cwd: process.env.STORYBOOK_CWD,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: {
+      ...process.env,
+      NODE_ENV: 'development',
+      NODE_NO_WARNINGS: '1',
+    },
+    ignoreHTTPSErrors: true,
+  },
 });
