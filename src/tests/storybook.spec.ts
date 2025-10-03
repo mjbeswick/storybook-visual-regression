@@ -20,37 +20,7 @@ async function disableAnimations(page: any): Promise<void> {
     await page.emulateMedia({ reducedMotion: 'reduce' });
   } catch {}
 
-  // Hide user-provided selectors (comma-separated in SVR_HIDE_SELECTORS)
-  const raw = process.env.SVR_HIDE_SELECTORS || '';
-  const selectors = raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (selectors.length > 0) {
-    const css = selectors
-      .map(
-        (s) =>
-          `${s} { visibility: hidden !important; opacity: 0 !important; display: none !important; animation: none !important; transition: none !important; }`,
-      )
-      .join('\n');
-    try {
-      await page.addStyleTag({ content: css });
-    } catch {}
-    // Also set inline styles to overcome strong component-specific CSS
-    try {
-      await page.evaluate((sels: string[]) => {
-        for (const sel of sels) {
-          document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
-            el.style.visibility = 'hidden';
-            el.style.opacity = '0';
-            el.style.display = 'none';
-            el.style.animation = 'none';
-            el.style.transition = 'none';
-          });
-        }
-      }, selectors);
-    } catch {}
-  }
+  // No project-specific selector hiding by default
 
   // Also pause SMIL animations for inline SVGs if present
   try {

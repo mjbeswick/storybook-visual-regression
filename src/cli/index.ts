@@ -32,7 +32,6 @@ type CliOptions = {
   output?: string;
   updateSnapshots?: boolean;
   browser?: string;
-  hideSelectors?: string;
 };
 
 async function createConfigFromOptions(
@@ -247,7 +246,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
   if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
   if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
-  if (options.hideSelectors) process.env.SVR_HIDE_SELECTORS = String(options.hideSelectors);
   process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
   process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
@@ -268,7 +266,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       STORYBOOK_COMMAND: process.env.STORYBOOK_COMMAND,
       STORYBOOK_CWD: process.env.STORYBOOK_CWD,
       STORYBOOK_TIMEOUT: process.env.STORYBOOK_TIMEOUT,
-      SVR_HIDE_SELECTORS: process.env.SVR_HIDE_SELECTORS,
     });
 
     // Log the effective Playwright config we will run with
@@ -447,7 +444,6 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
-  .option('--hide-selectors <selectors>', 'Comma-separated selectors to hide before screenshots')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
@@ -495,7 +491,6 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
-  .option('--hide-selectors <selectors>', 'Comma-separated selectors to hide before screenshots')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
