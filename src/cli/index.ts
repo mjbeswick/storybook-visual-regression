@@ -334,8 +334,13 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     const __dirname = dirname(__filename);
     const projectRoot = join(__dirname, '..', '..');
 
-    // Prefer repo root config to ensure correct testDir paths
+    // Prefer new config location: dist/config.js then src/config.ts; keep legacy svr.config
     const configCandidates = [
+      join(projectRoot, 'dist', 'config.js'),
+      join(projectRoot, 'src', 'config.ts'),
+      // legacy fallbacks
+      join(projectRoot, 'svr.config.js'),
+      join(projectRoot, 'dist', 'svr.config.js'),
       join(projectRoot, 'svr.config.ts'),
       join(projectRoot, 'dist', 'svr.config.ts'),
     ];

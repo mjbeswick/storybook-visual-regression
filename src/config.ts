@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export default defineConfig({
-  testDir: join(__dirname, 'src', 'tests'),
+  testDir: join(__dirname, 'tests'),
   outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR
     ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
     : 'visual-regression/results',

@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && cp -r src/config dist/ && cp svr.config.ts dist/",
+    "build": "tsc && cp -r src/config dist/ && cp src/config.ts dist/config.js && rm -f dist/svr.config.ts dist/svr.config.js",
     "build:watch": "tsc --watch && cp -r src/config dist/",
     "test": "vitest run",
     "test:watch": "vitest --watch",
