@@ -333,8 +333,18 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
     const projectRoot = join(__dirname, '..', '..');
-    const configPath = join(projectRoot, 'svr.config.ts');
-    playwrightArgs.push('--config', configPath);
+
+    // Prefer built config in dist/, fallback to repo root if present
+    const configCandidates = [
+      join(projectRoot, 'dist', 'svr.config.ts'),
+      join(projectRoot, 'svr.config.ts'),
+    ];
+    const resolvedConfigPath = configCandidates.find((p) => existsSync(p)) || configCandidates[0];
+    playwrightArgs.push('--config', resolvedConfigPath);
+
+    // Choose tests directory to match where the config lives
+    const isDistConfig = resolvedConfigPath.includes('/dist/');
+    const testsDir = join(projectRoot, isDistConfig ? 'dist' : 'src', 'tests');
 
     const child = execa('npx', playwrightArgs, {
       cwd: projectRoot, // Run from the main project directory where CLI is installed
@@ -345,9 +355,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       env: {
         ...process.env,
         // Prevent Playwright from creating its own config in the wrong location
-        PLAYWRIGHT_CONFIG_FILE: configPath,
+        PLAYWRIGHT_CONFIG_FILE: resolvedConfigPath,
         // Force Playwright to use the correct working directory
-        PLAYWRIGHT_TEST_DIR: join(projectRoot, 'src', 'tests'),
+        PLAYWRIGHT_TEST_DIR: testsDir,
         PLAYWRIGHT_RETRIES: config.retries.toString(),
         PLAYWRIGHT_WORKERS: config.workers.toString(),
         PLAYWRIGHT_MAX_FAILURES: (options.maxFailures || 1).toString(),
