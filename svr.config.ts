@@ -14,7 +14,7 @@ export default defineConfig({
   retries: parseInt(process.env.PLAYWRIGHT_RETRIES || '0'),
   workers: parseInt(process.env.PLAYWRIGHT_WORKERS || '12'),
   maxFailures: parseInt(process.env.PLAYWRIGHT_MAX_FAILURES || '1'),
-  reporter: (process.env.PLAYWRIGHT_REPORTER as any) || 'list',
+  reporter: process.env.PLAYWRIGHT_REPORTER || 'list',
   updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ? 'all' : 'none',
   use: {
     baseURL: process.env.STORYBOOK_URL || 'http://localhost:9009',

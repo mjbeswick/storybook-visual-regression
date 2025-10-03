@@ -52,8 +52,20 @@ export class StorybookDiscovery {
   private extractStoriesFromIndex(indexData: StorybookIndex): StorybookEntry[] {
     const entries = indexData.entries || {};
     return Object.keys(entries)
-      .filter((id) => entries[id].type === 'story')
-      .map((id) => entries[id]);
+      .map((id) => entries[id])
+      .filter(
+        (entry) =>
+          entry &&
+          entry.type === 'story' &&
+          typeof entry.id === 'string' &&
+          entry.id.length > 0 &&
+          typeof entry.title === 'string' &&
+          entry.title.length > 0 &&
+          typeof entry.name === 'string' &&
+          entry.name.length > 0 &&
+          typeof entry.importPath === 'string' &&
+          entry.importPath.length > 0,
+      );
   }
 
   async getStoryImportPath(storyId: string): Promise<string | undefined> {
@@ -137,6 +149,91 @@ export class StorybookDiscovery {
     // Final fallback to default configurations
     console.log('Using default viewport configurations');
     return this.config.viewportSizes;
+  }
+
+  // Returns specific viewport config for a story if found, otherwise the defaults
+  private getViewportConfigForStory(story: StorybookEntry): ViewportConfig {
+    const detected = this.detectViewportFromStory(story);
+    return detected ?? this.config.viewportSizes;
+  }
+
+  // Attempts to detect viewport configuration by reading the story source file
+  private detectViewportFromStory(story: StorybookEntry): ViewportConfig | null {
+    try {
+      if (!story.importPath) return null;
+      const absolutePath = join(process.cwd(), story.importPath.replace(/^\.\//, ''));
+      if (!existsSync(absolutePath)) return null;
+      const content = readFileSync(absolutePath, 'utf8');
+      return this.parseViewportFromStoryFile(content);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  // Parses viewport configuration from story file content
+  private parseViewportFromStoryFile(content: string): ViewportConfig | null {
+    // 1) Handle defaultViewport names commonly used by Storybook viewport addon
+    const defaultViewportMatch = content.match(
+      /parameters\s*:\s*\{[\s\S]*?viewport\s*:\s*\{[\s\S]*?defaultViewport\s*:\s*['"](\w+)['"][\s\S]*?\}/,
+    );
+
+    const defaultNameToSize: Record<string, { width: number; height: number }> = {
+      mobile: { width: 375, height: 667 },
+      tablet: { width: 768, height: 1024 },
+      desktop: { width: 1920, height: 1080 },
+      largeDesktop: { width: 2560, height: 1440 },
+    };
+
+    if (defaultViewportMatch) {
+      const name = defaultViewportMatch[1];
+      const preset = defaultNameToSize[name];
+      if (preset) {
+        return { [name]: { width: preset.width, height: preset.height } } as ViewportConfig;
+      }
+    }
+
+    // 2) Parse explicit viewports with pixel sizes
+    const config: ViewportConfig = {};
+
+    // Extract the balanced block for viewports to avoid false positives
+    const findViewportsBlock = (): string | null => {
+      const vpIndex = content.search(/viewports\s*:/);
+      if (vpIndex === -1) return null;
+      const braceStart = content.indexOf('{', vpIndex);
+      if (braceStart === -1) return null;
+      let depth = 0;
+      for (let i = braceStart; i < content.length; i++) {
+        const ch = content[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            return content.slice(braceStart + 1, i); // inner content without outer braces
+          }
+        }
+      }
+      return null;
+    };
+
+    const textToScan = findViewportsBlock() ?? content;
+
+    const definitionRegex =
+      /(\w+)\s*:\s*\{[\s\S]*?styles\s*:\s*\{[\s\S]*?width\s*:\s*['"](\d+)px['"][\s\S]*?height\s*:\s*['"](\d+)px['"][\s\S]*?\}\s*\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = definitionRegex.exec(textToScan)) !== null) {
+      const name = match[1];
+      const width = parseInt(match[2], 10);
+      const height = parseInt(match[3], 10);
+      if (!Number.isNaN(width) && !Number.isNaN(height)) {
+        config[name] = { width, height };
+      }
+    }
+
+    if (Object.keys(config).length > 0) {
+      return config;
+    }
+
+    return null;
   }
 
   private async getViewportConfigFromStorybook(): Promise<ViewportConfig | null> {

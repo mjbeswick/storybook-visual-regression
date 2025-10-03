@@ -334,17 +334,25 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     const __dirname = dirname(__filename);
     const projectRoot = join(__dirname, '..', '..');
 
-    // Prefer built config in dist/, fallback to repo root if present
+    // Prefer repo root config to ensure correct testDir paths
     const configCandidates = [
-      join(projectRoot, 'dist', 'svr.config.ts'),
       join(projectRoot, 'svr.config.ts'),
+      join(projectRoot, 'dist', 'svr.config.ts'),
     ];
     const resolvedConfigPath = configCandidates.find((p) => existsSync(p)) || configCandidates[0];
     playwrightArgs.push('--config', resolvedConfigPath);
 
-    // Choose tests directory to match where the config lives
-    const isDistConfig = resolvedConfigPath.includes('/dist/');
-    const testsDir = join(projectRoot, isDistConfig ? 'dist' : 'src', 'tests');
+    // Always point tests to source tests to avoid missing specs in dist
+    const testsDir = join(projectRoot, 'src', 'tests');
+
+    // Resolve reporter path if quiet mode requested
+    const quietReporterCandidates = [
+      join(projectRoot, 'dist', 'reporters', 'filtered-reporter.js'),
+      join(projectRoot, 'src', 'reporters', 'filtered-reporter.ts'),
+    ];
+    const resolvedQuietReporter = options.quiet
+      ? quietReporterCandidates.find((p) => existsSync(p))
+      : undefined;
 
     const child = execa('npx', playwrightArgs, {
       cwd: projectRoot, // Run from the main project directory where CLI is installed
@@ -368,6 +376,10 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         PLAYWRIGHT_TIMEZONE: config.timezone,
         PLAYWRIGHT_LOCALE: config.locale,
         PLAYWRIGHT_OUTPUT_DIR: join(originalCwd, options.output || 'visual-regression'),
+        // Use built reporter when available in quiet mode to avoid TS import issues
+        PLAYWRIGHT_REPORTER: options.quiet
+          ? resolvedQuietReporter || 'list'
+          : process.env.PLAYWRIGHT_REPORTER,
         STORYBOOK_COMMAND: storybookLaunchCommand,
         STORYBOOK_CWD: originalCwd,
         STORYBOOK_TIMEOUT: config.serverTimeout.toString(),

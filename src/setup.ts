@@ -38,7 +38,9 @@ afterEach(() => {
 });
 
 // Global test utilities
-export const createMockConfig = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+export const createMockConfig = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
   storybookUrl: 'http://localhost:6006',
   storybookPort: 6006,
   storybookCommand: 'npm run storybook',
@@ -51,7 +53,9 @@ export const createMockConfig = (overrides: Record<string, unknown> = {}): Recor
   ...overrides,
 });
 
-export const createMockStory = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+export const createMockStory = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
   id: 'example-button--primary',
   title: 'Example/Button',
   name: 'Primary',
@@ -98,7 +102,11 @@ export const mockFetch = (responses: Record<string, unknown>): void => {
   });
 };
 
-export const mockPlaywright = (): { mockBrowser: unknown; mockContext: unknown; mockPage: unknown } => {
+export const mockPlaywright = (): {
+  mockBrowser: unknown;
+  mockContext: unknown;
+  mockPage: unknown;
+} => {
   const mockPage = {
     goto: vi.fn().mockResolvedValue(undefined),
     setViewportSize: vi.fn().mockResolvedValue(undefined),
