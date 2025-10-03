@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 import { expect, test } from '@playwright/test';
+import chalk from 'chalk';
 
 const defaultViewportSizes: Record<string, { width: number; height: number }> = {
   mobile: { width: 375, height: 667 },
@@ -12,6 +13,104 @@ const defaultViewportKey = 'desktop';
 
 const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:9009';
 const projectRoot = process.env.ORIGINAL_CWD || process.cwd();
+
+async function disableAnimations(page: any): Promise<void> {
+  // Respect reduced motion globally
+  try {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+  } catch {}
+
+  // Hide user-provided selectors (comma-separated in SVR_HIDE_SELECTORS)
+  const raw = process.env.SVR_HIDE_SELECTORS || '';
+  const selectors = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (selectors.length > 0) {
+    const css = selectors
+      .map(
+        (s) =>
+          `${s} { visibility: hidden !important; opacity: 0 !important; display: none !important; animation: none !important; transition: none !important; }`,
+      )
+      .join('\n');
+    try {
+      await page.addStyleTag({ content: css });
+    } catch {}
+    // Also set inline styles to overcome strong component-specific CSS
+    try {
+      await page.evaluate((sels: string[]) => {
+        for (const sel of sels) {
+          document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+            el.style.visibility = 'hidden';
+            el.style.opacity = '0';
+            el.style.display = 'none';
+            el.style.animation = 'none';
+            el.style.transition = 'none';
+          });
+        }
+      }, selectors);
+    } catch {}
+  }
+
+  // Also pause SMIL animations for inline SVGs if present
+  try {
+    await page.evaluate(() => {
+      document.querySelectorAll('svg').forEach((el) => {
+        (el as any).pauseAnimations?.();
+      });
+    });
+  } catch {}
+}
+
+async function waitForStoryReady(page: any): Promise<void> {
+  // Make sure the canvas container exists
+  await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 30_000 });
+
+  // Try to wait for Storybook's preparing overlays to go away
+  try {
+    await page.waitForSelector('.sb-preparing-story, .sb-preparing-docs', {
+      state: 'hidden',
+      timeout: 5_000,
+    });
+  } catch {
+    // If they don't hide in time, force-hide them and continue
+    await page.evaluate(() => {
+      for (const sel of ['.sb-preparing-story', '.sb-preparing-docs']) {
+        document.querySelectorAll(sel).forEach((el) => {
+          (el as HTMLElement).style.display = 'none';
+          (el as HTMLElement).setAttribute('aria-hidden', 'true');
+        });
+      }
+    });
+  }
+
+  // If Storybook shows error/nopreview wrappers, continue; we only care the canvas is visually present
+  // Least fragile heuristic: any visible descendant in #storybook-root OR non-zero size of the root
+  const isVisuallyReady = async () =>
+    page.evaluate(() => {
+      const root = document.querySelector('#storybook-root') as HTMLElement | null;
+      if (!root) return false;
+      const rr = root.getBoundingClientRect();
+      if (rr.width > 0 && rr.height > 0) return true;
+      const isVisible = (el: Element) => {
+        const style = window.getComputedStyle(el as HTMLElement);
+        if (style.visibility === 'hidden' || style.display === 'none') return false;
+        const r = (el as HTMLElement).getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      for (const el of root.querySelectorAll('*')) {
+        if (isVisible(el)) return true;
+      }
+      return false;
+    });
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (await isVisuallyReady()) return;
+    await page.waitForTimeout(150);
+  }
+
+  throw new Error('Story canvas did not stabilize');
+}
 
 function _parseJsonEnv<T>(key: string, fallback: T): T {
   const value = process.env[key];
@@ -149,74 +248,175 @@ test.describe('Storybook Visual Regression', () => {
 
       const size = defaultViewportSizes[viewportKey] || defaultViewportSizes[defaultViewportKey];
       await page.setViewportSize(size);
+      await disableAnimations(page);
 
       await page.clock.install({
         time: new Date('2024-01-15T10:30:00.000Z'),
       });
 
-      const storyUrl = `${storybookUrl}/iframe.html?id=${storyId}&viewMode=story`;
-
-      await page.goto(storyUrl, {
-        waitUntil: 'networkidle',
-        timeout: 10_000,
-      });
-
-      await page.waitForLoadState('networkidle');
-
-      // Wait for body to be visible (not hidden with error display)
-      await page.waitForSelector('body:not(.sb-show-errordisplay)', { timeout: 15_000 });
-
-      // Additional check to ensure we're not on an error page
-      const isErrorPage = await page.evaluate(() => {
-        return (
-          document.body.classList.contains('sb-show-errordisplay') ||
-          document.querySelector('[data-testid="error"]') !== null ||
-          document.querySelector('.sb-show-errordisplay') !== null
-        );
-      });
-
-      if (isErrorPage) {
-        throw new Error('Storybook is displaying an error page');
+      // Normalize base to avoid double slashes causing 404s (e.g. http://localhost:6006//iframe.html)
+      const base = storybookUrl.replace(/\/$/, '');
+      const candidateUrls = [
+        `${base}/iframe.html?id=${storyId}&viewMode=story`,
+        `${base}/iframe.html?path=/story/${storyId}`,
+      ];
+      let storyUrl = candidateUrls[0];
+      if (process.env.SVR_DEBUG === 'true') {
+        console.log(`SVR: story id: ${storyId}`);
+        console.log(`SVR: url: ${storyUrl}`);
       }
 
-      await page.evaluate(() => {
-        const html = document.documentElement;
-        const body = document.body;
-        if (html) html.style.overflow = 'hidden';
-        if (body) body.style.overflow = 'hidden';
-      });
+      try {
+        let resp = await page.goto(storyUrl, {
+          waitUntil: 'networkidle',
+          timeout: 10_000,
+        });
 
-      await page.evaluate(async () => {
-        const measure = (): string => {
-          const se = document.scrollingElement || document.documentElement;
-          const h = Math.max(
-            se?.scrollHeight ?? 0,
-            document.documentElement.scrollHeight,
-            document.body.scrollHeight,
+        // Fail fast on bad HTTP responses
+        if (!resp || !resp.ok()) {
+          // Try alternative path-based URL used by some Storybook setups
+          const altUrl = candidateUrls[1];
+          if (storyUrl !== altUrl) {
+            storyUrl = altUrl;
+            resp = await page.goto(storyUrl, { waitUntil: 'networkidle', timeout: 10_000 });
+            if (process.env.SVR_DEBUG === 'true') {
+              console.log(`SVR: url (retry): ${storyUrl}`);
+            }
+          }
+          if (!resp || !resp.ok()) {
+            const status = resp ? `${resp.status()} ${resp.statusText()}` : 'no response';
+            console.error(`Story URL (bad response): ${storyUrl}`);
+            throw new Error(`Failed to load story: ${status}`);
+          }
+        }
+
+        await page.waitForLoadState('networkidle');
+
+        // Wait for Storybook to finish preparing the story and for the canvas to exist
+        await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 30_000 });
+        await waitForStoryReady(page);
+
+        // Additional checks to ensure we're not on an error page
+        const isErrorPage = await page.evaluate(() => {
+          return (
+            document.body.classList.contains('sb-show-errordisplay') ||
+            document.querySelector('[data-testid="error"]') !== null ||
+            document.querySelector('.sb-show-errordisplay') !== null
           );
-          const w = Math.max(
-            se?.scrollWidth ?? 0,
-            document.documentElement.scrollWidth,
-            document.body.scrollWidth,
+        });
+
+        if (isErrorPage) {
+          throw new Error('Storybook is displaying an error page');
+        }
+
+        // Common 404 content checks from host apps
+        const bodyText = (await page.textContent('body')) || '';
+        if (/not\s*found/i.test(bodyText) || /404/.test(bodyText)) {
+          console.error(chalk.red(`Story URL (content says Not Found): ${storyUrl}`));
+          throw new Error('Host page reports Not Found');
+        }
+
+        // Ensure some visible content exists inside storybook root (root itself may be height: 0)
+        await page.waitForFunction(
+          () => {
+            const root = document.querySelector('#storybook-root');
+            if (!root) return false;
+            const nodes = root.querySelectorAll('*');
+            for (const el of Array.from(nodes)) {
+              const r = (el as HTMLElement).getBoundingClientRect();
+              const s = getComputedStyle(el as HTMLElement);
+              if (
+                r.width > 0 &&
+                r.height > 0 &&
+                s.visibility !== 'hidden' &&
+                s.display !== 'none'
+              ) {
+                return true;
+              }
+            }
+            return false;
+          },
+          { timeout: 30_000 },
+        );
+
+        await page.evaluate(() => {
+          const html = document.documentElement;
+          const body = document.body;
+          if (html) html.style.overflow = 'hidden';
+          if (body) body.style.overflow = 'hidden';
+        });
+
+        await page.evaluate(async () => {
+          const measure = (): string => {
+            const se = document.scrollingElement || document.documentElement;
+            const h = Math.max(
+              se?.scrollHeight ?? 0,
+              document.documentElement.scrollHeight,
+              document.body.scrollHeight,
+            );
+            const w = Math.max(
+              se?.scrollWidth ?? 0,
+              document.documentElement.scrollWidth,
+              document.body.scrollWidth,
+            );
+            return `${w}x${h}`;
+          };
+
+          const sleep = (ms: number): Promise<void> =>
+            new Promise((resolve) => setTimeout(resolve, ms));
+
+          const a = measure();
+          await sleep(150);
+          const b = measure();
+          await sleep(150);
+          const c = measure();
+          return a === b && b === c;
+        });
+
+        const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
+        try {
+          const screenshot = await page.screenshot();
+          await expect(screenshot).toMatchSnapshot(`${sanitizedStoryId}.png`);
+        } catch (assertionError) {
+          // Print a spaced, aligned failure block
+          const label = (k: string) => (k + ':').padEnd(10, ' ');
+          console.error('\n' + chalk.red('──────── Screenshot Mismatch ────────'));
+          console.error(chalk.red(`${label('Story')}${storyId}`));
+          console.error(chalk.red(`${label('URL')}${storyUrl}`));
+          console.error(
+            chalk.red(
+              `${label('Reason')}${assertionError instanceof Error ? assertionError.message : String(assertionError)}`,
+            ),
           );
-          return `${w}x${h}`;
-        };
-
-        const sleep = (ms: number): Promise<void> =>
-          new Promise((resolve) => setTimeout(resolve, ms));
-
-        const a = measure();
-        await sleep(150);
-        const b = measure();
-        await sleep(150);
-        const c = measure();
-        return a === b && b === c;
-      });
-
-      const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
-      await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`, {
-        animations: 'disabled',
-      });
+          // Helpful paths
+          const expectedPath = join(
+            projectRoot,
+            'visual-regression',
+            'snapshots',
+            `${sanitizedStoryId}.png`,
+          );
+          const resultsRoot = process.env.PLAYWRIGHT_OUTPUT_DIR
+            ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
+            : join(projectRoot, 'visual-regression', 'results');
+          console.error(chalk.red(`${label('Expected')}${expectedPath}`));
+          console.error(chalk.red(`${label('Results')}${resultsRoot}`));
+          console.error(chalk.red('──────────────────────────────────────\n'));
+          throw new Error(
+            `Screenshot mismatch for story '${storyId}'. Snapshot: ${sanitizedStoryId}.png`,
+          );
+        }
+      } catch (error) {
+        // Emit the URL and reason in a spaced, aligned block
+        const label = (k: string) => (k + ':').padEnd(10, ' ');
+        console.error('\n' + chalk.red('──────── Test Failed ────────'));
+        console.error(chalk.red(`${label('Story')}${storyId}`));
+        console.error(chalk.red(`${label('URL')}${storyUrl}`));
+        console.error(
+          chalk.red(`${label('Reason')}${error instanceof Error ? error.message : String(error)}`),
+        );
+        console.error(chalk.red('────────────────────────────\n'));
+        throw error;
+      }
     });
   }
 });

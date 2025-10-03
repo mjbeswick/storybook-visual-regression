@@ -32,6 +32,7 @@ type CliOptions = {
   output?: string;
   updateSnapshots?: boolean;
   browser?: string;
+  hideSelectors?: string;
 };
 
 async function createConfigFromOptions(
@@ -246,6 +247,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
   if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
   if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
+  if (options.hideSelectors) process.env.SVR_HIDE_SELECTORS = String(options.hideSelectors);
   process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
   process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
@@ -266,6 +268,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       STORYBOOK_COMMAND: process.env.STORYBOOK_COMMAND,
       STORYBOOK_CWD: process.env.STORYBOOK_CWD,
       STORYBOOK_TIMEOUT: process.env.STORYBOOK_TIMEOUT,
+      SVR_HIDE_SELECTORS: process.env.SVR_HIDE_SELECTORS,
     });
 
     // Log the effective Playwright config we will run with
@@ -382,9 +385,13 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         PLAYWRIGHT_LOCALE: config.locale,
         PLAYWRIGHT_OUTPUT_DIR: join(originalCwd, options.output || 'visual-regression'),
         // Use built reporter when available in quiet mode to avoid TS import issues
-        PLAYWRIGHT_REPORTER: options.quiet
-          ? resolvedQuietReporter || 'list'
-          : process.env.PLAYWRIGHT_REPORTER,
+        PLAYWRIGHT_REPORTER: options.debug
+          ? 'line' // ensure console logs (story URLs) are printed during debug runs
+          : options.quiet
+            ? resolvedQuietReporter || 'list'
+            : process.env.PLAYWRIGHT_REPORTER,
+        // Surface a simple debug flag for tests to log helpful info like Story URLs
+        SVR_DEBUG: options.debug ? 'true' : undefined,
         STORYBOOK_COMMAND: storybookLaunchCommand,
         STORYBOOK_CWD: originalCwd,
         STORYBOOK_TIMEOUT: config.serverTimeout.toString(),
@@ -440,6 +447,7 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--hide-selectors <selectors>', 'Comma-separated selectors to hide before screenshots')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
@@ -487,6 +495,7 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--hide-selectors <selectors>', 'Comma-separated selectors to hide before screenshots')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
