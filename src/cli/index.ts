@@ -32,6 +32,12 @@ type CliOptions = {
   output?: string;
   updateSnapshots?: boolean;
   browser?: string;
+  // Timeouts and stability tuning
+  navTimeout?: string; // ms
+  waitTimeout?: string; // ms
+  overlayTimeout?: string; // ms
+  stabilizeInterval?: string; // ms
+  stabilizeAttempts?: string; // count
 };
 
 async function createConfigFromOptions(
@@ -246,6 +252,14 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
   if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
   if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
+  // Pass test tuning knobs
+  if (options.navTimeout) process.env.SVR_NAV_TIMEOUT = String(options.navTimeout);
+  if (options.waitTimeout) process.env.SVR_WAIT_TIMEOUT = String(options.waitTimeout);
+  if (options.overlayTimeout) process.env.SVR_OVERLAY_TIMEOUT = String(options.overlayTimeout);
+  if (options.stabilizeInterval)
+    process.env.SVR_STABILIZE_INTERVAL = String(options.stabilizeInterval);
+  if (options.stabilizeAttempts)
+    process.env.SVR_STABILIZE_ATTEMPTS = String(options.stabilizeAttempts);
   process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
   process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
@@ -266,6 +280,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       STORYBOOK_COMMAND: process.env.STORYBOOK_COMMAND,
       STORYBOOK_CWD: process.env.STORYBOOK_CWD,
       STORYBOOK_TIMEOUT: process.env.STORYBOOK_TIMEOUT,
+      SVR_NAV_TIMEOUT: process.env.SVR_NAV_TIMEOUT,
+      SVR_WAIT_TIMEOUT: process.env.SVR_WAIT_TIMEOUT,
+      SVR_OVERLAY_TIMEOUT: process.env.SVR_OVERLAY_TIMEOUT,
+      SVR_STABILIZE_INTERVAL: process.env.SVR_STABILIZE_INTERVAL,
+      SVR_STABILIZE_ATTEMPTS: process.env.SVR_STABILIZE_ATTEMPTS,
     });
 
     // Log the effective Playwright config we will run with
@@ -417,7 +436,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         }
       }
     }
-  } catch (error) {
+  } catch {
     console.log('');
     console.error(chalk.red('💥 Test execution failed'));
     process.exit(1);
@@ -444,6 +463,12 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  // Timing and stability options (ms / counts)
+  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)')
+  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 30000)')
+  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide (default 5000)')
+  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 150)')
+  .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
@@ -491,6 +516,11 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)')
+  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 30000)')
+  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide (default 5000)')
+  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 150)')
+  .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')

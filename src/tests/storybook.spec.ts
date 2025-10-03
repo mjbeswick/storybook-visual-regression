@@ -18,7 +18,9 @@ async function disableAnimations(page: any): Promise<void> {
   // Respect reduced motion globally
   try {
     await page.emulateMedia({ reducedMotion: 'reduce' });
-  } catch {}
+  } catch (_error) {
+    /* noop */
+  }
 
   // No project-specific selector hiding by default
 
@@ -29,18 +31,33 @@ async function disableAnimations(page: any): Promise<void> {
         (el as any).pauseAnimations?.();
       });
     });
-  } catch {}
+  } catch (_error) {
+    /* noop */
+  }
 }
 
-async function waitForStoryReady(page: any): Promise<void> {
+type ReadyOptions = {
+  overlayTimeout: number;
+  stabilizeInterval: number;
+  stabilizeAttempts: number;
+};
+
+async function waitForStoryReady(page: any, opts?: ReadyOptions): Promise<void> {
+  const overlayTimeout =
+    opts?.overlayTimeout ?? parseInt(process.env.SVR_OVERLAY_TIMEOUT || '5000', 10);
+  const stabilizeInterval =
+    opts?.stabilizeInterval ?? parseInt(process.env.SVR_STABILIZE_INTERVAL || '150', 10);
+  const stabilizeAttempts =
+    opts?.stabilizeAttempts ?? parseInt(process.env.SVR_STABILIZE_ATTEMPTS || '20', 10);
   // Make sure the canvas container exists
-  await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 30_000 });
+  const waitTimeout = parseInt(process.env.SVR_WAIT_TIMEOUT || '30000', 10);
+  await page.waitForSelector('#storybook-root', { state: 'attached', timeout: waitTimeout });
 
   // Try to wait for Storybook's preparing overlays to go away
   try {
     await page.waitForSelector('.sb-preparing-story, .sb-preparing-docs', {
       state: 'hidden',
-      timeout: 5_000,
+      timeout: overlayTimeout,
     });
   } catch {
     // If they don't hide in time, force-hide them and continue
@@ -74,9 +91,9 @@ async function waitForStoryReady(page: any): Promise<void> {
       return false;
     });
 
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < stabilizeAttempts; attempt++) {
     if (await isVisuallyReady()) return;
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(stabilizeInterval);
   }
 
   throw new Error('Story canvas did not stabilize');
@@ -237,9 +254,15 @@ test.describe('Storybook Visual Regression', () => {
       }
 
       try {
+        const navTimeout = parseInt(process.env.SVR_NAV_TIMEOUT || '10000', 10);
+        const waitTimeout = parseInt(process.env.SVR_WAIT_TIMEOUT || '30000', 10);
+        const overlayTimeout = parseInt(process.env.SVR_OVERLAY_TIMEOUT || '5000', 10);
+        const stabilizeInterval = parseInt(process.env.SVR_STABILIZE_INTERVAL || '150', 10);
+        const stabilizeAttempts = parseInt(process.env.SVR_STABILIZE_ATTEMPTS || '20', 10);
+
         let resp = await page.goto(storyUrl, {
           waitUntil: 'networkidle',
-          timeout: 10_000,
+          timeout: navTimeout,
         });
 
         // Fail fast on bad HTTP responses
@@ -248,7 +271,7 @@ test.describe('Storybook Visual Regression', () => {
           const altUrl = candidateUrls[1];
           if (storyUrl !== altUrl) {
             storyUrl = altUrl;
-            resp = await page.goto(storyUrl, { waitUntil: 'networkidle', timeout: 10_000 });
+            resp = await page.goto(storyUrl, { waitUntil: 'networkidle', timeout: navTimeout });
             if (process.env.SVR_DEBUG === 'true') {
               console.log(`SVR: url (retry): ${storyUrl}`);
             }
@@ -263,8 +286,8 @@ test.describe('Storybook Visual Regression', () => {
         await page.waitForLoadState('networkidle');
 
         // Wait for Storybook to finish preparing the story and for the canvas to exist
-        await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 30_000 });
-        await waitForStoryReady(page);
+        await page.waitForSelector('#storybook-root', { state: 'attached', timeout: waitTimeout });
+        await waitForStoryReady(page, { overlayTimeout, stabilizeInterval, stabilizeAttempts });
 
         // Additional checks to ensure we're not on an error page
         const isErrorPage = await page.evaluate(() => {
@@ -306,7 +329,7 @@ test.describe('Storybook Visual Regression', () => {
             }
             return false;
           },
-          { timeout: 30_000 },
+          { timeout: waitTimeout },
         );
 
         await page.evaluate(() => {

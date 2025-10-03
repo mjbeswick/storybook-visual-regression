@@ -111,6 +111,11 @@ Common options (defaults shown):
 - `--reporter <reporter>`: Playwright reporter (list|line|dot|json|junit) (default `list`)
 - `--quiet`: suppress verbose failure output, show only test progress
 - `--debug`: print environment information before running Playwright
+- `--nav-timeout <ms>`: navigation timeout in ms (default `10000`)
+- `--wait-timeout <ms>`: wait-for-element timeout in ms (default `30000`)
+- `--overlay-timeout <ms>`: timeout waiting for Storybook preparing overlays to hide (default `5000`)
+- `--stabilize-interval <ms>`: interval between canvas stability checks in ms (default `150`)
+- `--stabilize-attempts <n>`: number of canvas stability checks (default `20`)
 - `--include <patterns>`: include stories matching patterns (comma-separated)
 - `--exclude <patterns>`: exclude stories matching patterns (comma-separated)
 - `--grep <pattern>`: filter stories by regex pattern
