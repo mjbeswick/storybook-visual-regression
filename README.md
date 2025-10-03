@@ -10,7 +10,7 @@ The tool automatically detects your Storybook configuration including:
 
 Example output:
 
-```bash
+```
 $ storybook-visual-regression test -c "npm run storybook" --url http://localhost:9009/
 
 🚀 Starting Playwright visual regression tests
