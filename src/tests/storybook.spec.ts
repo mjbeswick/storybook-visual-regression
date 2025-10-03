@@ -30,11 +30,22 @@ function _parseJsonEnv<T>(key: string, fallback: T): T {
   }
 }
 
+type IndexEntries = Record<string, { type?: string; importPath?: string }>;
+
+function isIndexWithEntries(value: unknown): value is { entries: IndexEntries } {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'entries' in value &&
+    typeof (value as { entries?: unknown }).entries === 'object'
+  );
+}
+
 function arraysFromIndex(index: unknown): {
   storyIds: string[];
   storyImportPaths: Record<string, string>;
 } {
-  const entries = (index && typeof index === 'object' && 'entries' in index && index.entries) || {};
+  const entries: IndexEntries = isIndexWithEntries(index) ? index.entries : {};
   const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
   const storyImportPaths: Record<string, string> = {};
   for (const id of storyIds) {
