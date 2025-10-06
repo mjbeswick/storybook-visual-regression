@@ -183,6 +183,18 @@ export class VisualRegressionRunner {
         await page.waitForTimeout(1000);
       }
 
+      // Pause and reset any SVG SMIL animations once content is present
+      try {
+        await page.evaluate(() => {
+          document.querySelectorAll('svg').forEach((svg) => {
+            (svg as any).pauseAnimations?.();
+            (svg as any).setCurrentTime?.(0);
+          });
+        });
+      } catch (_error) {
+        // ignore
+      }
+
       // Take screenshot
       const screenshotPath = `${this.config.snapshotPath}/${story.id}.png`;
       await page.screenshot({ path: screenshotPath });

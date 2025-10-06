@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import chalk from 'chalk';
 
 const defaultViewportSizes: Record<string, { width: number; height: number }> = {
@@ -14,26 +14,17 @@ const defaultViewportKey = 'desktop';
 const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:9009';
 const projectRoot = process.env.ORIGINAL_CWD || process.cwd();
 
-async function disableAnimations(page: any): Promise<void> {
+async function disableAnimations(page: Page): Promise<void> {
   // Respect reduced motion globally
   try {
     await page.emulateMedia({ reducedMotion: 'reduce' });
-  } catch (_error) {
+  } catch {
     /* noop */
   }
 
   // No project-specific selector hiding by default
 
-  // Also pause SMIL animations for inline SVGs if present
-  try {
-    await page.evaluate(() => {
-      document.querySelectorAll('svg').forEach((el) => {
-        (el as any).pauseAnimations?.();
-      });
-    });
-  } catch (_error) {
-    /* noop */
-  }
+  // Note: actual pausing/resetting of SVG SMIL animations is done after the story loads
 }
 
 type ReadyOptions = {
@@ -368,8 +359,7 @@ test.describe('Storybook Visual Regression', () => {
 
         const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
         try {
-          const screenshot = await page.screenshot();
-          await expect(screenshot).toMatchSnapshot(`${sanitizedStoryId}.png`);
+          await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`);
         } catch (assertionError) {
           // Print a spaced, aligned failure block
           const label = (k: string) => (k + ':').padEnd(10, ' ');

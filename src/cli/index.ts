@@ -38,6 +38,9 @@ type CliOptions = {
   overlayTimeout?: string; // ms
   stabilizeInterval?: string; // ms
   stabilizeAttempts?: string; // count
+  // Not found check configuration
+  notFoundCheck?: boolean;
+  notFoundRetryDelay?: string; // ms
 };
 
 async function createConfigFromOptions(
@@ -252,14 +255,34 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
   if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
   if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
-  // Pass test tuning knobs
-  if (options.navTimeout) process.env.SVR_NAV_TIMEOUT = String(options.navTimeout);
-  if (options.waitTimeout) process.env.SVR_WAIT_TIMEOUT = String(options.waitTimeout);
-  if (options.overlayTimeout) process.env.SVR_OVERLAY_TIMEOUT = String(options.overlayTimeout);
-  if (options.stabilizeInterval)
-    process.env.SVR_STABILIZE_INTERVAL = String(options.stabilizeInterval);
-  if (options.stabilizeAttempts)
-    process.env.SVR_STABILIZE_ATTEMPTS = String(options.stabilizeAttempts);
+  // Pass test tuning knobs (parse numeric strings to handle underscores)
+  if (options.navTimeout) {
+    const parsed = parseInt(String(options.navTimeout).replace(/_/g, ''), 10);
+    process.env.SVR_NAV_TIMEOUT = String(parsed);
+  }
+  if (options.waitTimeout) {
+    const parsed = parseInt(String(options.waitTimeout).replace(/_/g, ''), 10);
+    process.env.SVR_WAIT_TIMEOUT = String(parsed);
+  }
+  if (options.overlayTimeout) {
+    const parsed = parseInt(String(options.overlayTimeout).replace(/_/g, ''), 10);
+    process.env.SVR_OVERLAY_TIMEOUT = String(parsed);
+  }
+  if (options.stabilizeInterval) {
+    const parsed = parseInt(String(options.stabilizeInterval).replace(/_/g, ''), 10);
+    process.env.SVR_STABILIZE_INTERVAL = String(parsed);
+  }
+  if (options.stabilizeAttempts) {
+    const parsed = parseInt(String(options.stabilizeAttempts).replace(/_/g, ''), 10);
+    process.env.SVR_STABILIZE_ATTEMPTS = String(parsed);
+  }
+  if (options.notFoundCheck) {
+    process.env.SVR_NOT_FOUND_CHECK = 'true';
+  }
+  if (options.notFoundRetryDelay) {
+    const parsed = parseInt(String(options.notFoundRetryDelay).replace(/_/g, ''), 10);
+    process.env.SVR_NOT_FOUND_RETRY_DELAY = String(parsed);
+  }
   process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
   process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
@@ -285,6 +308,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       SVR_OVERLAY_TIMEOUT: process.env.SVR_OVERLAY_TIMEOUT,
       SVR_STABILIZE_INTERVAL: process.env.SVR_STABILIZE_INTERVAL,
       SVR_STABILIZE_ATTEMPTS: process.env.SVR_STABILIZE_ATTEMPTS,
+      SVR_NOT_FOUND_CHECK: process.env.SVR_NOT_FOUND_CHECK,
+      SVR_NOT_FOUND_RETRY_DELAY: process.env.SVR_NOT_FOUND_RETRY_DELAY,
     });
 
     // Log the effective Playwright config we will run with
