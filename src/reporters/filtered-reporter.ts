@@ -6,6 +6,7 @@ import {
   TestCase,
   TestResult,
 } from '@playwright/test/reporter';
+import chalk from 'chalk';
 
 class FilteredReporter implements Reporter {
   private failures: TestCase[] = [];
@@ -13,7 +14,10 @@ class FilteredReporter implements Reporter {
   private failed = 0;
 
   onBegin(config: FullConfig, suite: Suite): void {
-    console.log(`Running ${suite.allTests().length} tests using ${config.workers} workers\n`);
+    const total = suite.allTests().length;
+    console.log(
+      `${chalk.bold('🚀 Running')} ${chalk.cyan(String(total))} ${chalk.gray('tests using')} ${chalk.cyan(String(config.workers))} ${chalk.gray('workers')}\n`,
+    );
   }
 
   onStdOut(_chunk: string | Buffer, _test?: TestCase, _result?: TestResult): void {
@@ -28,20 +32,22 @@ class FilteredReporter implements Reporter {
     if (result.status === 'failed') {
       this.failures.push(test);
       this.failed++;
-      console.log(`  ✘   ${test.title}`);
+      console.log(`  ${chalk.red('✗')}   ${chalk.red(test.title)}`);
     } else if (result.status === 'passed') {
       this.passed++;
-      console.log(`  ✓   ${test.title}`);
+      console.log(`  ${chalk.green('✓')}   ${chalk.white(test.title)}`);
     }
   }
 
   onEnd(result: FullResult): void {
-    console.log(`\n${this.passed} passed, ${this.failed} failed`);
+    console.log(
+      `\n${chalk.green(String(this.passed))} ${chalk.gray('passed')}, ${chalk.red(String(this.failed))} ${chalk.gray('failed')}`,
+    );
 
     if (result.status === 'passed') {
-      console.log('✓ All tests passed');
+      console.log(`${chalk.green('✓')} ${chalk.bold('All tests passed')}`);
     } else {
-      console.log('✘ Some tests failed');
+      console.log(`${chalk.red('✗')} ${chalk.bold('Some tests failed')}`);
     }
   }
 }
