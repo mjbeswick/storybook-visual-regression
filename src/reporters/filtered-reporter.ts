@@ -14,6 +14,7 @@ import type { Ora } from 'ora';
 
 class FilteredReporter implements Reporter {
   private failures: TestCase[] = [];
+  private failureDetails: Array<{ test: TestCase; diffPath?: string }> = [];
   private passed = 0;
   private failed = 0;
   private resultsRoot: string | null = null;
@@ -215,6 +216,21 @@ class FilteredReporter implements Reporter {
     if (result.status === 'failed') {
       this.failures.push(test);
       this.failed++;
+      
+      // Find the diff image path
+      let diffPath: string | undefined;
+      for (const attachment of result.attachments || []) {
+        if (!attachment.path) continue;
+        const name = (attachment.name || '').toLowerCase();
+        if (name.includes('diff')) {
+          diffPath = attachment.path;
+          break;
+        }
+      }
+      
+      // Store failure details with diff path
+      this.failureDetails.push({ test, diffPath });
+      
       if (this.spinner) {
         this.spinner.stop();
       }
@@ -263,19 +279,22 @@ class FilteredReporter implements Reporter {
     if (result.status === 'failed' || this.failed > 0) {
       console.log(chalk.red('✘ Some tests failed'));
 
-      // Show failure summary with URLs if there are failures
-      if (this.failures.length > 0) {
+      // Show failure summary with URLs and diff paths if there are failures
+      if (this.failureDetails.length > 0) {
         console.log(chalk.yellow('\n📋 Failed Tests Summary:'));
         const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
 
-        this.failures.forEach((test, index) => {
-          const displayTitle = test.title.replace(/^snapshots-/, '');
+        this.failureDetails.forEach((failure, index) => {
+          const displayTitle = failure.test.title.replace(/^snapshots-/, '');
           const idMatch = displayTitle.match(/\[(.*)\]$/);
           const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
           const storyUrl = `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`;
 
           console.log(chalk.red(`${index + 1}. ${displayTitle}`));
           console.log(chalk.blue(`   🔗 ${storyUrl}`));
+          if (failure.diffPath) {
+            console.log(chalk.magenta(`   📸 ${failure.diffPath}`));
+          }
         });
 
         console.log(
