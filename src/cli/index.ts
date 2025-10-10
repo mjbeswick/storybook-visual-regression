@@ -105,7 +105,9 @@ async function createConfigFromOptions(
 
   // Use silent reporter for very short webserver timeouts to prevent confusing output
   if (serverTimeoutOpt && serverTimeoutOpt < 1000) {
-    process.env.PLAYWRIGHT_REPORTER = 'dist/reporters/silent-reporter.js';
+    const currentDir = dirname(fileURLToPath(import.meta.url));
+    const silentReporterPath = join(currentDir, '..', 'reporters', 'silent-reporter.js');
+    process.env.PLAYWRIGHT_REPORTER = silentReporterPath;
   }
 
   return {
@@ -478,8 +480,12 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     const resolvedCustomReporter = customReporterCandidates.find((p) => existsSync(p));
 
     // Prefer our reporter unless user explicitly requested another or debug is enabled
+    // Don't use custom reporter if silent reporter is set
     const shouldUseCustomReporter =
-      !options.debug && !(options as CliOptions).reporter && !!resolvedCustomReporter;
+      !options.debug && 
+      !(options as CliOptions).reporter && 
+      !!resolvedCustomReporter &&
+      !process.env.PLAYWRIGHT_REPORTER?.includes('silent-reporter');
     if (shouldUseCustomReporter && resolvedCustomReporter) {
       // Pass via CLI arg (highest precedence)
       playwrightArgs.push('--reporter', resolvedCustomReporter);
