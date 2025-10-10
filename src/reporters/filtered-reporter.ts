@@ -124,12 +124,10 @@ class FilteredReporter implements Reporter {
     const idMatch = displayTitle.match(/\[(.*)\]$/);
     const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
 
-    // Format the display title with dimmed brackets
+    // Remove the redundant story ID in brackets for cleaner output
     let formattedTitle = displayTitle;
     if (idMatch) {
-      const beforeBrackets = displayTitle.substring(0, displayTitle.lastIndexOf('['));
-      const bracketContent = idMatch[1];
-      formattedTitle = `${beforeBrackets}${chalk.dim(`[${bracketContent}]`)}`;
+      formattedTitle = displayTitle.substring(0, displayTitle.lastIndexOf('[')).trim();
     }
 
     const outputCore =
