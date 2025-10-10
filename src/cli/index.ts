@@ -102,6 +102,11 @@ async function createConfigFromOptions(
   const workersOpt = parseNumberOption(options.workers);
   const retriesOpt = parseNumberOption(options.retries);
   const serverTimeoutOpt = parseNumberOption(options.webserverTimeout);
+  
+  // Use silent reporter for very short webserver timeouts to prevent confusing output
+  if (serverTimeoutOpt && serverTimeoutOpt < 1000) {
+    process.env.PLAYWRIGHT_REPORTER = 'src/reporters/silent-reporter.ts';
+  }
 
   return {
     ...detectedConfig,
@@ -584,7 +589,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         );
         console.error('');
         console.error(
-          chalk.red.bold('⚠️  IGNORE THE TEST OUTPUT ABOVE - IT\'S NOT RELEVANT TO THIS ERROR'),
+          chalk.red.bold("⚠️  IGNORE THE TEST OUTPUT ABOVE - IT'S NOT RELEVANT TO THIS ERROR"),
         );
         console.error('');
       } else if (

@@ -216,11 +216,14 @@ class FilteredReporter implements Reporter {
     const testDuration = this.formatDuration(rawDuration);
 
     // Color the time units with the same color as the number but lighter
-    const durationText = ` ${testDuration.replace(/(\d+(?:\.\d+)?)([a-zA-Z]+)/g, (match, number, unit) => {
-      const baseColor =
-        rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.green;
-      return `${baseColor(number)}${baseColor.dim(unit)}`;
-    })}`;
+    const durationText = ` ${testDuration.replace(
+      /(\d+(?:\.\d+)?)([a-zA-Z]+)/g,
+      (match, number, unit) => {
+        const baseColor =
+          rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.green;
+        return `${baseColor(number)}${baseColor.dim(unit)}`;
+      },
+    )}`;
 
     // Create progress label with optional time estimate
     let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))}`;
