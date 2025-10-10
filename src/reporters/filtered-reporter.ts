@@ -198,9 +198,12 @@ class FilteredReporter implements Reporter {
     const testDuration = this.formatDuration(rawDuration);
     const durationColor =
       rawDuration > 10000 ? chalk.red.bold : rawDuration > 5000 ? chalk.yellow.bold : chalk.green;
-
-    // Remove brackets and color the time units
-    const durationText = ` ${durationColor(testDuration.replace(/(\d+)([a-zA-Z]+)/g, `$1${chalk.gray('$2')}`))}`;
+    
+    // Color the time units with the same color as the number but lighter
+    const durationText = ` ${testDuration.replace(/(\d+)([a-zA-Z]+)/g, (match, number, unit) => {
+      const baseColor = rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.green;
+      return `${durationColor(number)}${baseColor.dim(unit)}`;
+    })}`;
 
     // Create progress label with optional time estimate
     let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))}`;
