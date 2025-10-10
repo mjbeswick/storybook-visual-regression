@@ -137,24 +137,24 @@ class FilteredReporter implements Reporter {
       .replace(/\s*›\s*/g, ' ❯ ') // Ensure consistent spacing around chevrons
       .replace(/\s+/g, ' ') // Remove extra spaces
       .trim();
-    
+
     // Split the title into category path and story name
     const chevronIndex = formattedTitle.lastIndexOf(' ❯ ');
     let categoryPath = '';
     let storyName = '';
-    
+
     if (chevronIndex !== -1) {
       categoryPath = formattedTitle.substring(0, chevronIndex + 3); // Include the chevron
       storyName = formattedTitle.substring(chevronIndex + 3); // Story name after chevron
     } else {
       categoryPath = formattedTitle;
     }
-    
+
     // Color the category path (slashes and chevrons)
     categoryPath = categoryPath
-      .replace(/\s\/\s/g, ` ${chalk.blue.bold('/')} `)
+      .replace(/\s\/\s/g, ` ${chalk.cyan.bold('/')} `)
       .replace(/\s❯\s/g, ` ${chalk.cyan.bold('❯')} `);
-    
+
     // Combine colored category path with uncolored story name
     formattedTitle = categoryPath + storyName;
 
