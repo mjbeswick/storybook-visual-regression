@@ -29,6 +29,8 @@ type CliOptions = {
   exclude?: string;
   grep?: string;
   debug?: boolean;
+  hideTimeEstimates?: boolean;
+  hideSpinners?: boolean;
   output?: string;
   updateSnapshots?: boolean;
   browser?: string;
@@ -236,23 +238,25 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         'webkit',
         'all',
       ]);
+
       if (!allowed.has(browser)) {
         browser = 'chromium';
       }
 
-      // Install system dependencies first if requested (Linux CI)
+      // Install browsers (with system dependencies if requested)
+      const args = ['playwright', 'install'];
+
       if (options.installDeps) {
-        const depTargets = browser === 'all' ? ['chromium', 'firefox', 'webkit'] : [browser];
-        for (const t of depTargets) {
-          await execa('npx', ['playwright', 'install-deps', t], { stdio: 'inherit' });
-        }
+        args.push('--with-deps');
       }
 
-      // Install browsers
       if (browser === 'all') {
-        await execa('npx', ['playwright', 'install', 'all'], { stdio: 'inherit' });
+        // Install all browsers at once
+        await execa('npx', args, { stdio: 'inherit' });
       } else {
-        await execa('npx', ['playwright', 'install', browser], { stdio: 'inherit' });
+        // Install specific browser
+        args.push(browser);
+        await execa('npx', args, { stdio: 'inherit' });
       }
     } catch (installError) {
       console.error(
@@ -312,6 +316,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
   if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
   if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
+  if (options.hideTimeEstimates) process.env.SVR_HIDE_TIME_ESTIMATES = 'true';
+  if (options.hideSpinners) process.env.SVR_HIDE_SPINNERS = 'true';
   // Pass test tuning knobs (parse numeric strings to handle underscores)
   if (options.navTimeout) {
     const parsed = parseInt(String(options.navTimeout).replace(/_/g, ''), 10);
@@ -555,6 +561,8 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--hide-time-estimates', 'Hide time estimates in progress display')
+  .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
   // Timing and stability options (ms / counts)
   .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)', '10000')
   .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 10000)')
@@ -620,6 +628,8 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--hide-time-estimates', 'Hide time estimates in progress display')
+  .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
   .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)', '10000')
   .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 30000)', '30000')
   .option(

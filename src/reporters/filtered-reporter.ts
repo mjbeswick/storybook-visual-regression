@@ -25,6 +25,9 @@ class FilteredReporter implements Reporter {
   private perWorkerDurations: Record<number, number[]> = {}; // rolling window per worker
   private recentAllDurations: number[] = []; // for percentile/outlier capping
   private spinner: Ora | null = null;
+  private isCI = false;
+  private showTimeEstimates = true;
+  private showSpinners = true;
 
   private formatDuration(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
@@ -90,12 +93,21 @@ class FilteredReporter implements Reporter {
     const configuredWorkers = Number(config.workers);
     this.workers =
       Number.isFinite(configuredWorkers) && configuredWorkers > 0 ? configuredWorkers : 1;
+
+    // Detect CI environment and configure display options
+    this.isCI = process.env.CI === 'true' || process.env.CONTINUOUS_INTEGRATION === 'true';
+    this.showTimeEstimates = !this.isCI && process.env.SVR_HIDE_TIME_ESTIMATES !== 'true';
+    this.showSpinners = !this.isCI && process.env.SVR_HIDE_SPINNERS !== 'true';
+
     // Header line for tests and workers, followed by a newline as expected by tests
     console.log(`Running ${this.totalTests} tests using ${this.workers} workers\n`);
-    this.spinner = ora({
-      text: chalk.gray(`0 ${chalk.dim('of')} ${this.totalTests} ${chalk.dim('estimating…')}`),
-      isEnabled: true,
-    }).start();
+
+    if (this.showSpinners) {
+      this.spinner = ora({
+        text: chalk.gray(`0 ${chalk.dim('of')} ${this.totalTests} ${chalk.dim('estimating…')}`),
+        isEnabled: true,
+      }).start();
+    }
   }
 
   onStdOut(_chunk: string | Buffer, _test?: TestCase, _result?: TestResult): void {
@@ -161,7 +173,19 @@ class FilteredReporter implements Reporter {
       }
     }
     const etaMs = (etaBasis * remaining) / Math.max(1, this.workers);
-    const progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))} ${chalk.gray(`~${this.formatDuration(etaMs)} remaining`)}`;
+
+    // Format test duration with color
+    const testDuration = this.formatDuration(rawDuration);
+    const durationColor =
+      rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.gray;
+    const durationText = ` ${durationColor(`(${testDuration})`)}`;
+
+    // Create progress label with optional time estimate
+    let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))}`;
+    if (this.showTimeEstimates && remaining > 0) {
+      progressLabel += ` ${chalk.gray(`~${this.formatDuration(etaMs)} remaining`)}`;
+    }
+
     if (this.spinner) {
       this.spinner.text = progressLabel;
     }
@@ -169,9 +193,12 @@ class FilteredReporter implements Reporter {
     if (result.status === 'failed') {
       this.failures.push(test);
       this.failed++;
-      if (this.spinner) this.spinner.stop();
-      // Expected exact format: two spaces, symbol, three spaces, title (no duration)
-      console.log(`  ✘   ${outputCore}`);
+      if (this.spinner) {
+        this.spinner.stop();
+        this.spinner.fail();
+      }
+      // Show failed test with duration and red cross
+      console.log(`  ${chalk.red('✘')}   ${outputCore}${durationText}`);
       if (this.spinner) this.spinner.start(progressLabel);
       // Keep diffs, remove non-diff attachments for failures
       for (const attachment of result.attachments || []) {
@@ -182,9 +209,12 @@ class FilteredReporter implements Reporter {
       }
     } else if (result.status === 'passed') {
       this.passed++;
-      if (this.spinner) this.spinner.stop();
-      // Expected exact format: two spaces, symbol, three spaces, title (no duration)
-      console.log(`  ✓   ${outputCore}`);
+      if (this.spinner) {
+        this.spinner.stop();
+        this.spinner.succeed();
+      }
+      // Show passed test with duration and green tick
+      console.log(`  ${chalk.green('✓')}   ${outputCore}${durationText}`);
       if (this.spinner) this.spinner.start(progressLabel);
       // Remove all artifacts for passed tests and prune empty folders up to results root
       for (const attachment of result.attachments || []) {
@@ -202,14 +232,34 @@ class FilteredReporter implements Reporter {
       this.spinner.stop();
       this.spinner = null;
     }
+
     // Summary line expected by tests, prefixed with a newline
     console.log(`\n${this.passed} passed, ${this.failed} failed`);
-    if (result.status === 'failed') {
-      console.log('✘ Some tests failed');
-    } else if (this.failed > 0) {
-      console.log('✘ Some tests failed');
+
+    if (result.status === 'failed' || this.failed > 0) {
+      console.log(chalk.red('✘ Some tests failed'));
+
+      // Show failure summary with URLs if there are failures
+      if (this.failures.length > 0) {
+        console.log(chalk.yellow('\n📋 Failed Tests Summary:'));
+        const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
+
+        this.failures.forEach((test, index) => {
+          const displayTitle = test.title.replace(/^snapshots-/, '');
+          const idMatch = displayTitle.match(/\[(.*)\]$/);
+          const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
+          const storyUrl = `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`;
+
+          console.log(chalk.red(`  ${index + 1}. ${displayTitle}`));
+          console.log(chalk.blue(`     🔗 ${storyUrl}`));
+        });
+
+        console.log(
+          chalk.dim(`\n💡 Tip: Set SVR_PRINT_URLS=true to see URLs inline with test results`),
+        );
+      }
     } else {
-      console.log('✓ All tests passed');
+      console.log(chalk.green('✓ All tests passed'));
     }
   }
 }
