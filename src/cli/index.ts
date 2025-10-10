@@ -549,9 +549,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     if (exitCode !== 130) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // Debug: Log the actual error message to help identify patterns
-      console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
-      console.error(chalk.gray(`Debug - Error object:`, error));
+      // Debug: Log the actual error message to help identify patterns (only in debug mode)
+      if (process.env.SVR_DEBUG === 'true') {
+        console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
+        console.error(chalk.gray(`Debug - Error object:`, error));
+      }
 
       // Check for specific error types and show appropriate messages
       const isWebserverTimeout =
@@ -560,8 +562,10 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         (errorMessage.includes('WebServer') && errorMessage.includes('timeout')) ||
         errorMessage.includes('server startup timeout') ||
         (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer')) ||
-        // Check if it's a command failure that might be due to webserver timeout
-        (errorMessage.includes('Command failed') && errorMessage.includes('playwright test'));
+        // Check if it's a command failure with exit code 1 and no tests ran (likely webserver timeout)
+        (errorMessage.includes('Command failed') && 
+         errorMessage.includes('playwright test') && 
+         errorMessage.includes('exit code 1'));
 
       if (isWebserverTimeout) {
         // Show prominent webserver timeout message
