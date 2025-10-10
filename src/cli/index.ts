@@ -537,7 +537,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     }
   } catch {
     console.log('');
-    console.error(chalk.red('💥 Test execution failed'));
+    console.error(chalk.red.bold('💥 Test execution failed'));
     process.exit(1);
   }
 }
@@ -598,7 +598,7 @@ program
     try {
       // Install browsers (with system dependencies if requested)
       const args = ['playwright', 'install'];
-      
+
       if (browser === 'all') {
         // Install all browsers at once
         await execa('npx', args, { stdio: 'inherit' });
