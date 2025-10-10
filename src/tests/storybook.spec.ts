@@ -189,8 +189,15 @@ function filterStories(stories: string[]): string[] {
     const includePatterns = process.env.STORYBOOK_INCLUDE.split(',')
       .map((p) => p.trim())
       .filter(Boolean);
-    const includeMatchers = includePatterns.map((p) => picomatch(p, { nocase: true }));
-    filtered = filtered.filter((storyId) => includeMatchers.some((m) => m(storyId)));
+    filtered = filtered.filter((storyId) => {
+      const displayName = storyDisplayNames[storyId] || '';
+      // Check if any pattern matches storyId or displayName (case-insensitive)
+      return includePatterns.some((pattern) => {
+        const lowerPattern = pattern.toLowerCase();
+        return storyId.toLowerCase().includes(lowerPattern) || 
+               displayName.toLowerCase().includes(lowerPattern);
+      });
+    });
   }
 
   // Apply exclude patterns
@@ -198,8 +205,15 @@ function filterStories(stories: string[]): string[] {
     const excludePatterns = process.env.STORYBOOK_EXCLUDE.split(',')
       .map((p) => p.trim())
       .filter(Boolean);
-    const excludeMatchers = excludePatterns.map((p) => picomatch(p, { nocase: true }));
-    filtered = filtered.filter((storyId) => !excludeMatchers.some((m) => m(storyId)));
+    filtered = filtered.filter((storyId) => {
+      const displayName = storyDisplayNames[storyId] || '';
+      // Check if any pattern matches storyId or displayName (case-insensitive)
+      return !excludePatterns.some((pattern) => {
+        const lowerPattern = pattern.toLowerCase();
+        return storyId.toLowerCase().includes(lowerPattern) || 
+               displayName.toLowerCase().includes(lowerPattern);
+      });
+    });
   }
 
   // Apply grep pattern (regex)
