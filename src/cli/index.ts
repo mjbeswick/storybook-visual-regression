@@ -41,6 +41,8 @@ type CliOptions = {
   // Not found check configuration
   notFoundCheck?: boolean;
   notFoundRetryDelay?: string; // ms
+  // Update behavior
+  missingOnly?: boolean;
 };
 
 async function createConfigFromOptions(
@@ -394,14 +396,22 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     // Always point tests to source tests to avoid missing specs in dist
     const testsDir = join(projectRoot, 'src', 'tests');
 
-    // Resolve reporter path if quiet mode requested
-    const quietReporterCandidates = [
+    // Resolve our minimal reporter path (used by default and in quiet mode)
+    const customReporterCandidates = [
       join(projectRoot, 'dist', 'reporters', 'filtered-reporter.js'),
       join(projectRoot, 'src', 'reporters', 'filtered-reporter.ts'),
     ];
-    const resolvedQuietReporter = options.quiet
-      ? quietReporterCandidates.find((p) => existsSync(p))
-      : undefined;
+    const resolvedCustomReporter = customReporterCandidates.find((p) => existsSync(p));
+
+    // Prefer our reporter unless user explicitly requested another or debug is enabled
+    const shouldUseCustomReporter =
+      !options.debug && !(options as CliOptions).reporter && !!resolvedCustomReporter;
+    if (shouldUseCustomReporter && resolvedCustomReporter) {
+      // Pass via CLI arg (highest precedence)
+      playwrightArgs.push('--reporter', resolvedCustomReporter);
+      // And also set env for redundancy/fallback
+      process.env.PLAYWRIGHT_REPORTER = resolvedCustomReporter;
+    }
 
     const child = execa('npx', playwrightArgs, {
       cwd: projectRoot, // Run from the main project directory where CLI is installed
@@ -425,12 +435,13 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         PLAYWRIGHT_TIMEZONE: config.timezone,
         PLAYWRIGHT_LOCALE: config.locale,
         PLAYWRIGHT_OUTPUT_DIR: join(originalCwd, options.output || 'visual-regression'),
-        // Use built reporter when available in quiet mode to avoid TS import issues
+        // Respect explicit reporter or debug; otherwise use our custom reporter if available
         PLAYWRIGHT_REPORTER: options.debug
-          ? 'line' // ensure console logs (story URLs) are printed during debug runs
-          : options.quiet
-            ? resolvedQuietReporter || 'list'
-            : process.env.PLAYWRIGHT_REPORTER,
+          ? 'line'
+          : (options as CliOptions).reporter
+            ? String((options as CliOptions).reporter)
+            : (shouldUseCustomReporter && resolvedCustomReporter) ||
+              process.env.PLAYWRIGHT_REPORTER,
         // Surface a simple debug flag for tests to log helpful info like Story URLs
         SVR_DEBUG: options.debug ? 'true' : undefined,
         STORYBOOK_COMMAND: storybookLaunchCommand,
@@ -485,18 +496,24 @@ program
   .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
-  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
+  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
   // Timing and stability options (ms / counts)
-  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)')
-  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 30000)')
-  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide (default 5000)')
-  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 150)')
-  .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)')
+  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)', '10000')
+  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 10000)')
+  .option(
+    '--overlay-timeout <ms>',
+    'Timeout waiting for Storybook overlays to hide (default 5000)',
+    '5000',
+  )
+  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 200)', '200')
+  .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)', '20')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
+  .option('--not-found-check', 'Enable Not Found content heuristic with retry')
+  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries (default 200)', '200')
   .action(async (options) => runTests(options as CliOptions));
 
 program
@@ -538,20 +555,30 @@ program
   .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '1')
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
-  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)', 'list')
+  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
-  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)')
-  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 30000)')
-  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide (default 5000)')
-  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 150)')
+  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)', '10000')
+  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 30000)', '30000')
+  .option(
+    '--overlay-timeout <ms>',
+    'Timeout waiting for Storybook overlays to hide (default 5000)',
+    '5000',
+  )
+  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 150)', '150')
   .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
+  .option('--not-found-check', 'Enable Not Found content heuristic with retry')
+  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries (default 200)', '200')
+  .option('--missing-only', 'Only create snapshots for stories without existing baselines')
   .action(async (options) => {
     // Enable snapshot updates only via this command
     process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = 'true';
+    if ((options as CliOptions).missingOnly) {
+      process.env.SVR_MISSING_ONLY = 'true';
+    }
     if ((options as CliOptions).reporter)
       process.env.PLAYWRIGHT_REPORTER = String((options as CliOptions).reporter);
     await runTests(options as CliOptions);

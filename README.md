@@ -69,10 +69,13 @@ Update snapshots after intentional UI changes:
 npx storybook-visual-regression update
 ```
 
-Filter stories by id/title substring (comma-separated):
+Filter stories by id/title substring or glob (comma-separated):
 
 ```bash
 npx storybook-visual-regression test --include button,card --exclude wip
+
+# with globs
+npx storybook-visual-regression test --include "button*" --exclude "**/wip*"
 
 # or regex pattern
 npx storybook-visual-regression test --grep "button.*primary"
@@ -114,11 +117,13 @@ Common options (defaults shown):
 - `--nav-timeout <ms>`: navigation timeout in ms (default `10000`)
 - `--wait-timeout <ms>`: wait-for-element timeout in ms (default `30000`)
 - `--overlay-timeout <ms>`: timeout waiting for Storybook preparing overlays to hide (default `5000`)
-- `--stabilize-interval <ms>`: interval between canvas stability checks in ms (default `150`)
+- `--stabilize-interval <ms>`: interval between canvas stability checks in ms (default `200`)
 - `--stabilize-attempts <n>`: number of canvas stability checks (default `20`)
-- `--include <patterns>`: include stories matching patterns (comma-separated)
-- `--exclude <patterns>`: exclude stories matching patterns (comma-separated)
+- `--include <patterns>`: include stories matching patterns (comma-separated, supports globs)
+- `--exclude <patterns>`: exclude stories matching patterns (comma-separated, supports globs)
 - `--grep <pattern>`: filter stories by regex pattern
+- `--not-found-check` (optional): enable a heuristic that fails when the host app shows a "Not Found"/404 page. Retries once before failing.
+- `--not-found-retry-delay <ms>`: delay between Not Found retries (default `200`)
 
 ### Example workflows
 
@@ -132,6 +137,12 @@ or update snapshots after intentional UI changes:
 
 ```bash
 npx storybook-visual-regression test --command "npm run storybook" --url http://localhost:9009 --grep "MyComponent"
+```
+
+Only create snapshots for stories that are missing baselines:
+
+```bash
+npx storybook-visual-regression update --missing-only
 ```
 
 Run all stories:
@@ -151,6 +162,15 @@ npx storybook-visual-regression test --command "npm run storybook" --url http://
 - Screenshots: `<output>/snapshots/<storyId>.png`
 - Results: `<output>/results/` (reserved for integrations/exports)
 - Console summary with total, passed, failed, and per‑story timings
+
+### Results cleanup (when using quiet reporter)
+
+If you run with `--quiet`, the built-in reporter performs cleanup as tests run:
+
+- Passed tests: their attachments are deleted and empty folders are pruned under `<output>/results`
+- Failed tests: non-diff attachments are removed; only diff images are kept
+
+This keeps your results directory focused on the actionable artifacts.
 
 ### Story discovery
 

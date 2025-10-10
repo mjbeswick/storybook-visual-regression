@@ -1,8 +1,9 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 import { expect, test, type Page } from '@playwright/test';
 import chalk from 'chalk';
+import picomatch from 'picomatch';
 
 const defaultViewportSizes: Record<string, { width: number; height: number }> = {
   mobile: { width: 375, height: 667 },
@@ -37,7 +38,7 @@ async function waitForStoryReady(page: any, opts?: ReadyOptions): Promise<void> 
   const overlayTimeout =
     opts?.overlayTimeout ?? parseInt(process.env.SVR_OVERLAY_TIMEOUT || '5000', 10);
   const stabilizeInterval =
-    opts?.stabilizeInterval ?? parseInt(process.env.SVR_STABILIZE_INTERVAL || '150', 10);
+    opts?.stabilizeInterval ?? parseInt(process.env.SVR_STABILIZE_INTERVAL || '200', 10);
   const stabilizeAttempts =
     opts?.stabilizeAttempts ?? parseInt(process.env.SVR_STABILIZE_ATTEMPTS || '20', 10);
   // Make sure the canvas container exists
@@ -107,7 +108,10 @@ function _parseJsonEnv<T>(key: string, fallback: T): T {
   }
 }
 
-type IndexEntries = Record<string, { type?: string; importPath?: string }>;
+type IndexEntries = Record<
+  string,
+  { type?: string; importPath?: string; title?: string; name?: string }
+>;
 
 function isIndexWithEntries(value: unknown): value is { entries: IndexEntries } {
   return (
@@ -121,15 +125,22 @@ function isIndexWithEntries(value: unknown): value is { entries: IndexEntries } 
 function arraysFromIndex(index: unknown): {
   storyIds: string[];
   storyImportPaths: Record<string, string>;
+  storyDisplayNames: Record<string, string>;
 } {
   const entries: IndexEntries = isIndexWithEntries(index) ? index.entries : {};
   const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
   const storyImportPaths: Record<string, string> = {};
+  const storyDisplayNames: Record<string, string> = {};
   for (const id of storyIds) {
     const entry = entries[id];
     if (entry && typeof entry.importPath === 'string') storyImportPaths[id] = entry.importPath;
+    const human =
+      entry && (entry.title || entry.name)
+        ? `${entry.title ?? ''}${entry.title && entry.name ? ' › ' : ''}${entry.name ?? ''}`
+        : id;
+    storyDisplayNames[id] = human || id;
   }
-  return { storyIds, storyImportPaths };
+  return { storyIds, storyImportPaths, storyDisplayNames };
 }
 
 async function discoverStories(): Promise<{
@@ -155,7 +166,18 @@ async function discoverStories(): Promise<{
   }
 }
 
-const { storyIds, storyImportPaths } = await discoverStories();
+const { storyIds, storyImportPaths, storyDisplayNames } = await discoverStories();
+
+// Optionally limit to only stories missing a baseline snapshot when update runs with --missing-only
+function filterMissingBaselines(stories: string[]): string[] {
+  if (process.env.SVR_MISSING_ONLY !== 'true') return stories;
+  const snapshotsDir = join(projectRoot, 'visual-regression', 'snapshots');
+  return stories.filter((id) => {
+    const sanitized = id.replace(/[^a-zA-Z0-9]/g, '-');
+    const filePath = join(snapshotsDir, `${sanitized}.png`);
+    return !existsSync(filePath);
+  });
+}
 
 // Apply filtering based on CLI options
 function filterStories(stories: string[]): string[] {
@@ -163,19 +185,20 @@ function filterStories(stories: string[]): string[] {
 
   // Apply include patterns
   if (process.env.STORYBOOK_INCLUDE) {
-    const includePatterns = process.env.STORYBOOK_INCLUDE.split(',').map((p) => p.trim());
-    filtered = filtered.filter((storyId) =>
-      includePatterns.some((pattern) => storyId.toLowerCase().includes(pattern.toLowerCase())),
-    );
+    const includePatterns = process.env.STORYBOOK_INCLUDE.split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const includeMatchers = includePatterns.map((p) => picomatch(p, { nocase: true }));
+    filtered = filtered.filter((storyId) => includeMatchers.some((m) => m(storyId)));
   }
 
   // Apply exclude patterns
   if (process.env.STORYBOOK_EXCLUDE) {
-    const excludePatterns = process.env.STORYBOOK_EXCLUDE.split(',').map((p) => p.trim());
-    filtered = filtered.filter(
-      (storyId) =>
-        !excludePatterns.some((pattern) => storyId.toLowerCase().includes(pattern.toLowerCase())),
-    );
+    const excludePatterns = process.env.STORYBOOK_EXCLUDE.split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const excludeMatchers = excludePatterns.map((p) => picomatch(p, { nocase: true }));
+    filtered = filtered.filter((storyId) => !excludeMatchers.some((m) => m(storyId)));
   }
 
   // Apply grep pattern (regex)
@@ -191,9 +214,9 @@ function filterStories(stories: string[]): string[] {
   return filtered;
 }
 
-const filteredStoryIds = filterStories(storyIds);
+const filteredStoryIds = filterMissingBaselines(filterStories(storyIds));
 
-test.describe('Storybook Visual Regression', () => {
+test.describe('Visual Regression', () => {
   test.describe.configure({ mode: 'parallel' });
 
   if (filteredStoryIds.length === 0) {
@@ -206,7 +229,8 @@ test.describe('Storybook Visual Regression', () => {
   }
 
   for (const storyId of filteredStoryIds) {
-    test(storyId, async ({ page }) => {
+    const humanTitle = `${storyDisplayNames[storyId] || storyId} [${storyId}]`;
+    test(humanTitle, async ({ page }) => {
       let viewportKey = defaultViewportKey;
       const importPath = storyImportPaths[storyId];
 
@@ -293,11 +317,21 @@ test.describe('Storybook Visual Regression', () => {
           throw new Error('Storybook is displaying an error page');
         }
 
-        // Common 404 content checks from host apps
-        const bodyText = (await page.textContent('body')) || '';
-        if (/not\s*found/i.test(bodyText) || /404/.test(bodyText)) {
-          console.error(chalk.red(`Story URL (content says Not Found): ${storyUrl}`));
-          throw new Error('Host page reports Not Found');
+        // Optional heuristic: detect host 'Not Found' responses (off by default)
+        if (process.env.SVR_NOT_FOUND_CHECK === 'true') {
+          const retryDelay = parseInt(process.env.SVR_NOT_FOUND_RETRY_DELAY || '200', 10);
+          // try twice separated by small delay in case canvas hasn't rendered yet
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const bodyText = (await page.textContent('body')) || '';
+            const isNotFound = /not\s*found/i.test(bodyText) || /\b404\b/.test(bodyText);
+            if (!isNotFound) break;
+            if (attempt === 0) {
+              await page.waitForTimeout(retryDelay);
+              continue;
+            }
+            console.error(chalk.red(`Story URL (content says Not Found): ${storyUrl}`));
+            throw new Error('Host page reports Not Found');
+          }
         }
 
         // Ensure some visible content exists inside storybook root (root itself may be height: 0)
