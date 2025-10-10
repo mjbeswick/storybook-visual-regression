@@ -543,12 +543,27 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     if (exitCode !== 130) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       
+      // Debug: Log the actual error message to help identify patterns
+      if (process.env.SVR_DEBUG === 'true') {
+        console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
+      }
+
       // Check for specific error types and show appropriate messages
-      if (errorMessage.includes('Storybook server did not start within')) {
+      if (
+        errorMessage.includes('Storybook server did not start within') ||
+        errorMessage.includes('webServer') && errorMessage.includes('timeout') ||
+        errorMessage.includes('WebServer') && errorMessage.includes('timeout') ||
+        errorMessage.includes('server startup timeout')
+      ) {
         console.error(chalk.red.bold('⏰ Webserver timeout - Storybook failed to start'));
         console.error(chalk.yellow('💡 Try increasing the timeout with --webserver-timeout <ms>'));
-        console.error(chalk.yellow('💡 Or start Storybook manually and run tests without --command'));
-      } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('connection refused')) {
+        console.error(
+          chalk.yellow('💡 Or start Storybook manually and run tests without --command'),
+        );
+      } else if (
+        errorMessage.includes('ECONNREFUSED') ||
+        errorMessage.includes('connection refused')
+      ) {
         console.error(chalk.red.bold('🔌 Connection refused - Storybook server not accessible'));
         console.error(chalk.yellow('💡 Make sure Storybook is running at the specified URL'));
       } else if (errorMessage.includes('timeout')) {
