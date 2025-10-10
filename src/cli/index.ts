@@ -399,7 +399,13 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
             command: process.env.STORYBOOK_COMMAND,
             url: `${(process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '')}/index.json`,
             reuseExistingServer: true,
-            timeout: parseInt(process.env.STORYBOOK_TIMEOUT || '120000'),
+            timeout: (() => {
+              const timeout = parseInt(process.env.STORYBOOK_TIMEOUT || '120000');
+              if (process.env.SVR_DEBUG === 'true') {
+                console.log(`Debug - WebServer timeout set to: ${timeout}ms`);
+              }
+              return timeout;
+            })(),
             cwd: process.env.STORYBOOK_CWD,
             stdout: 'inherit',
             stderr: 'inherit',
@@ -542,7 +548,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     const exitCode = (error as { exitCode?: number })?.exitCode;
     if (exitCode !== 130) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       // Debug: Log the actual error message to help identify patterns
       if (process.env.SVR_DEBUG === 'true') {
         console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
@@ -551,9 +557,10 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       // Check for specific error types and show appropriate messages
       if (
         errorMessage.includes('Storybook server did not start within') ||
-        errorMessage.includes('webServer') && errorMessage.includes('timeout') ||
-        errorMessage.includes('WebServer') && errorMessage.includes('timeout') ||
-        errorMessage.includes('server startup timeout')
+        (errorMessage.includes('webServer') && errorMessage.includes('timeout')) ||
+        (errorMessage.includes('WebServer') && errorMessage.includes('timeout')) ||
+        errorMessage.includes('server startup timeout') ||
+        errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer')
       ) {
         console.error(chalk.red.bold('⏰ Webserver timeout - Storybook failed to start'));
         console.error(chalk.yellow('💡 Try increasing the timeout with --webserver-timeout <ms>'));
