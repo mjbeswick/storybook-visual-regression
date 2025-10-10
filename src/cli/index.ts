@@ -550,9 +550,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       // Debug: Log the actual error message to help identify patterns
-      if (process.env.SVR_DEBUG === 'true') {
-        console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
-      }
+      console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
 
       // Check for specific error types and show appropriate messages
       const isWebserverTimeout =
@@ -565,14 +563,22 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       if (isWebserverTimeout) {
         // Show prominent webserver timeout message
         console.error('');
-        console.error(chalk.red.bold('═══════════════════════════════════════════════════════════════'));
+        console.error(
+          chalk.red.bold('═══════════════════════════════════════════════════════════════'),
+        );
         console.error(chalk.red.bold('⏰ WEBSERVER TIMEOUT - STORYBOOK FAILED TO START'));
-        console.error(chalk.red.bold('═══════════════════════════════════════════════════════════════'));
+        console.error(
+          chalk.red.bold('═══════════════════════════════════════════════════════════════'),
+        );
         console.error('');
         console.error(chalk.yellow('💡 Try increasing the timeout with --webserver-timeout <ms>'));
-        console.error(chalk.yellow('💡 Or start Storybook manually and run tests without --command'));
+        console.error(
+          chalk.yellow('💡 Or start Storybook manually and run tests without --command'),
+        );
         console.error('');
-        console.error(chalk.gray('The "Running 0 tests" output above is from Playwright and can be ignored.'));
+        console.error(
+          chalk.gray('The "Running 0 tests" output above is from Playwright and can be ignored.'),
+        );
         console.error('');
       } else if (
         errorMessage.includes('ECONNREFUSED') ||
