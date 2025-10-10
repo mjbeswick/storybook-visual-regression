@@ -282,9 +282,9 @@ class FilteredReporter implements Reporter {
 
     // Handle different test execution outcomes
     if (result.status === 'interrupted' || result.status === 'timedout') {
-      console.log(chalk.yellow('⚠ Test execution aborted'));
+      console.log(chalk.yellow.bold('⚠ Test execution aborted'));
     } else if (result.status === 'failed' || this.failed > 0) {
-      console.log(chalk.red('✘ Some tests failed'));
+      console.log(chalk.red.bold('✘ Some tests failed'));
 
       // Show failure summary with URLs and diff paths if there are failures
       if (this.failureDetails.length > 0) {
