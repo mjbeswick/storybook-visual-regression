@@ -309,17 +309,24 @@ class FilteredReporter implements Reporter {
         console.log(chalk.yellow('\n📋 Failed Tests Summary:'));
         const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
 
-        this.failureDetails.forEach((failure, index) => {
+        // Deduplicate failures by test title (keep the first occurrence)
+        const uniqueFailures = new Map<string, typeof this.failureDetails[0]>();
+        this.failureDetails.forEach((failure) => {
           const displayTitle = failure.test.title.replace(/^snapshots-/, '');
+          if (!uniqueFailures.has(displayTitle)) {
+            uniqueFailures.set(displayTitle, failure);
+          }
+        });
+
+        // Sort failures alphabetically by test title
+        const sortedFailures = Array.from(uniqueFailures.entries()).sort(([a], [b]) => a.localeCompare(b));
+
+        sortedFailures.forEach(([displayTitle, failure], index) => {
           const idMatch = displayTitle.match(/\[(.*)\]$/);
           const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
           const storyUrl = `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`;
-          
-          // Add retry suffix if this was a retry attempt
-          const retrySuffix = failure.retry !== undefined ? ` (attempt ${failure.retry + 1})` : '';
-          const titleWithRetry = displayTitle + retrySuffix;
 
-          console.log(chalk.red(`${index + 1}. ${titleWithRetry}`));
+          console.log(chalk.red(`${index + 1}. ${displayTitle}`));
           console.log(chalk.cyan(`   🔗 ${storyUrl}`));
           if (failure.diffPath) {
             console.log(chalk.gray(`   📸 ${failure.diffPath}`));
