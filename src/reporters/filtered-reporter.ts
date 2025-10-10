@@ -123,10 +123,19 @@ class FilteredReporter implements Reporter {
     const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
     const idMatch = displayTitle.match(/\[(.*)\]$/);
     const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
+    
+    // Format the display title with dimmed brackets
+    let formattedTitle = displayTitle;
+    if (idMatch) {
+      const beforeBrackets = displayTitle.substring(0, displayTitle.lastIndexOf('['));
+      const bracketContent = idMatch[1];
+      formattedTitle = `${beforeBrackets}${chalk.dim(`[${bracketContent}]`)}`;
+    }
+    
     const outputCore =
       process.env.SVR_PRINT_URLS === 'true'
         ? `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`
-        : displayTitle;
+        : formattedTitle;
 
     // Update progress stats for ETA calculation
     this.completed += 1;
@@ -198,7 +207,7 @@ class FilteredReporter implements Reporter {
         this.spinner.stop();
       }
       // Show failed test with duration and red cross
-      console.log(`  ${chalk.red('✘')} ${outputCore}${durationText}`);
+      console.log(`  ${chalk.red.bold('✘')} ${outputCore}${durationText}`);
       if (this.spinner) {
         this.spinner.start(progressLabel);
       }
@@ -215,7 +224,7 @@ class FilteredReporter implements Reporter {
         this.spinner.stop();
       }
       // Show passed test with duration and green tick
-      console.log(`  ${chalk.green('✓')} ${outputCore}${durationText}`);
+      console.log(`  ${chalk.green.bold('✓')} ${outputCore}${durationText}`);
       if (this.spinner) {
         this.spinner.start(progressLabel);
       }
