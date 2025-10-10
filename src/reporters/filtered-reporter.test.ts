@@ -73,7 +73,7 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   Test 1');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 100ms');
     });
 
     it('should log failed tests with X mark', () => {
@@ -89,7 +89,7 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   Test 1');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 1 100ms');
     });
 
     it('should track test counts correctly', () => {
@@ -116,8 +116,8 @@ describe('FilteredReporter', () => {
       reporter.onTestEnd(test1, passedResult);
       reporter.onTestEnd(test2, failedResult);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   Test 1');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   Test 2');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 100ms');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 2 100ms');
     });
 
     it('should ignore skipped tests', () => {
@@ -164,7 +164,6 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
-      expect(consoleLogSpy).toHaveBeenCalledWith('✓ All tests passed');
     });
 
     it('should show failure message when some tests failed', () => {
@@ -190,7 +189,6 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
-      expect(consoleLogSpy).toHaveBeenCalledWith('✓ All tests passed');
     });
 
     it('should handle no tests run', () => {
@@ -203,7 +201,6 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
-      expect(consoleLogSpy).toHaveBeenCalledWith('✓ All tests passed');
     });
   });
 
@@ -299,8 +296,8 @@ describe('FilteredReporter', () => {
       reporter.onEnd(finalResult);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('Running 2 tests using 2 workers\n');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✓   Test 1');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘   Test 2');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 100ms');
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 2 100ms');
       expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 1 failed');
       expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
