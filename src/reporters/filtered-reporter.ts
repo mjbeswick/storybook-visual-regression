@@ -198,10 +198,11 @@ class FilteredReporter implements Reporter {
     const testDuration = this.formatDuration(rawDuration);
     const durationColor =
       rawDuration > 10000 ? chalk.red.bold : rawDuration > 5000 ? chalk.yellow.bold : chalk.green;
-    
+
     // Color the time units with the same color as the number but lighter
     const durationText = ` ${testDuration.replace(/(\d+)([a-zA-Z]+)/g, (match, number, unit) => {
-      const baseColor = rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.green;
+      const baseColor =
+        rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.green;
       return `${durationColor(number)}${baseColor.dim(unit)}`;
     })}`;
 
@@ -299,7 +300,7 @@ class FilteredReporter implements Reporter {
           console.log(chalk.red(`${index + 1}. ${displayTitle}`));
           console.log(chalk.blue(`   🔗 ${storyUrl}`));
           if (failure.diffPath) {
-            console.log(chalk.magenta(`   📸 ${failure.diffPath}`));
+            console.log(chalk.gray(`   📸 ${failure.diffPath}`));
           }
         });
 
