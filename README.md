@@ -20,13 +20,14 @@ $ storybook-visual-regression test -c "npm run storybook" --url http://localhost
 
 Running 5 tests using 5 workers
 
-  ✓  1 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-2 (1.2s)
-  ✓  2 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-4 (1.2s)
-  ✓  3 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-5 (1.2s)
-  ✓  4 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-1 (1.2s)
-  ✓  5 src/tests/storybook.spec.ts:121:5 › Storybook Visual Regression › qrcode--qr-code-3 (1.2s)
+⠸ 3 of 5 ~5s remaining
+  ✓ QRCode › QR Code 2 [qrcode--qr-code-2] (1.2s)
+  ✓ QRCode › QR Code 4 [qrcode--qr-code-4] (1.2s)
+  ✓ QRCode › QR Code 5 [qrcode--qr-code-5] (1.2s)
+  ✓ QRCode › QR Code 1 [qrcode--qr-code-1] (1.2s)
+  ✓ QRCode › QR Code 3 [qrcode--qr-code-3] (1.2s)
 
-  5 passed (9.7s)
+5 passed (9.7s)
 
 🎉 Visual regression tests completed successfully
 ```

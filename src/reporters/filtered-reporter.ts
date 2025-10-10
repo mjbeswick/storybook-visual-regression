@@ -10,6 +10,7 @@ import chalk from 'chalk';
 import { existsSync, rmSync, statSync, readdirSync, unlinkSync } from 'fs';
 import { dirname } from 'path';
 import ora from 'ora';
+import type { Ora } from 'ora';
 
 class FilteredReporter implements Reporter {
   private failures: TestCase[] = [];
@@ -23,7 +24,7 @@ class FilteredReporter implements Reporter {
   private lastDurations: number[] = []; // rolling window across all workers (fallback)
   private perWorkerDurations: Record<number, number[]> = {}; // rolling window per worker
   private recentAllDurations: number[] = []; // for percentile/outlier capping
-  private spinner: ora.Ora | null = null;
+  private spinner: Ora | null = null;
 
   private formatDuration(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
@@ -83,13 +84,14 @@ class FilteredReporter implements Reporter {
 
   onBegin(config: FullConfig, suite: Suite): void {
     this.getResultsRoot(config);
-    // No header output; only print story names during tests
     this.totalTests = suite.allTests().length;
     this.completed = 0;
     this.startedAtMs = Date.now();
     const configuredWorkers = Number(config.workers);
     this.workers =
       Number.isFinite(configuredWorkers) && configuredWorkers > 0 ? configuredWorkers : 1;
+    // Header line for tests and workers, followed by a newline as expected by tests
+    console.log(`Running ${this.totalTests} tests using ${this.workers} workers\n`);
     this.spinner = ora({
       text: chalk.gray(`0 ${chalk.dim('of')} ${this.totalTests} ${chalk.dim('estimating…')}`),
       isEnabled: true,
@@ -167,12 +169,9 @@ class FilteredReporter implements Reporter {
     if (result.status === 'failed') {
       this.failures.push(test);
       this.failed++;
-      const durationMs = result.duration || 0;
-      const seconds = durationMs / 1000;
       if (this.spinner) this.spinner.stop();
-      console.log(
-        `  ${chalk.red('✗')} ${outputCore} ${chalk.gray(`(${seconds.toFixed(seconds < 10 ? 1 : 0)}s)`)}`,
-      );
+      // Expected exact format: two spaces, symbol, three spaces, title (no duration)
+      console.log(`  ✘   ${outputCore}`);
       if (this.spinner) this.spinner.start(progressLabel);
       // Keep diffs, remove non-diff attachments for failures
       for (const attachment of result.attachments || []) {
@@ -183,12 +182,9 @@ class FilteredReporter implements Reporter {
       }
     } else if (result.status === 'passed') {
       this.passed++;
-      const durationMs = result.duration || 0;
-      const seconds = durationMs / 1000;
       if (this.spinner) this.spinner.stop();
-      console.log(
-        `  ${chalk.green('✓')} ${outputCore} ${chalk.gray(`(${seconds.toFixed(seconds < 10 ? 1 : 0)}s)`)}`,
-      );
+      // Expected exact format: two spaces, symbol, three spaces, title (no duration)
+      console.log(`  ✓   ${outputCore}`);
       if (this.spinner) this.spinner.start(progressLabel);
       // Remove all artifacts for passed tests and prune empty folders up to results root
       for (const attachment of result.attachments || []) {
@@ -201,13 +197,20 @@ class FilteredReporter implements Reporter {
     }
   }
 
-  onEnd(_result: FullResult): void {
+  onEnd(result: FullResult): void {
     if (this.spinner) {
       this.spinner.stop();
       this.spinner = null;
     }
-    // Blank line for readability at end of run
-    console.log('');
+    // Summary line expected by tests, prefixed with a newline
+    console.log(`\n${this.passed} passed, ${this.failed} failed`);
+    if (result.status === 'failed') {
+      console.log('✘ Some tests failed');
+    } else if (this.failed > 0) {
+      console.log('✘ Some tests failed');
+    } else {
+      console.log('✓ All tests passed');
+    }
   }
 }
 
