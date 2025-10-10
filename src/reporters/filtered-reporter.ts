@@ -177,7 +177,7 @@ class FilteredReporter implements Reporter {
     // Format test duration with color
     const testDuration = this.formatDuration(rawDuration);
     const durationColor =
-      rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.gray;
+      rawDuration > 10000 ? chalk.red.bold : rawDuration > 5000 ? chalk.yellow.bold : chalk.green;
     const durationText = ` ${durationColor(`(${testDuration})`)}`;
 
     // Create progress label with optional time estimate
