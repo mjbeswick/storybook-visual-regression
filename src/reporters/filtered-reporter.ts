@@ -134,14 +134,14 @@ class FilteredReporter implements Reporter {
     // Fix spacing issues and add colors to slashes and chevrons
     formattedTitle = formattedTitle
       .replace(/\s*\/\s*/g, ' / ') // Ensure consistent spacing around slashes
-      .replace(/\s*›\s*/g, ' › ') // Ensure consistent spacing around chevrons
+      .replace(/\s*›\s*/g, ' ❯ ') // Ensure consistent spacing around chevrons
       .replace(/\s+/g, ' ') // Remove extra spaces
       .trim();
 
     // Color the slashes and chevrons
     formattedTitle = formattedTitle
       .replace(/\s\/\s/g, ` ${chalk.blue.bold('/')} `)
-      .replace(/\s›\s/g, ` ${chalk.cyan.bold('›')} `);
+      .replace(/\s❯\s/g, ` ${chalk.cyan.bold('❯')} `);
 
     const outputCore =
       process.env.SVR_PRINT_URLS === 'true'
@@ -216,7 +216,7 @@ class FilteredReporter implements Reporter {
     if (result.status === 'failed') {
       this.failures.push(test);
       this.failed++;
-      
+
       // Find the diff image path
       let diffPath: string | undefined;
       for (const attachment of result.attachments || []) {
@@ -227,10 +227,10 @@ class FilteredReporter implements Reporter {
           break;
         }
       }
-      
+
       // Store failure details with diff path
       this.failureDetails.push({ test, diffPath });
-      
+
       if (this.spinner) {
         this.spinner.stop();
       }
@@ -252,7 +252,7 @@ class FilteredReporter implements Reporter {
         this.spinner.stop();
       }
       // Show passed test with duration and green tick
-      console.log(`  ${chalk.green.bold('✓')} ${outputCore}${durationText}`);
+      console.log(`  ${chalk.green.bold('✔')} ${outputCore}${durationText}`);
       if (this.spinner) {
         this.spinner.start(progressLabel);
       }
