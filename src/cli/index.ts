@@ -539,9 +539,23 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     console.log('');
     // Only show error message if it's not an aborted execution
     // Exit code 130 typically indicates SIGINT (Ctrl+C) - user interruption
-    const exitCode = (error as any)?.exitCode;
+    const exitCode = (error as { exitCode?: number })?.exitCode;
     if (exitCode !== 130) {
-      console.error(chalk.red.bold('💥 Test execution failed'));
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check for specific error types and show appropriate messages
+      if (errorMessage.includes('Storybook server did not start within')) {
+        console.error(chalk.red.bold('⏰ Webserver timeout - Storybook failed to start'));
+        console.error(chalk.yellow('💡 Try increasing the timeout with --webserver-timeout <ms>'));
+        console.error(chalk.yellow('💡 Or start Storybook manually and run tests without --command'));
+      } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('connection refused')) {
+        console.error(chalk.red.bold('🔌 Connection refused - Storybook server not accessible'));
+        console.error(chalk.yellow('💡 Make sure Storybook is running at the specified URL'));
+      } else if (errorMessage.includes('timeout')) {
+        console.error(chalk.red.bold('⏰ Operation timed out'));
+      } else {
+        console.error(chalk.red.bold('💥 Test execution failed'));
+      }
     }
     process.exit(exitCode || 1);
   }
@@ -570,15 +584,11 @@ program
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
   // Timing and stability options (ms / counts)
-  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)', '10000')
-  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 10000)')
-  .option(
-    '--overlay-timeout <ms>',
-    'Timeout waiting for Storybook overlays to hide (default 5000)',
-    '5000',
-  )
-  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 200)', '200')
-  .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)', '20')
+  .option('--nav-timeout <ms>', 'Navigation timeout', '10000')
+  .option('--wait-timeout <ms>', 'Wait-for-element timeout', '10000')
+  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide', '5000')
+  .option('--stabilize-interval <ms>', 'Interval between stability checks', '200')
+  .option('--stabilize-attempts <n>', 'Number of stability checks', '20')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
@@ -589,7 +599,7 @@ program
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
-  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries (default 200)', '200')
+  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries', '200')
   .action(async (options) => runTests(options as CliOptions));
 
 program
@@ -644,14 +654,10 @@ program
   .option('--debug', 'Enable debug logging')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
-  .option('--nav-timeout <ms>', 'Navigation timeout (default 10000)', '10000')
-  .option('--wait-timeout <ms>', 'Wait-for-element timeout (default 30000)', '30000')
-  .option(
-    '--overlay-timeout <ms>',
-    'Timeout waiting for Storybook overlays to hide (default 5000)',
-    '5000',
-  )
-  .option('--stabilize-interval <ms>', 'Interval between stability checks (default 150)', '150')
+  .option('--nav-timeout <ms>', 'Navigation timeout', '10000')
+  .option('--wait-timeout <ms>', 'Wait-for-element timeout', '30000')
+  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide', '5000')
+  .option('--stabilize-interval <ms>', 'Interval between stability checks', '150')
   .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)')
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
@@ -663,7 +669,7 @@ program
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
-  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries (default 200)', '200')
+  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries', '200')
   .option('--missing-only', 'Only create snapshots for stories without existing baselines')
   .action(async (options) => {
     // Enable snapshot updates only via this command
