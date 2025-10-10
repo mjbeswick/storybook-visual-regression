@@ -563,9 +563,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         errorMessage.includes('server startup timeout') ||
         (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer')) ||
         // Check if it's a command failure with exit code 1 and no tests ran (likely webserver timeout)
-        (errorMessage.includes('Command failed') && 
-         errorMessage.includes('playwright test') && 
-         errorMessage.includes('exit code 1'));
+        (errorMessage.includes('Command failed') &&
+          errorMessage.includes('playwright test') &&
+          errorMessage.includes('exit code 1'));
 
       if (isWebserverTimeout) {
         // Show prominent webserver timeout message
@@ -584,7 +584,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         );
         console.error('');
         console.error(
-          chalk.gray('The "Running 0 tests" output above is from Playwright and can be ignored.'),
+          chalk.red.bold('⚠️  IGNORE THE TEST OUTPUT ABOVE - IT\'S NOT RELEVANT TO THIS ERROR'),
         );
         console.error('');
       } else if (
