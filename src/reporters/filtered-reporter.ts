@@ -268,8 +268,6 @@ class FilteredReporter implements Reporter {
           chalk.dim(`\n💡 Tip: Set SVR_PRINT_URLS=true to see URLs inline with test results`),
         );
       }
-    } else {
-      console.log(chalk.green('✓ All tests passed'));
     }
   }
 }
