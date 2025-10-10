@@ -482,8 +482,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     // Prefer our reporter unless user explicitly requested another or debug is enabled
     // Don't use custom reporter if silent reporter is set
     const shouldUseCustomReporter =
-      !options.debug && 
-      !(options as CliOptions).reporter && 
+      !options.debug &&
+      !(options as CliOptions).reporter &&
       !!resolvedCustomReporter &&
       !process.env.PLAYWRIGHT_REPORTER?.includes('silent-reporter');
     if (shouldUseCustomReporter && resolvedCustomReporter) {
@@ -580,7 +580,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
       if (isWebserverTimeout) {
         // Show prominent webserver timeout message
-        console.error('');
         console.error(
           chalk.red.bold('═══════════════════════════════════════════════════════════════'),
         );
