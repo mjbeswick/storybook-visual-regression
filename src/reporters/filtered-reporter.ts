@@ -298,7 +298,7 @@ class FilteredReporter implements Reporter {
           const storyUrl = `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`;
 
           console.log(chalk.red(`${index + 1}. ${displayTitle}`));
-          console.log(chalk.blue(`   🔗 ${storyUrl}`));
+          console.log(chalk.cyan(`   🔗 ${storyUrl}`));
           if (failure.diffPath) {
             console.log(chalk.gray(`   📸 ${failure.diffPath}`));
           }
