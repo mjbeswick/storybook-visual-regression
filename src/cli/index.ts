@@ -555,13 +555,16 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       }
 
       // Check for specific error types and show appropriate messages
-      if (
+      const isWebserverTimeout = 
         errorMessage.includes('Storybook server did not start within') ||
         (errorMessage.includes('webServer') && errorMessage.includes('timeout')) ||
         (errorMessage.includes('WebServer') && errorMessage.includes('timeout')) ||
         errorMessage.includes('server startup timeout') ||
-        errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer')
-      ) {
+        (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer'));
+
+      if (isWebserverTimeout) {
+        // Clear any existing output and show webserver timeout message
+        console.clear();
         console.error(chalk.red.bold('⏰ Webserver timeout - Storybook failed to start'));
         console.error(chalk.yellow('💡 Try increasing the timeout with --webserver-timeout <ms>'));
         console.error(
