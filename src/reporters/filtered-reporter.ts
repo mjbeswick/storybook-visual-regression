@@ -205,7 +205,7 @@ class FilteredReporter implements Reporter {
         this.spinner.stop();
       }
       // Show failed test with duration and red cross
-      console.log(`${chalk.red.bold('✘')} ${outputCore}${durationText}`);
+      console.log(`  ${chalk.red.bold('✘')} ${outputCore}${durationText}`);
       if (this.spinner) {
         this.spinner.start(progressLabel);
       }
@@ -222,7 +222,7 @@ class FilteredReporter implements Reporter {
         this.spinner.stop();
       }
       // Show passed test with duration and green tick
-      console.log(`${chalk.green.bold('✓')} ${outputCore}${durationText}`);
+      console.log(`  ${chalk.green.bold('✓')} ${outputCore}${durationText}`);
       if (this.spinner) {
         this.spinner.start(progressLabel);
       }
