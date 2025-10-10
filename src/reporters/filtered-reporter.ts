@@ -129,14 +129,14 @@ class FilteredReporter implements Reporter {
     if (idMatch) {
       formattedTitle = displayTitle.substring(0, displayTitle.lastIndexOf('[')).trim();
     }
-    
+
     // Fix spacing issues and add colors to slashes and chevrons
     formattedTitle = formattedTitle
       .replace(/\s*\/\s*/g, ' / ') // Ensure consistent spacing around slashes
       .replace(/\s*›\s*/g, ' › ') // Ensure consistent spacing around chevrons
       .replace(/\s+/g, ' ') // Remove extra spaces
       .trim();
-    
+
     // Color the slashes and chevrons
     formattedTitle = formattedTitle
       .replace(/\s\/\s/g, ` ${chalk.blue('/')} `)
@@ -197,7 +197,9 @@ class FilteredReporter implements Reporter {
     const testDuration = this.formatDuration(rawDuration);
     const durationColor =
       rawDuration > 10000 ? chalk.red.bold : rawDuration > 5000 ? chalk.yellow.bold : chalk.green;
-    const durationText = ` ${durationColor(`(${testDuration})`)}`;
+    
+    // Remove brackets and color the time units
+    const durationText = ` ${durationColor(testDuration.replace(/(\d+)([a-zA-Z]+)/g, `$1${chalk.gray('$2')}`))}`;
 
     // Create progress label with optional time estimate
     let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))}`;
