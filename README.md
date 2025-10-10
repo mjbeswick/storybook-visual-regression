@@ -123,7 +123,7 @@ Common options (defaults shown):
 - `--include <patterns>`: include stories matching patterns (comma-separated, supports globs)
 - `--exclude <patterns>`: exclude stories matching patterns (comma-separated, supports globs)
 - `--grep <pattern>`: filter stories by regex pattern
-- `--install-browsers [browser]`: install Playwright browsers before running (default `chrome`, options: `chromium|firefox|webkit|all`)
+- `--install-browsers [browser]`: install Playwright browsers before running (default `chromium`, options: `chromium|firefox|webkit|all`)
 - `--install-deps`: install system dependencies for browsers (useful on Linux CI images)
 - `--not-found-check` (optional): enable a heuristic that fails when the host app shows a "Not Found"/404 page. Retries once before failing.
 - `--not-found-retry-delay <ms>`: delay between Not Found retries (default `200`)
@@ -201,7 +201,7 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - run: npx storybook-visual-regression install-browsers --browser chrome
+      - run: npx storybook-visual-regression install-browsers --browser chromium
       - run: |
           npx storybook-visual-regression test \
             --command "npm run storybook" \
@@ -209,7 +209,7 @@ jobs:
             --port 9009 \
             --workers 4 \
             --max-failures 1 \
-            --install-browsers chrome
+            --install-browsers chromium
 ```
 
 ### Troubleshooting

@@ -216,11 +216,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.installBrowsers !== undefined) {
     try {
       const raw = options.installBrowsers as unknown as string | boolean | undefined;
-      let browser = 'chrome';
+      let browser = 'chromium';
       if (typeof raw === 'string' && raw.trim().length > 0) {
         browser = raw.trim();
       }
-      // If flag present without a value, Commander may set boolean true → default to chrome
+      // If flag present without a value, Commander may set boolean true → default to chromium
       // Validate target
       const allowed = new Set([
         'chromium',
@@ -237,7 +237,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         'all',
       ]);
       if (!allowed.has(browser)) {
-        browser = 'chrome';
+        browser = 'chromium';
       }
 
       // Install system dependencies first if requested (Linux CI)
@@ -571,7 +571,7 @@ program
   .option(
     '--install-browsers [browser]',
     'Install Playwright browsers before running (chromium|firefox|webkit|all)',
-    'chrome',
+    'chromium',
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
@@ -589,7 +589,7 @@ program
       const { execSync } = await import('child_process');
       const browser =
         (options as CliOptions).browser === 'all' ? '' : (options as CliOptions).browser;
-      execSync(`playwright install ${browser}`, { stdio: 'inherit' });
+      execSync(`npx playwright install ${browser}`, { stdio: 'inherit' });
 
       spinner.succeed(`Successfully installed ${(options as CliOptions).browser} browser`);
     } catch (_error) {
@@ -635,7 +635,7 @@ program
   .option(
     '--install-browsers [browser]',
     'Install Playwright browsers before running (chromium|firefox|webkit|all)',
-    'chrome',
+    'chromium',
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
