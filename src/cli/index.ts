@@ -370,6 +370,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   );
   console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
   console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
+  console.log('');
 
   try {
     const playwrightArgs = ['playwright', 'test'];
