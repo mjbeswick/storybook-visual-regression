@@ -194,8 +194,10 @@ function filterStories(stories: string[]): string[] {
       // Check if any pattern matches storyId or displayName (case-insensitive)
       return includePatterns.some((pattern) => {
         const lowerPattern = pattern.toLowerCase();
-        return storyId.toLowerCase().includes(lowerPattern) || 
-               displayName.toLowerCase().includes(lowerPattern);
+        return (
+          storyId.toLowerCase().includes(lowerPattern) ||
+          displayName.toLowerCase().includes(lowerPattern)
+        );
       });
     });
   }
@@ -210,8 +212,10 @@ function filterStories(stories: string[]): string[] {
       // Check if any pattern matches storyId or displayName (case-insensitive)
       return !excludePatterns.some((pattern) => {
         const lowerPattern = pattern.toLowerCase();
-        return storyId.toLowerCase().includes(lowerPattern) || 
-               displayName.toLowerCase().includes(lowerPattern);
+        return (
+          storyId.toLowerCase().includes(lowerPattern) ||
+          displayName.toLowerCase().includes(lowerPattern)
+        );
       });
     });
   }
