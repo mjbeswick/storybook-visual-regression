@@ -38,7 +38,7 @@ class FilteredReporter implements Reporter {
     return `${m}m ${rs}s`;
   }
 
-  private getResultsRoot(config: FullConfig): string {
+  private getResultsRoot(_config: FullConfig): string {
     if (this.resultsRoot) return this.resultsRoot;
     const base = process.env.PLAYWRIGHT_OUTPUT_DIR
       ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
@@ -129,6 +129,18 @@ class FilteredReporter implements Reporter {
     if (idMatch) {
       formattedTitle = displayTitle.substring(0, displayTitle.lastIndexOf('[')).trim();
     }
+    
+    // Fix spacing issues and add colors to slashes and chevrons
+    formattedTitle = formattedTitle
+      .replace(/\s*\/\s*/g, ' / ') // Ensure consistent spacing around slashes
+      .replace(/\s*›\s*/g, ' › ') // Ensure consistent spacing around chevrons
+      .replace(/\s+/g, ' ') // Remove extra spaces
+      .trim();
+    
+    // Color the slashes and chevrons
+    formattedTitle = formattedTitle
+      .replace(/\s\/\s/g, ` ${chalk.blue('/')} `)
+      .replace(/\s›\s/g, ` ${chalk.cyan('›')} `);
 
     const outputCore =
       process.env.SVR_PRINT_URLS === 'true'
