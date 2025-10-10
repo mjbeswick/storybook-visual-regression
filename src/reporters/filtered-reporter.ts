@@ -214,14 +214,12 @@ class FilteredReporter implements Reporter {
 
     // Format test duration with color
     const testDuration = this.formatDuration(rawDuration);
-    const durationColor =
-      rawDuration > 10000 ? chalk.red.bold : rawDuration > 5000 ? chalk.yellow.bold : chalk.green;
 
     // Color the time units with the same color as the number but lighter
-    const durationText = ` ${testDuration.replace(/(\d+)([a-zA-Z]+)/g, (match, number, unit) => {
+    const durationText = ` ${testDuration.replace(/(\d+(?:\.\d+)?)([a-zA-Z]+)/g, (match, number, unit) => {
       const baseColor =
         rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.green;
-      return `${durationColor(number)}${baseColor.dim(unit)}`;
+      return `${baseColor(number)}${baseColor.dim(unit)}`;
     })}`;
 
     // Create progress label with optional time estimate
@@ -310,7 +308,7 @@ class FilteredReporter implements Reporter {
         const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
 
         // Deduplicate failures by test title (keep the first occurrence)
-        const uniqueFailures = new Map<string, typeof this.failureDetails[0]>();
+        const uniqueFailures = new Map<string, (typeof this.failureDetails)[0]>();
         this.failureDetails.forEach((failure) => {
           const displayTitle = failure.test.title.replace(/^snapshots-/, '');
           if (!uniqueFailures.has(displayTitle)) {
@@ -319,7 +317,9 @@ class FilteredReporter implements Reporter {
         });
 
         // Sort failures alphabetically by test title
-        const sortedFailures = Array.from(uniqueFailures.entries()).sort(([a], [b]) => a.localeCompare(b));
+        const sortedFailures = Array.from(uniqueFailures.entries()).sort(([a], [b]) =>
+          a.localeCompare(b),
+        );
 
         sortedFailures.forEach(([displayTitle, failure], index) => {
           const idMatch = displayTitle.match(/\[(.*)\]$/);
