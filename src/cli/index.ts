@@ -551,6 +551,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
       // Debug: Log the actual error message to help identify patterns
       console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
+      console.error(chalk.gray(`Debug - Error object:`, error));
 
       // Check for specific error types and show appropriate messages
       const isWebserverTimeout =
@@ -558,7 +559,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         (errorMessage.includes('webServer') && errorMessage.includes('timeout')) ||
         (errorMessage.includes('WebServer') && errorMessage.includes('timeout')) ||
         errorMessage.includes('server startup timeout') ||
-        (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer'));
+        (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer')) ||
+        // Check if it's a command failure that might be due to webserver timeout
+        (errorMessage.includes('Command failed') && errorMessage.includes('playwright test'));
 
       if (isWebserverTimeout) {
         // Show prominent webserver timeout message
