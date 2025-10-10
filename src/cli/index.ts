@@ -213,25 +213,54 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const storybookCommand = config.storybookCommand || 'npm run storybook';
 
   // Optionally install Playwright browsers/deps for CI convenience
-  if (options.installBrowsers) {
+  if (options.installBrowsers !== undefined) {
     try {
-      const browser = options.installBrowsers === 'all' ? 'all' : String(options.installBrowsers);
-      if (options.installDeps) {
-        await execa('npx', ['playwright', 'install-deps', browser], { stdio: 'inherit' });
+      const raw = options.installBrowsers as unknown as string | boolean | undefined;
+      let browser = 'chrome';
+      if (typeof raw === 'string' && raw.trim().length > 0) {
+        browser = raw.trim();
       }
-      await execa(
-        'npx',
-        ['playwright', 'install', browser === 'all' ? '' : browser].filter(Boolean),
-        {
-          stdio: 'inherit',
-        },
-      );
+      // If flag present without a value, Commander may set boolean true → default to chrome
+      // Validate target
+      const allowed = new Set([
+        'chromium',
+        'chromium-headless-shell',
+        'chromium-tip-of-tree-headless-shell',
+        'chrome',
+        'chrome-beta',
+        'msedge',
+        'msedge-beta',
+        'msedge-dev',
+        '_bidiChromium',
+        'firefox',
+        'webkit',
+        'all',
+      ]);
+      if (!allowed.has(browser)) {
+        browser = 'chrome';
+      }
+
+      // Install system dependencies first if requested (Linux CI)
+      if (options.installDeps) {
+        const depTargets = browser === 'all' ? ['chromium', 'firefox', 'webkit'] : [browser];
+        for (const t of depTargets) {
+          await execa('npx', ['playwright', 'install-deps', t], { stdio: 'inherit' });
+        }
+      }
+
+      // Install browsers
+      if (browser === 'all') {
+        await execa('npx', ['playwright', 'install', 'all'], { stdio: 'inherit' });
+      } else {
+        await execa('npx', ['playwright', 'install', browser], { stdio: 'inherit' });
+      }
     } catch (installError) {
-      console.warn(
-        chalk.yellow(
-          `⚠️  Browser installation failed: ${installError instanceof Error ? installError.message : String(installError)}`,
+      console.error(
+        chalk.red(
+          `Failed to install browsers: ${installError instanceof Error ? installError.message : String(installError)}`,
         ),
       );
+      process.exit(1);
     }
   }
 
@@ -542,6 +571,7 @@ program
   .option(
     '--install-browsers [browser]',
     'Install Playwright browsers before running (chromium|firefox|webkit|all)',
+    'chrome',
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
@@ -605,6 +635,7 @@ program
   .option(
     '--install-browsers [browser]',
     'Install Playwright browsers before running (chromium|firefox|webkit|all)',
+    'chrome',
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')

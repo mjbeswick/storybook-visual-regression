@@ -123,7 +123,7 @@ Common options (defaults shown):
 - `--include <patterns>`: include stories matching patterns (comma-separated, supports globs)
 - `--exclude <patterns>`: exclude stories matching patterns (comma-separated, supports globs)
 - `--grep <pattern>`: filter stories by regex pattern
-- `--install-browsers [browser]`: install Playwright browsers before running (`chromium|firefox|webkit|all`)
+- `--install-browsers [browser]`: install Playwright browsers before running (default `chrome`, options: `chromium|firefox|webkit|all`)
 - `--install-deps`: install system dependencies for browsers (useful on Linux CI images)
 - `--not-found-check` (optional): enable a heuristic that fails when the host app shows a "Not Found"/404 page. Retries once before failing.
 - `--not-found-retry-delay <ms>`: delay between Not Found retries (default `200`)
@@ -201,7 +201,7 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - run: npx storybook-visual-regression install-browsers --browser chromium
+      - run: npx storybook-visual-regression install-browsers --browser chrome
       - run: |
           npx storybook-visual-regression test \
             --command "npm run storybook" \
@@ -209,13 +209,14 @@ jobs:
             --port 9009 \
             --workers 4 \
             --max-failures 1 \
-            --install-browsers chromium
+            --install-browsers chrome
 ```
 
 ### Troubleshooting
 
 - "Unable to discover stories" → Ensure Storybook is running on `--url/--port` or build static files to `storybook-static/`.
 - Playwright not installed → Add `@playwright/test` and run `npx storybook-visual-regression install-browsers`.
+- Browser installation fails → The tool will exit with an error code. Ensure you have sufficient permissions and network access.
 - Flaky screenshots → Use `--disable-animations`, `--wait-network-idle`, increase `--timeout`, or set `--frozen-time` and a fixed `--timezone`/`--locale`.
 - Exiting early → Increase or disable `--max-failures` (set `<= 0`).
 - Storybook server stops during tests → Use `--max-failures 0` to prevent early termination, or check for port conflicts.
