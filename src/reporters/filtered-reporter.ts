@@ -137,11 +137,26 @@ class FilteredReporter implements Reporter {
       .replace(/\s*›\s*/g, ' ❯ ') // Ensure consistent spacing around chevrons
       .replace(/\s+/g, ' ') // Remove extra spaces
       .trim();
-
-    // Color the slashes and chevrons
-    formattedTitle = formattedTitle
+    
+    // Split the title into category path and story name
+    const chevronIndex = formattedTitle.lastIndexOf(' ❯ ');
+    let categoryPath = '';
+    let storyName = '';
+    
+    if (chevronIndex !== -1) {
+      categoryPath = formattedTitle.substring(0, chevronIndex + 3); // Include the chevron
+      storyName = formattedTitle.substring(chevronIndex + 3); // Story name after chevron
+    } else {
+      categoryPath = formattedTitle;
+    }
+    
+    // Color the category path (slashes and chevrons)
+    categoryPath = categoryPath
       .replace(/\s\/\s/g, ` ${chalk.blue.bold('/')} `)
       .replace(/\s❯\s/g, ` ${chalk.cyan.bold('❯')} `);
+    
+    // Combine colored category path with uncolored story name
+    formattedTitle = categoryPath + storyName;
 
     const outputCore =
       process.env.SVR_PRINT_URLS === 'true'
@@ -239,7 +254,7 @@ class FilteredReporter implements Reporter {
         this.spinner.stop();
       }
       // Show failed test with duration and red cross
-      console.log(`  ${chalk.red.bold('✘')} ${chalk.cyan(outputCore)}${durationText}`);
+      console.log(`  ${chalk.red.bold('✘')} ${outputCore}${durationText}`);
       if (this.spinner) {
         this.spinner.start(progressLabel);
       }
@@ -256,7 +271,7 @@ class FilteredReporter implements Reporter {
         this.spinner.stop();
       }
       // Show passed test with duration and green tick
-      console.log(`  ${chalk.green.bold('✔')} ${chalk.cyan(outputCore)}${durationText}`);
+      console.log(`  ${chalk.green.bold('✔')} ${outputCore}${durationText}`);
       if (this.spinner) {
         this.spinner.start(progressLabel);
       }
