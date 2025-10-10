@@ -183,7 +183,8 @@ class FilteredReporter implements Reporter {
     // Create progress label with optional time estimate
     let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))}`;
     if (this.showTimeEstimates && remaining > 0) {
-      progressLabel += ` ${chalk.gray(`~${this.formatDuration(etaMs)} remaining`)}`;
+      const etaFormatted = this.formatDuration(Math.round(etaMs));
+      progressLabel += ` ${chalk.gray(`~${etaFormatted} remaining`)}`;
     }
 
     if (this.spinner) {
@@ -195,11 +196,12 @@ class FilteredReporter implements Reporter {
       this.failed++;
       if (this.spinner) {
         this.spinner.stop();
-        this.spinner.fail();
       }
       // Show failed test with duration and red cross
       console.log(`  ${chalk.red('✘')}   ${outputCore}${durationText}`);
-      if (this.spinner) this.spinner.start(progressLabel);
+      if (this.spinner) {
+        this.spinner.start(progressLabel);
+      }
       // Keep diffs, remove non-diff attachments for failures
       for (const attachment of result.attachments || []) {
         if (!attachment.path) continue;
@@ -211,11 +213,12 @@ class FilteredReporter implements Reporter {
       this.passed++;
       if (this.spinner) {
         this.spinner.stop();
-        this.spinner.succeed();
       }
       // Show passed test with duration and green tick
       console.log(`  ${chalk.green('✓')}   ${outputCore}${durationText}`);
-      if (this.spinner) this.spinner.start(progressLabel);
+      if (this.spinner) {
+        this.spinner.start(progressLabel);
+      }
       // Remove all artifacts for passed tests and prune empty folders up to results root
       for (const attachment of result.attachments || []) {
         if (!attachment.path) continue;
