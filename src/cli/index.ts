@@ -535,10 +535,15 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         }
       }
     }
-  } catch {
+  } catch (error) {
     console.log('');
-    console.error(chalk.red.bold('💥 Test execution failed'));
-    process.exit(1);
+    // Only show error message if it's not an aborted execution
+    // Exit code 130 typically indicates SIGINT (Ctrl+C) - user interruption
+    const exitCode = (error as any)?.exitCode;
+    if (exitCode !== 130) {
+      console.error(chalk.red.bold('💥 Test execution failed'));
+    }
+    process.exit(exitCode || 1);
   }
 }
 
