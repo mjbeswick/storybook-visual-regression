@@ -43,6 +43,9 @@ type CliOptions = {
   notFoundRetryDelay?: string; // ms
   // Update behavior
   missingOnly?: boolean;
+  // CI convenience
+  installBrowsers?: string;
+  installDeps?: boolean;
 };
 
 async function createConfigFromOptions(
@@ -208,6 +211,29 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
   const config = await createConfigFromOptions(options, originalCwd);
   const storybookCommand = config.storybookCommand || 'npm run storybook';
+
+  // Optionally install Playwright browsers/deps for CI convenience
+  if (options.installBrowsers) {
+    try {
+      const browser = options.installBrowsers === 'all' ? 'all' : String(options.installBrowsers);
+      if (options.installDeps) {
+        await execa('npx', ['playwright', 'install-deps', browser], { stdio: 'inherit' });
+      }
+      await execa(
+        'npx',
+        ['playwright', 'install', browser === 'all' ? '' : browser].filter(Boolean),
+        {
+          stdio: 'inherit',
+        },
+      );
+    } catch (installError) {
+      console.warn(
+        chalk.yellow(
+          `⚠️  Browser installation failed: ${installError instanceof Error ? installError.message : String(installError)}`,
+        ),
+      );
+    }
+  }
 
   // Build the Storybook launch command while:
   // - Ensuring --ci is present if not already
@@ -513,6 +539,11 @@ program
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
+  .option(
+    '--install-browsers [browser]',
+    'Install Playwright browsers before running (chromium|firefox|webkit|all)',
+  )
+  .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
   .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries (default 200)', '200')
   .action(async (options) => runTests(options as CliOptions));
@@ -571,6 +602,11 @@ program
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
+  .option(
+    '--install-browsers [browser]',
+    'Install Playwright browsers before running (chromium|firefox|webkit|all)',
+  )
+  .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
   .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries (default 200)', '200')
   .option('--missing-only', 'Only create snapshots for stories without existing baselines')

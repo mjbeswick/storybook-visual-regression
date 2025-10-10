@@ -146,6 +146,7 @@ function arraysFromIndex(index: unknown): {
 async function discoverStories(): Promise<{
   storyIds: string[];
   storyImportPaths: Record<string, string>;
+  storyDisplayNames: Record<string, string>;
 }> {
   // Try server first (webServer should already be ready)
   const base = storybookUrl.replace(/\/$/, '');
@@ -161,7 +162,7 @@ async function discoverStories(): Promise<{
       const json = JSON.parse(raw);
       return arraysFromIndex(json);
     } catch {
-      return { storyIds: [], storyImportPaths: {} };
+      return { storyIds: [], storyImportPaths: {}, storyDisplayNames: {} };
     }
   }
 }

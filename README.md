@@ -123,6 +123,8 @@ Common options (defaults shown):
 - `--include <patterns>`: include stories matching patterns (comma-separated, supports globs)
 - `--exclude <patterns>`: exclude stories matching patterns (comma-separated, supports globs)
 - `--grep <pattern>`: filter stories by regex pattern
+- `--install-browsers [browser]`: install Playwright browsers before running (`chromium|firefox|webkit|all`)
+- `--install-deps`: install system dependencies for browsers (useful on Linux CI images)
 - `--not-found-check` (optional): enable a heuristic that fails when the host app shows a "Not Found"/404 page. Retries once before failing.
 - `--not-found-retry-delay <ms>`: delay between Not Found retries (default `200`)
 
@@ -206,7 +208,8 @@ jobs:
             --url http://localhost \
             --port 9009 \
             --workers 4 \
-            --max-failures 1
+            --max-failures 1 \
+            --install-browsers chromium
 ```
 
 ### Troubleshooting
