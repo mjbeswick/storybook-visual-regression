@@ -14,7 +14,7 @@ import type { Ora } from 'ora';
 
 class FilteredReporter implements Reporter {
   private failures: TestCase[] = [];
-  private failureDetails: Array<{ test: TestCase; diffPath?: string }> = [];
+  private failureDetails: Array<{ test: TestCase; diffPath?: string; retry?: number }> = [];
   private passed = 0;
   private failed = 0;
   private resultsRoot: string | null = null;
@@ -124,7 +124,7 @@ class FilteredReporter implements Reporter {
     const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
     const idMatch = displayTitle.match(/\[(.*)\]$/);
     const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
-    
+
     // Check if this is a retry attempt
     const retrySuffix = result.retry ? ` (attempt ${result.retry + 1})` : '';
 
@@ -250,8 +250,8 @@ class FilteredReporter implements Reporter {
         }
       }
 
-      // Store failure details with diff path
-      this.failureDetails.push({ test, diffPath });
+      // Store failure details with diff path and retry information
+      this.failureDetails.push({ test, diffPath, retry: result.retry });
 
       if (this.spinner) {
         this.spinner.stop();
@@ -314,8 +314,12 @@ class FilteredReporter implements Reporter {
           const idMatch = displayTitle.match(/\[(.*)\]$/);
           const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
           const storyUrl = `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`;
+          
+          // Add retry suffix if this was a retry attempt
+          const retrySuffix = failure.retry !== undefined ? ` (attempt ${failure.retry + 1})` : '';
+          const titleWithRetry = displayTitle + retrySuffix;
 
-          console.log(chalk.red(`${index + 1}. ${displayTitle}`));
+          console.log(chalk.red(`${index + 1}. ${titleWithRetry}`));
           console.log(chalk.cyan(`   🔗 ${storyUrl}`));
           if (failure.diffPath) {
             console.log(chalk.gray(`   📸 ${failure.diffPath}`));
