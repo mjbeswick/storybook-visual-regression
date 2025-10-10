@@ -215,7 +215,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const storybookCommand = config.storybookCommand || 'npm run storybook';
 
   // Optionally install Playwright browsers/deps for CI convenience
-  if (options.installBrowsers !== undefined) {
+  // Only install if the --install-browsers flag was explicitly provided
+  if (process.argv.includes('--install-browsers')) {
     try {
       const raw = options.installBrowsers as unknown as string | boolean | undefined;
       let browser = 'chromium';
@@ -591,18 +592,26 @@ program
   .description('Install Playwright browsers')
   .option('-b, --browser <browser>', 'Browser to install (chromium|firefox|webkit|all)', 'chromium')
   .action(async (options) => {
-    const spinner = ora(`Installing ${(options as CliOptions).browser} browser...`).start();
+    const browser = (options as CliOptions).browser || 'chromium';
+    const spinner = ora(`Installing ${browser} browser...`).start();
 
     try {
-      const { execSync } = await import('child_process');
-      const browser =
-        (options as CliOptions).browser === 'all' ? '' : (options as CliOptions).browser;
-      execSync(`npx playwright install ${browser}`, { stdio: 'inherit' });
+      // Install browsers (with system dependencies if requested)
+      const args = ['playwright', 'install'];
+      
+      if (browser === 'all') {
+        // Install all browsers at once
+        await execa('npx', args, { stdio: 'inherit' });
+      } else {
+        // Install specific browser
+        args.push(browser);
+        await execa('npx', args, { stdio: 'inherit' });
+      }
 
-      spinner.succeed(`Successfully installed ${(options as CliOptions).browser} browser`);
-    } catch (_error) {
+      spinner.succeed(`Successfully installed ${browser} browser`);
+    } catch (error) {
       spinner.fail('Browser installation failed');
-      console.error(chalk.red(_error instanceof Error ? _error.message : 'Unknown error'));
+      console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
       process.exit(1);
     }
   });
