@@ -139,8 +139,8 @@ class FilteredReporter implements Reporter {
 
     // Color the slashes and chevrons
     formattedTitle = formattedTitle
-      .replace(/\s\/\s/g, ` ${chalk.blue('/')} `)
-      .replace(/\s›\s/g, ` ${chalk.cyan('›')} `);
+      .replace(/\s\/\s/g, ` ${chalk.blue.bold('/')} `)
+      .replace(/\s›\s/g, ` ${chalk.cyan.bold('›')} `);
 
     const outputCore =
       process.env.SVR_PRINT_URLS === 'true'
@@ -197,7 +197,7 @@ class FilteredReporter implements Reporter {
     const testDuration = this.formatDuration(rawDuration);
     const durationColor =
       rawDuration > 10000 ? chalk.red.bold : rawDuration > 5000 ? chalk.yellow.bold : chalk.green;
-    
+
     // Remove brackets and color the time units
     const durationText = ` ${durationColor(testDuration.replace(/(\d+)([a-zA-Z]+)/g, `$1${chalk.gray('$2')}`))}`;
 
