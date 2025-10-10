@@ -102,10 +102,10 @@ async function createConfigFromOptions(
   const workersOpt = parseNumberOption(options.workers);
   const retriesOpt = parseNumberOption(options.retries);
   const serverTimeoutOpt = parseNumberOption(options.webserverTimeout);
-  
+
   // Use silent reporter for very short webserver timeouts to prevent confusing output
   if (serverTimeoutOpt && serverTimeoutOpt < 1000) {
-    process.env.PLAYWRIGHT_REPORTER = 'src/reporters/silent-reporter.ts';
+    process.env.PLAYWRIGHT_REPORTER = 'dist/reporters/silent-reporter.js';
   }
 
   return {
