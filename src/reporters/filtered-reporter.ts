@@ -124,6 +124,9 @@ class FilteredReporter implements Reporter {
     const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
     const idMatch = displayTitle.match(/\[(.*)\]$/);
     const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
+    
+    // Check if this is a retry attempt
+    const retrySuffix = result.retry ? ` (attempt ${result.retry + 1})` : '';
 
     // Remove the redundant story ID in brackets for cleaner output
     let formattedTitle = displayTitle;
@@ -155,8 +158,8 @@ class FilteredReporter implements Reporter {
       .replace(/\s\/\s/g, ` ${chalk.cyan.bold('/')} `)
       .replace(/\s❯\s/g, ` ${chalk.cyan.bold('❯')} `);
 
-    // Combine colored category path with uncolored story name
-    formattedTitle = categoryPath + storyName;
+    // Combine colored category path with uncolored story name and retry suffix
+    formattedTitle = categoryPath + storyName + retrySuffix;
 
     const outputCore =
       process.env.SVR_PRINT_URLS === 'true'
