@@ -3,7 +3,6 @@ import { join } from 'path';
 
 import { expect, test, type Page } from '@playwright/test';
 import chalk from 'chalk';
-import picomatch from 'picomatch';
 
 const defaultViewportSizes: Record<string, { width: number; height: number }> = {
   mobile: { width: 375, height: 667 },
@@ -34,7 +33,7 @@ type ReadyOptions = {
   stabilizeAttempts: number;
 };
 
-async function waitForStoryReady(page: any, opts?: ReadyOptions): Promise<void> {
+async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void> {
   const overlayTimeout =
     opts?.overlayTimeout ?? parseInt(process.env.SVR_OVERLAY_TIMEOUT || '5000', 10);
   const stabilizeInterval =
@@ -189,15 +188,50 @@ function filterStories(stories: string[]): string[] {
     const includePatterns = process.env.STORYBOOK_INCLUDE.split(',')
       .map((p) => p.trim())
       .filter(Boolean);
+
     filtered = filtered.filter((storyId) => {
       const displayName = storyDisplayNames[storyId] || '';
       // Check if any pattern matches storyId or displayName (case-insensitive)
       return includePatterns.some((pattern) => {
         const lowerPattern = pattern.toLowerCase();
-        return (
-          storyId.toLowerCase().includes(lowerPattern) ||
-          displayName.toLowerCase().includes(lowerPattern)
-        );
+        const lowerStoryId = storyId.toLowerCase();
+        const lowerDisplayName = displayName.toLowerCase();
+
+        // Check if pattern contains glob characters, if not treat as literal string
+        const hasGlobChars = /[*?[\]{}]/.test(pattern);
+
+        if (hasGlobChars) {
+          // Use glob pattern matching for patterns with glob characters
+          try {
+            // Convert glob pattern to regex for substring matching
+            // Replace * with .* for "any characters" and escape other special chars
+            const regexPattern = lowerPattern
+              .replace(/\*/g, '.*')
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+              .replace(/\\\.\*/g, '.*'); // Fix: don't escape the .* we just created
+            const regex = new RegExp(regexPattern, 'i');
+
+            const storyIdMatch = regex.test(lowerStoryId);
+            const displayNameMatch = regex.test(lowerDisplayName);
+            const matches = storyIdMatch || displayNameMatch;
+
+            return matches;
+          } catch {
+            // Fallback to simple includes matching
+            const storyIdMatch = lowerStoryId.includes(lowerPattern);
+            const displayNameMatch = lowerDisplayName.includes(lowerPattern);
+            const matches = storyIdMatch || displayNameMatch;
+
+            return matches;
+          }
+        } else {
+          // Use simple includes matching for literal strings
+          const storyIdMatch = lowerStoryId.includes(lowerPattern);
+          const displayNameMatch = lowerDisplayName.includes(lowerPattern);
+          const matches = storyIdMatch || displayNameMatch;
+
+          return matches;
+        }
       });
     });
   }
@@ -212,10 +246,22 @@ function filterStories(stories: string[]): string[] {
       // Check if any pattern matches storyId or displayName (case-insensitive)
       return !excludePatterns.some((pattern) => {
         const lowerPattern = pattern.toLowerCase();
-        return (
-          storyId.toLowerCase().includes(lowerPattern) ||
-          displayName.toLowerCase().includes(lowerPattern)
-        );
+        const lowerStoryId = storyId.toLowerCase();
+        const lowerDisplayName = displayName.toLowerCase();
+
+        // Try glob pattern matching first, fallback to includes for backward compatibility
+        try {
+          // Convert glob pattern to regex for substring matching
+          const regexPattern = lowerPattern
+            .replace(/\*/g, '.*')
+            .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+            .replace(/\\\.\*/g, '.*'); // Fix: don't escape the .* we just created
+          const regex = new RegExp(regexPattern, 'i');
+          return regex.test(lowerStoryId) || regex.test(lowerDisplayName);
+        } catch {
+          // Fallback to simple includes matching for backward compatibility
+          return lowerStoryId.includes(lowerPattern) || lowerDisplayName.includes(lowerPattern);
+        }
       });
     });
   }
@@ -225,7 +271,7 @@ function filterStories(stories: string[]): string[] {
     try {
       const regex = new RegExp(process.env.STORYBOOK_GREP, 'i');
       filtered = filtered.filter((storyId) => regex.test(storyId));
-    } catch (_error) {
+    } catch {
       console.warn(`Invalid regex pattern: ${process.env.STORYBOOK_GREP}`);
     }
   }

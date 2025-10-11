@@ -29,6 +29,9 @@ class FilteredReporter implements Reporter {
   private isCI = false;
   private showTimeEstimates = true;
   private showSpinners = true;
+  private firstBatchCompleted = false;
+  private firstBatchSize = 0;
+  private averageTestDuration = 0;
 
   private formatDuration(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
@@ -100,6 +103,11 @@ class FilteredReporter implements Reporter {
     this.showTimeEstimates = !this.isCI && process.env.SVR_HIDE_TIME_ESTIMATES !== 'true';
     this.showSpinners = !this.isCI && process.env.SVR_HIDE_SPINNERS !== 'true';
 
+    // Set first batch size for improved time estimation
+    this.firstBatchSize = Math.min(Math.max(this.workers * 2, 5), Math.floor(this.totalTests / 3));
+    this.firstBatchCompleted = false;
+    this.averageTestDuration = 0;
+
     // Header line for tests and workers, followed by a newline as expected by tests
     console.log(`Running ${this.totalTests} tests using ${this.workers} workers\n`);
 
@@ -170,18 +178,26 @@ class FilteredReporter implements Reporter {
     this.completed += 1;
     const elapsedMs = Math.max(1, Date.now() - this.startedAtMs);
     const remaining = Math.max(0, this.totalTests - this.completed);
-    const avgPerTestMs = elapsedMs / this.completed;
     const rawDuration = Math.max(1, result.duration || 0);
-    // Outlier capping based on recent P95
+
+    // Check if first batch is completed
+    if (!this.firstBatchCompleted && this.completed >= this.firstBatchSize) {
+      this.firstBatchCompleted = true;
+      this.averageTestDuration = elapsedMs / this.completed;
+    }
+
+    // Update duration tracking for outlier capping
     this.recentAllDurations.push(rawDuration);
     if (this.recentAllDurations.length > 100) this.recentAllDurations.shift();
     const p95 = this.computeP95(this.recentAllDurations) ?? rawDuration;
     const thisDuration = Math.min(rawDuration, p95);
+
     // Rolling average based on the number of workers (window size = workers)
     this.lastDurations.push(thisDuration);
     if (this.lastDurations.length > Math.max(1, this.workers)) {
       this.lastDurations.shift();
     }
+
     // Per-worker rolling windows
     const workerIndex = (result as unknown as { workerIndex?: number }).workerIndex ?? 0;
     if (!this.perWorkerDurations[workerIndex]) this.perWorkerDurations[workerIndex] = [];
@@ -189,28 +205,17 @@ class FilteredReporter implements Reporter {
     const wdur = this.perWorkerDurations[workerIndex];
     wdur.push(thisDuration);
     if (wdur.length > windowSize) wdur.shift();
-    // Choose basis: early stage use global avg; later use per-worker window avg
-    let etaBasis: number;
-    const earlyThreshold = Math.max(this.workers * 2, 10);
-    if (this.completed < earlyThreshold) {
-      etaBasis = avgPerTestMs;
-    } else {
-      const workerKeys = Object.keys(this.perWorkerDurations);
-      const perWorkerAverages: number[] = [];
-      for (const k of workerKeys) {
-        const list = this.perWorkerDurations[Number(k)] || [];
-        if (list.length > 0) {
-          const a = list.reduce((s, v) => s + v, 0) / list.length;
-          perWorkerAverages.push(a);
-        }
-      }
-      if (perWorkerAverages.length > 0) {
-        etaBasis = perWorkerAverages.reduce((s, v) => s + v, 0) / perWorkerAverages.length;
-      } else {
-        etaBasis = this.lastDurations.reduce((s, v) => s + v, 0) / this.lastDurations.length;
-      }
+
+    // Calculate time estimation based on first batch completion
+    let etaMs = 0;
+    if (this.firstBatchCompleted && remaining > 0) {
+      // Use average test duration from first batch for more accurate estimation
+      etaMs = (this.averageTestDuration * remaining) / Math.max(1, this.workers);
+    } else if (this.completed > 0) {
+      // Fallback to current average if first batch not completed yet
+      const currentAvg = elapsedMs / this.completed;
+      etaMs = (currentAvg * remaining) / Math.max(1, this.workers);
     }
-    const etaMs = (etaBasis * remaining) / Math.max(1, this.workers);
 
     // Format test duration with color
     const testDuration = this.formatDuration(rawDuration);
@@ -225,11 +230,20 @@ class FilteredReporter implements Reporter {
       },
     )}`;
 
-    // Create progress label with optional time estimate
-    let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))}`;
-    if (this.showTimeEstimates && remaining > 0) {
+    // Create progress label with percentage and optional time estimate
+    const percentage = Math.round((this.completed / this.totalTests) * 100);
+    let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))} ${chalk.gray(`(${percentage}%)`)}`;
+
+    // Only show time estimates after first batch is completed or if we're in the final phase
+    if (
+      this.showTimeEstimates &&
+      remaining > 0 &&
+      (this.firstBatchCompleted || this.completed >= this.totalTests * 0.8)
+    ) {
       const etaFormatted = this.formatDuration(Math.round(etaMs));
       progressLabel += ` ${chalk.gray(`~${etaFormatted} remaining`)}`;
+    } else if (this.showTimeEstimates && remaining > 0 && !this.firstBatchCompleted) {
+      progressLabel += ` ${chalk.gray('estimating…')}`;
     }
 
     if (this.spinner) {
@@ -256,6 +270,7 @@ class FilteredReporter implements Reporter {
 
       if (this.spinner) {
         this.spinner.stop();
+        this.spinner.clear();
       }
       // Show failed test with duration and red cross
       console.log(`  ${chalk.red.bold('✘')} ${outputCore}${durationText}`);
@@ -273,6 +288,7 @@ class FilteredReporter implements Reporter {
       this.passed++;
       if (this.spinner) {
         this.spinner.stop();
+        this.spinner.clear();
       }
       // Show passed test with duration and green tick
       console.log(`  ${chalk.green.bold('✔')} ${outputCore}${durationText}`);
@@ -336,9 +352,7 @@ class FilteredReporter implements Reporter {
           }
         });
 
-        console.log(
-          chalk.dim(`\n💡 Tip: Set SVR_PRINT_URLS=true to see URLs inline with test results`),
-        );
+        console.log(chalk.dim(`\n💡 Tip: Use --print-urls to see URLs inline with test results`));
       }
     }
   }

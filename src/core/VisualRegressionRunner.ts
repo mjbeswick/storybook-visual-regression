@@ -1,4 +1,5 @@
 import { chromium, firefox, webkit, Browser } from 'playwright';
+import picomatch from 'picomatch';
 import type {
   VisualRegressionConfig,
   TestResult,
@@ -217,18 +218,40 @@ export class VisualRegressionRunner {
 
     if (this.config.includeStories && this.config.includeStories.length > 0) {
       filtered = filtered.filter((story) =>
-        this.config.includeStories!.some(
-          (pattern) => story.id.includes(pattern) || story.title.includes(pattern),
-        ),
+        this.config.includeStories!.some((pattern) => {
+          const lowerPattern = pattern.toLowerCase();
+          const lowerStoryId = story.id.toLowerCase();
+          const lowerTitle = story.title.toLowerCase();
+
+          // Try glob pattern matching first, fallback to includes for backward compatibility
+          try {
+            const matcher = picomatch(lowerPattern, { nocase: true });
+            return matcher(lowerStoryId) || matcher(lowerTitle);
+          } catch {
+            // Fallback to simple includes matching for backward compatibility
+            return lowerStoryId.includes(lowerPattern) || lowerTitle.includes(lowerPattern);
+          }
+        }),
       );
     }
 
     if (this.config.excludeStories && this.config.excludeStories.length > 0) {
       filtered = filtered.filter(
         (story) =>
-          !this.config.excludeStories!.some(
-            (pattern) => story.id.includes(pattern) || story.title.includes(pattern),
-          ),
+          !this.config.excludeStories!.some((pattern) => {
+            const lowerPattern = pattern.toLowerCase();
+            const lowerStoryId = story.id.toLowerCase();
+            const lowerTitle = story.title.toLowerCase();
+
+            // Try glob pattern matching first, fallback to includes for backward compatibility
+            try {
+              const matcher = picomatch(lowerPattern, { nocase: true });
+              return matcher(lowerStoryId) || matcher(lowerTitle);
+            } catch {
+              // Fallback to simple includes matching for backward compatibility
+              return lowerStoryId.includes(lowerPattern) || lowerTitle.includes(lowerPattern);
+            }
+          }),
       );
     }
 

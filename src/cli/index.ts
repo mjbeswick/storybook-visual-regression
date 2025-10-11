@@ -34,6 +34,7 @@ type CliOptions = {
   output?: string;
   updateSnapshots?: boolean;
   browser?: string;
+  printUrls?: boolean;
   // Timeouts and stability tuning
   navTimeout?: string; // ms
   waitTimeout?: string; // ms
@@ -59,6 +60,11 @@ async function createConfigFromOptions(
 
   // Detect Storybook configuration from the project
   const detectedConfig = await detector.detectAndMergeConfig(defaultConfig);
+
+  // If no explicit command is provided, don't use the detected command
+  if (!options.command) {
+    detectedConfig.storybookCommand = undefined;
+  }
 
   // Construct proper URL with port
   // 1) Prefer explicit --port option
@@ -110,11 +116,19 @@ async function createConfigFromOptions(
     process.env.PLAYWRIGHT_REPORTER = silentReporterPath;
   }
 
+  // Handle browser selection
+  const browserOpt = options.browser;
+  const allowedBrowsers = new Set(['chromium', 'firefox', 'webkit']);
+  const browser =
+    browserOpt && allowedBrowsers.has(browserOpt)
+      ? (browserOpt as 'chromium' | 'firefox' | 'webkit')
+      : detectedConfig.browser;
+
   return {
     ...detectedConfig,
     storybookUrl,
     storybookPort: port,
-    storybookCommand: options.command || detectedConfig.storybookCommand,
+    storybookCommand: options.command || undefined,
     workers: workersOpt ?? detectedConfig.workers,
     retries: retriesOpt ?? detectedConfig.retries,
     timeout: detectedConfig.timeout,
@@ -122,6 +136,7 @@ async function createConfigFromOptions(
     headless: detectedConfig.headless,
     timezone: options.timezone || detectedConfig.timezone,
     locale: options.locale || detectedConfig.locale,
+    browser,
   };
 }
 
@@ -216,10 +231,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const originalCwd = process.cwd();
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
-  const projectRoot = join(__dirname, '..', '..');
 
   const config = await createConfigFromOptions(options, originalCwd);
-  const storybookCommand = config.storybookCommand || 'npm run storybook';
+  const storybookCommand = config.storybookCommand;
 
   // Optionally install Playwright browsers/deps for CI convenience
   // Only install if the --install-browsers flag was explicitly provided
@@ -305,10 +319,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     return `${baseCommand} ${extraArgs.join(' ')}`;
   }
 
-  const storybookLaunchCommand = buildStorybookLaunchCommand(
-    storybookCommand,
-    config.storybookPort,
-  );
+  const storybookLaunchCommand = storybookCommand
+    ? buildStorybookLaunchCommand(storybookCommand, config.storybookPort)
+    : undefined;
 
   // Set environment variables for Playwright
   process.env.PLAYWRIGHT_RETRIES = config.retries.toString();
@@ -319,6 +332,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   process.env.PLAYWRIGHT_HEADLESS = config.headless ? 'true' : 'false';
   process.env.PLAYWRIGHT_TIMEZONE = config.timezone;
   process.env.PLAYWRIGHT_LOCALE = config.locale;
+  process.env.PLAYWRIGHT_BROWSER = config.browser;
   if (options.reporter) process.env.PLAYWRIGHT_REPORTER = String(options.reporter);
   if (options.quiet) process.env.PLAYWRIGHT_REPORTER = 'src/reporters/filtered-reporter.ts';
   if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
@@ -326,6 +340,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
   if (options.hideTimeEstimates) process.env.SVR_HIDE_TIME_ESTIMATES = 'true';
   if (options.hideSpinners) process.env.SVR_HIDE_SPINNERS = 'true';
+  if (options.printUrls) process.env.SVR_PRINT_URLS = 'true';
   // Pass test tuning knobs (parse numeric strings to handle underscores)
   if (options.navTimeout) {
     const parsed = parseInt(String(options.navTimeout).replace(/_/g, ''), 10);
@@ -354,97 +369,53 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     const parsed = parseInt(String(options.notFoundRetryDelay).replace(/_/g, ''), 10);
     process.env.SVR_NOT_FOUND_RETRY_DELAY = String(parsed);
   }
-  process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
+  // Only set STORYBOOK_COMMAND if a command was provided (not just the default)
+  // AND if the URL is not already accessible
+  if (storybookLaunchCommand) {
+    // Check if Storybook is already running at the target URL
+    const storybookIndexUrl = `${config.storybookUrl.replace(/\/$/, '')}/index.json`;
+    console.log(`🔍 Checking if Storybook is already running at: ${storybookIndexUrl}`);
+
+    try {
+      const response = await fetch(storybookIndexUrl, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(5000), // 5 second timeout
+      });
+
+      if (response.ok) {
+        console.log(`🔍 Storybook is already running, skipping webserver startup`);
+        // Don't set STORYBOOK_COMMAND if the server is already running
+      } else {
+        console.log(`🔍 Storybook not accessible (${response.status}), will start webserver`);
+        process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
+      }
+    } catch (error) {
+      console.log(
+        `🔍 Storybook not accessible (${error instanceof Error ? error.message : 'unknown error'}), will start webserver`,
+      );
+      process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
+    }
+  }
   process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
   process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
   process.env.ORIGINAL_CWD = originalCwd;
 
-  // Debug logging
-  if (options.debug) {
-    console.log(chalk.blue('🔍 Debug: Environment variables set:'));
-    console.table({
-      PLAYWRIGHT_RETRIES: process.env.PLAYWRIGHT_RETRIES,
-      PLAYWRIGHT_WORKERS: process.env.PLAYWRIGHT_WORKERS,
-      PLAYWRIGHT_MAX_FAILURES: process.env.PLAYWRIGHT_MAX_FAILURES,
-      PLAYWRIGHT_UPDATE_SNAPSHOTS: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS,
-      STORYBOOK_URL: process.env.STORYBOOK_URL,
-      PLAYWRIGHT_HEADLESS: process.env.PLAYWRIGHT_HEADLESS,
-      PLAYWRIGHT_TIMEZONE: process.env.PLAYWRIGHT_TIMEZONE,
-      PLAYWRIGHT_LOCALE: process.env.PLAYWRIGHT_LOCALE,
-      STORYBOOK_COMMAND: process.env.STORYBOOK_COMMAND,
-      STORYBOOK_CWD: process.env.STORYBOOK_CWD,
-      STORYBOOK_TIMEOUT: process.env.STORYBOOK_TIMEOUT,
-      SVR_NAV_TIMEOUT: process.env.SVR_NAV_TIMEOUT,
-      SVR_WAIT_TIMEOUT: process.env.SVR_WAIT_TIMEOUT,
-      SVR_OVERLAY_TIMEOUT: process.env.SVR_OVERLAY_TIMEOUT,
-      SVR_STABILIZE_INTERVAL: process.env.SVR_STABILIZE_INTERVAL,
-      SVR_STABILIZE_ATTEMPTS: process.env.SVR_STABILIZE_ATTEMPTS,
-      SVR_NOT_FOUND_CHECK: process.env.SVR_NOT_FOUND_CHECK,
-      SVR_NOT_FOUND_RETRY_DELAY: process.env.SVR_NOT_FOUND_RETRY_DELAY,
-    });
-
-    // Log the effective Playwright config we will run with
-    const effectivePlaywrightConfig = {
-      testDir: join(projectRoot, 'src', 'tests'),
-      outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR
-        ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
-        : join(process.env.ORIGINAL_CWD || originalCwd, 'visual-regression', 'results'),
-      reporter: 'list',
-      retries: parseInt(process.env.PLAYWRIGHT_RETRIES || '0'),
-      workers: parseInt(process.env.PLAYWRIGHT_WORKERS || '12'),
-      maxFailures: parseInt(process.env.PLAYWRIGHT_MAX_FAILURES || '1'),
-      updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ? 'all' : 'none',
-      use: {
-        baseURL: process.env.STORYBOOK_URL || 'http://localhost:9009',
-        headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
-        timezoneId: process.env.PLAYWRIGHT_TIMEZONE || 'Europe/London',
-        locale: process.env.PLAYWRIGHT_LOCALE || 'en-GB',
-        screenshot: 'only-on-failure',
-      },
-      webServer: process.env.STORYBOOK_COMMAND
-        ? {
-            command: process.env.STORYBOOK_COMMAND,
-            url: `${(process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '')}/index.json`,
-            reuseExistingServer: true,
-            timeout: (() => {
-              const timeout = parseInt(process.env.STORYBOOK_TIMEOUT || '120000');
-              if (process.env.SVR_DEBUG === 'true') {
-                console.log(`Debug - WebServer timeout set to: ${timeout}ms`);
-              }
-              return timeout;
-            })(),
-            cwd: process.env.STORYBOOK_CWD,
-            stdout: 'inherit',
-            stderr: 'inherit',
-            env: {
-              NODE_ENV: 'development',
-              NODE_NO_WARNINGS: '1',
-            },
-            ignoreHTTPSErrors: true,
-          }
-        : undefined,
-    };
-    console.log(chalk.blue('🔍 Debug: Playwright config:'));
-    console.log(
-      chalk.gray(
-        JSON.stringify(
-          effectivePlaywrightConfig,
-          (_key, value) => (typeof value === 'string' ? value : value),
-          2,
-        ),
-      ),
-    );
-  }
-
   console.log('');
   console.log(chalk.bold('🚀 Starting Playwright visual regression tests'));
-  console.log(
-    `${chalk.dim('  •')} Storybook command: ${chalk.cyan(storybookLaunchCommand)} (${chalk.dim(
-      storybookCommand,
-    )})`,
-  );
-  console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
-  console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
+  if (storybookCommand) {
+    console.log(
+      `${chalk.dim('  •')} Storybook command: ${chalk.cyan(storybookLaunchCommand)} (${chalk.dim(
+        storybookCommand,
+      )})`,
+    );
+    console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
+    console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
+  } else {
+    console.log(
+      `${chalk.dim('  •')} Using existing Storybook server at ${chalk.cyan(config.storybookUrl)}`,
+    );
+    console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
+  }
   console.log('');
 
   try {
@@ -514,6 +485,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         PLAYWRIGHT_HEADLESS: config.headless ? 'true' : 'false',
         PLAYWRIGHT_TIMEZONE: config.timezone,
         PLAYWRIGHT_LOCALE: config.locale,
+        PLAYWRIGHT_BROWSER: config.browser,
         PLAYWRIGHT_OUTPUT_DIR: join(originalCwd, options.output || 'visual-regression'),
         // Respect explicit reporter or debug; otherwise use our custom reporter if available
         PLAYWRIGHT_REPORTER: options.debug
@@ -524,7 +496,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
               process.env.PLAYWRIGHT_REPORTER,
         // Surface a simple debug flag for tests to log helpful info like Story URLs
         SVR_DEBUG: options.debug ? 'true' : undefined,
-        STORYBOOK_COMMAND: storybookLaunchCommand,
+        // Only set STORYBOOK_COMMAND if a command was provided (not just the default)
+        STORYBOOK_COMMAND: storybookLaunchCommand || undefined,
         STORYBOOK_CWD: originalCwd,
         STORYBOOK_TIMEOUT: config.serverTimeout.toString(),
         ORIGINAL_CWD: originalCwd,
@@ -573,10 +546,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         (errorMessage.includes('WebServer') && errorMessage.includes('timeout')) ||
         errorMessage.includes('server startup timeout') ||
         (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer')) ||
-        // Check if it's a command failure with exit code 1 and no tests ran (likely webserver timeout)
+        // Only consider it a webserver timeout if STORYBOOK_COMMAND was actually set
         (errorMessage.includes('Command failed') &&
           errorMessage.includes('playwright test') &&
-          errorMessage.includes('exit code 1'));
+          errorMessage.includes('exit code 1') &&
+          process.env.STORYBOOK_COMMAND);
 
       if (isWebserverTimeout) {
         // Show prominent webserver timeout message
@@ -620,7 +594,7 @@ program
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
-  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
+  .option('-c, --command <command>', 'Command to start Storybook server')
   .option(
     '--webserver-timeout <ms>',
     'Playwright webServer startup timeout in milliseconds',
@@ -633,8 +607,10 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--print-urls', 'Show story URLs inline with test results')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
+  .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   // Timing and stability options (ms / counts)
   .option('--nav-timeout <ms>', 'Navigation timeout', '10000')
   .option('--wait-timeout <ms>', 'Wait-for-element timeout', '10000')
@@ -691,7 +667,7 @@ program
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
-  .option('-c, --command <command>', 'Command to start Storybook server', 'npm run storybook')
+  .option('-c, --command <command>', 'Command to start Storybook server')
   .option(
     '--webserver-timeout <ms>',
     'Playwright webServer startup timeout in milliseconds',
@@ -704,8 +680,10 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--print-urls', 'Show story URLs inline with test results')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
+  .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option('--nav-timeout <ms>', 'Navigation timeout', '10000')
   .option('--wait-timeout <ms>', 'Wait-for-element timeout', '30000')
   .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide', '5000')
