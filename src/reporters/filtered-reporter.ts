@@ -14,9 +14,17 @@ import type { Ora } from 'ora';
 
 class FilteredReporter implements Reporter {
   private failures: TestCase[] = [];
-  private failureDetails: Array<{ test: TestCase; diffPath?: string; retry?: number }> = [];
+  private failureDetails: Array<{
+    test: TestCase;
+    diffPath?: string;
+    retry?: number;
+    error?: string;
+  }> = [];
   private passed = 0;
   private failed = 0;
+  private skipped = 0;
+  private timedOut = 0;
+  private interrupted = 0;
   private resultsRoot: string | null = null;
   private totalTests = 0;
   private completed = 0;
@@ -32,6 +40,10 @@ class FilteredReporter implements Reporter {
   private firstBatchCompleted = false;
   private firstBatchSize = 0;
   private averageTestDuration = 0;
+  private estimationConfidence: 'low' | 'medium' | 'high' = 'low';
+  private recentTestDurations: number[] = [];
+  private smoothedAverage = 0;
+  private lastEstimationUpdate = 0;
 
   private formatDuration(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
@@ -56,6 +68,71 @@ class FilteredReporter implements Reporter {
     const sorted = [...values].sort((a, b) => a - b);
     const idx = Math.floor(0.95 * (sorted.length - 1));
     return sorted[idx];
+  }
+
+  private calculateRobustEstimate(): { etaMs: number; confidence: 'low' | 'medium' | 'high' } {
+    const remaining = Math.max(0, this.totalTests - this.completed);
+    if (remaining === 0) return { etaMs: 0, confidence: 'high' };
+
+    // Use actual test durations for more accurate estimates
+    let avgTestDuration: number;
+    let confidence: 'low' | 'medium' | 'high';
+
+    if (this.recentTestDurations.length >= 3) {
+      // Use recent test durations for trend-based estimation
+      const recentSum = this.recentTestDurations.reduce((sum, d) => sum + d, 0);
+      avgTestDuration = recentSum / this.recentTestDurations.length;
+      confidence = this.recentTestDurations.length >= 10 ? 'high' : 'medium';
+    } else if (this.completed >= 3) {
+      // Fallback to elapsed time per test, but account for parallelism
+      const elapsedMs = Math.max(1, Date.now() - this.startedAtMs);
+      const wallClockTimePerTest = elapsedMs / this.completed;
+
+      // Estimate actual test duration by accounting for parallel execution
+      // If we have multiple workers, tests run in parallel, so wall-clock time per test
+      // is roughly the actual test duration divided by effective workers
+      const effectiveWorkers = Math.min(this.workers, this.completed);
+      avgTestDuration = wallClockTimePerTest * effectiveWorkers;
+      confidence = 'low';
+    } else {
+      // Very early stage - use simple elapsed time approach
+      const elapsedMs = Math.max(1, Date.now() - this.startedAtMs);
+      avgTestDuration = elapsedMs / this.completed;
+      confidence = 'low';
+    }
+
+    // Apply smoothing to reduce volatility
+    if (this.smoothedAverage === 0) {
+      this.smoothedAverage = avgTestDuration;
+    } else {
+      const alpha = Math.min(0.4, 3 / (this.completed + 1)); // More responsive smoothing
+      this.smoothedAverage = alpha * avgTestDuration + (1 - alpha) * this.smoothedAverage;
+    }
+
+    // Use smoothed average for final estimate
+    const finalTestDuration = this.smoothedAverage;
+
+    // Calculate ETA based on remaining tests and worker parallelism
+    let etaMs: number;
+
+    if (this.workers === 1) {
+      // Single worker: straightforward calculation
+      etaMs = finalTestDuration * remaining;
+    } else {
+      // Multi-worker: account for parallel execution
+      // Use conservative efficiency factors
+      const efficiencyFactor = Math.min(0.75, 0.4 + (0.25 * Math.log(this.workers)) / Math.log(2));
+      const effectiveWorkers = this.workers * efficiencyFactor;
+
+      // Calculate remaining work considering parallel execution
+      const remainingWork = finalTestDuration * remaining;
+      etaMs = remainingWork / effectiveWorkers;
+
+      // Add buffer for coordination overhead and uncertainty
+      etaMs *= 1.2;
+    }
+
+    return { etaMs, confidence };
   }
 
   private safeRemoveEmptyDirsUp(startDir: string, stopDir: string): void {
@@ -107,6 +184,10 @@ class FilteredReporter implements Reporter {
     this.firstBatchSize = Math.min(Math.max(this.workers * 2, 5), Math.floor(this.totalTests / 3));
     this.firstBatchCompleted = false;
     this.averageTestDuration = 0;
+    this.estimationConfidence = 'low';
+    this.recentTestDurations = [];
+    this.smoothedAverage = 0;
+    this.lastEstimationUpdate = 0;
 
     // Header line for tests and workers, followed by a newline as expected by tests
     console.log(`Running ${this.totalTests} tests using ${this.workers} workers\n`);
@@ -176,14 +257,13 @@ class FilteredReporter implements Reporter {
 
     // Update progress stats for ETA calculation
     this.completed += 1;
-    const elapsedMs = Math.max(1, Date.now() - this.startedAtMs);
     const remaining = Math.max(0, this.totalTests - this.completed);
     const rawDuration = Math.max(1, result.duration || 0);
 
-    // Check if first batch is completed
-    if (!this.firstBatchCompleted && this.completed >= this.firstBatchSize) {
-      this.firstBatchCompleted = true;
-      this.averageTestDuration = elapsedMs / this.completed;
+    // Update recent test durations for trend analysis
+    this.recentTestDurations.push(rawDuration);
+    if (this.recentTestDurations.length > 10) {
+      this.recentTestDurations.shift();
     }
 
     // Update duration tracking for outlier capping
@@ -206,16 +286,9 @@ class FilteredReporter implements Reporter {
     wdur.push(thisDuration);
     if (wdur.length > windowSize) wdur.shift();
 
-    // Calculate time estimation based on first batch completion
-    let etaMs = 0;
-    if (this.firstBatchCompleted && remaining > 0) {
-      // Use average test duration from first batch for more accurate estimation
-      etaMs = (this.averageTestDuration * remaining) / Math.max(1, this.workers);
-    } else if (this.completed > 0) {
-      // Fallback to current average if first batch not completed yet
-      const currentAvg = elapsedMs / this.completed;
-      etaMs = (currentAvg * remaining) / Math.max(1, this.workers);
-    }
+    // Calculate robust time estimation
+    const { etaMs, confidence } = this.calculateRobustEstimate();
+    this.estimationConfidence = confidence;
 
     // Format test duration with color
     const testDuration = this.formatDuration(rawDuration);
@@ -234,16 +307,24 @@ class FilteredReporter implements Reporter {
     const percentage = Math.round((this.completed / this.totalTests) * 100);
     let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))} ${chalk.gray(`(${percentage}%)`)}`;
 
-    // Only show time estimates after first batch is completed or if we're in the final phase
-    if (
-      this.showTimeEstimates &&
-      remaining > 0 &&
-      (this.firstBatchCompleted || this.completed >= this.totalTests * 0.8)
-    ) {
+    // Show time estimates with confidence indicators
+    if (this.showTimeEstimates && remaining > 0) {
       const etaFormatted = this.formatDuration(Math.round(etaMs));
-      progressLabel += ` ${chalk.gray(`~${etaFormatted} remaining`)}`;
-    } else if (this.showTimeEstimates && remaining > 0 && !this.firstBatchCompleted) {
-      progressLabel += ` ${chalk.gray('estimating…')}`;
+      let confidenceIndicator = '';
+
+      switch (confidence) {
+        case 'low':
+          confidenceIndicator = chalk.yellow('~');
+          break;
+        case 'medium':
+          confidenceIndicator = chalk.blue('≈');
+          break;
+        case 'high':
+          confidenceIndicator = chalk.green('≈');
+          break;
+      }
+
+      progressLabel += ` ${chalk.gray(`${confidenceIndicator}${etaFormatted} remaining`)}`;
     }
 
     if (this.spinner) {
@@ -265,8 +346,9 @@ class FilteredReporter implements Reporter {
         }
       }
 
-      // Store failure details with diff path and retry information
-      this.failureDetails.push({ test, diffPath, retry: result.retry });
+      // Store failure details with diff path, retry information, and error message
+      const errorMessage = result.error?.message || result.error?.toString() || 'Unknown error';
+      this.failureDetails.push({ test, diffPath, retry: result.retry, error: errorMessage });
 
       if (this.spinner) {
         this.spinner.stop();
@@ -303,6 +385,46 @@ class FilteredReporter implements Reporter {
         const root = this.resultsRoot || '';
         this.safeRemoveEmptyDirsUp(attachmentDir, root);
       }
+    } else if (result.status === 'skipped') {
+      this.skipped++;
+      if (this.spinner) {
+        this.spinner.stop();
+        this.spinner.clear();
+      }
+      // Show skipped test with duration and yellow dash
+      console.log(`  ${chalk.yellow.bold('-')} ${outputCore}${durationText}`);
+      if (this.spinner) {
+        this.spinner.start(progressLabel);
+      }
+      // Remove all artifacts for skipped tests
+      for (const attachment of result.attachments || []) {
+        if (!attachment.path) continue;
+        this.removePathIfExists(attachment.path);
+      }
+    } else if (result.status === 'timedOut') {
+      this.timedOut++;
+      if (this.spinner) {
+        this.spinner.stop();
+        this.spinner.clear();
+      }
+      // Show timed out test with duration and red clock
+      console.log(`  ${chalk.red.bold('⏰')} ${outputCore}${durationText}`);
+      if (this.spinner) {
+        this.spinner.start(progressLabel);
+      }
+      // Keep artifacts for timed out tests (they might be useful for debugging)
+    } else if (result.status === 'interrupted') {
+      this.interrupted++;
+      if (this.spinner) {
+        this.spinner.stop();
+        this.spinner.clear();
+      }
+      // Show interrupted test with duration and red stop sign
+      console.log(`  ${chalk.red.bold('⏹')} ${outputCore}${durationText}`);
+      if (this.spinner) {
+        this.spinner.start(progressLabel);
+      }
+      // Keep artifacts for interrupted tests (they might be useful for debugging)
     }
   }
 
@@ -313,12 +435,23 @@ class FilteredReporter implements Reporter {
     }
 
     // Summary line expected by tests, prefixed with a newline
-    console.log(`\n${this.passed} passed, ${this.failed} failed`);
+    const totalExecuted =
+      this.passed + this.failed + this.skipped + this.timedOut + this.interrupted;
+    console.log(
+      `\n${this.passed} passed, ${this.failed} failed${this.skipped > 0 ? `, ${this.skipped} skipped` : ''}${this.timedOut > 0 ? `, ${this.timedOut} timed out` : ''}${this.interrupted > 0 ? `, ${this.interrupted} interrupted` : ''}`,
+    );
+
+    // Show discrepancy if total executed doesn't match total tests
+    if (totalExecuted !== this.totalTests) {
+      console.log(
+        chalk.yellow(`⚠ Expected ${this.totalTests} tests, but ${totalExecuted} were executed`),
+      );
+    }
 
     // Handle different test execution outcomes
     if (result.status === 'interrupted' || result.status === 'timedout') {
       console.log(chalk.yellow.bold('⚠ Test execution aborted'));
-    } else if (result.status === 'failed' || this.failed > 0) {
+    } else if (this.failed > 0 || this.timedOut > 0 || this.interrupted > 0) {
       console.log(chalk.red.bold('✘ Some tests failed'));
 
       // Show failure summary with URLs and diff paths if there are failures
@@ -349,6 +482,9 @@ class FilteredReporter implements Reporter {
           console.log(chalk.cyan(`   🔗 ${storyUrl}`));
           if (failure.diffPath) {
             console.log(chalk.gray(`   📸 ${failure.diffPath}`));
+          }
+          if (failure.error) {
+            console.log(chalk.yellow(`   ❌ ${failure.error}`));
           }
         });
 

@@ -19,8 +19,8 @@ export default defineConfig({
     : 'visual-regression/results',
   fullyParallel: true,
   retries: parseInt(process.env.PLAYWRIGHT_RETRIES || '0'),
-  workers: parseInt(process.env.PLAYWRIGHT_WORKERS || '12'),
-  maxFailures: parseInt(process.env.PLAYWRIGHT_MAX_FAILURES || '1'),
+  workers: parseInt(process.env.PLAYWRIGHT_WORKERS || '16'),
+  maxFailures: parseInt(process.env.PLAYWRIGHT_MAX_FAILURES || '10'),
   reporter: process.env.PLAYWRIGHT_REPORTER || 'list',
   updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ? 'all' : 'none',
   projects: [

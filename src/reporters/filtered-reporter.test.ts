@@ -26,7 +26,7 @@ describe('FilteredReporter', () => {
       const config: FullConfig = {
         projects: [],
         workers: 4,
-      } as FullConfig;
+      } as unknown as FullConfig;
 
       const rootSuite: Suite = {
         title: 'Root',
@@ -46,12 +46,12 @@ describe('FilteredReporter', () => {
       const config: FullConfig = {
         projects: [],
         workers: 1,
-      } as FullConfig;
+      } as unknown as FullConfig;
 
       const rootSuite: Suite = {
         title: 'Root',
         allTests: () => [],
-      } as Suite;
+      } as unknown as Suite;
 
       reporter.onBegin(config, rootSuite);
 
@@ -120,7 +120,7 @@ describe('FilteredReporter', () => {
       expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 2 100ms');
     });
 
-    it('should ignore skipped tests', () => {
+    it('should log skipped tests with dash', () => {
       const test: TestCase = {
         title: 'Test 1',
         parent: { title: 'Suite' } as Suite,
@@ -133,10 +133,10 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).not.toHaveBeenCalled();
+      expect(consoleLogSpy).toHaveBeenCalledWith('  - Test 1 100ms');
     });
 
-    it('should ignore timed out tests', () => {
+    it('should log timed out tests with clock', () => {
       const test: TestCase = {
         title: 'Test 1',
         parent: { title: 'Suite' } as Suite,
@@ -149,52 +149,101 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).not.toHaveBeenCalled();
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ⏰ Test 1 100ms');
+    });
+
+    it('should log interrupted tests with stop sign', () => {
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
+
+      const result: TestResult = {
+        status: 'interrupted',
+        duration: 100,
+      } as TestResult;
+
+      reporter.onTestEnd(test, result);
+
+      expect(consoleLogSpy).toHaveBeenCalledWith('  ⏹ Test 1 100ms');
     });
   });
 
   describe('onEnd', () => {
     it('should show success message when all tests passed', () => {
+      // Simulate some passed tests
+      const test1: TestCase = { title: 'Test 1' } as TestCase;
+      const test2: TestCase = { title: 'Test 2' } as TestCase;
+      const passedResult: TestResult = { status: 'passed', duration: 100 } as TestResult;
+
+      reporter.onTestEnd(test1, passedResult);
+      reporter.onTestEnd(test2, passedResult);
+
       const result: FullResult = {
         status: 'passed',
-        startTime: Date.now(),
+        startTime: new Date(),
         duration: 1000,
       } as FullResult;
 
       reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('\n2 passed, 0 failed');
     });
 
     it('should show failure message when some tests failed', () => {
+      // Simulate mixed results
+      const test1: TestCase = { title: 'Test 1' } as TestCase;
+      const test2: TestCase = { title: 'Test 2' } as TestCase;
+      const passedResult: TestResult = { status: 'passed', duration: 100 } as TestResult;
+      const failedResult: TestResult = { status: 'failed', duration: 100 } as TestResult;
+
+      reporter.onTestEnd(test1, passedResult);
+      reporter.onTestEnd(test2, failedResult);
+
       const result: FullResult = {
         status: 'failed',
-        startTime: Date.now(),
+        startTime: new Date(),
         duration: 1000,
       } as FullResult;
 
       reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 1 failed');
       expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
 
-    it('should handle mixed results', () => {
+    it('should show all test statuses in summary', () => {
+      // Simulate all types of test results
+      const test1: TestCase = { title: 'Test 1' } as TestCase;
+      const test2: TestCase = { title: 'Test 2' } as TestCase;
+      const test3: TestCase = { title: 'Test 3' } as TestCase;
+      const test4: TestCase = { title: 'Test 4' } as TestCase;
+      const test5: TestCase = { title: 'Test 5' } as TestCase;
+
+      reporter.onTestEnd(test1, { status: 'passed', duration: 100 } as TestResult);
+      reporter.onTestEnd(test2, { status: 'failed', duration: 100 } as TestResult);
+      reporter.onTestEnd(test3, { status: 'skipped', duration: 100 } as TestResult);
+      reporter.onTestEnd(test4, { status: 'timedOut', duration: 100 } as TestResult);
+      reporter.onTestEnd(test5, { status: 'interrupted', duration: 100 } as TestResult);
+
       const result: FullResult = {
-        status: 'passed',
-        startTime: Date.now(),
+        status: 'failed',
+        startTime: new Date(),
         duration: 1000,
       } as FullResult;
 
       reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '\n1 passed, 1 failed, 1 skipped, 1 timed out, 1 interrupted',
+      );
+      expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
 
     it('should handle no tests run', () => {
       const result: FullResult = {
         status: 'passed',
-        startTime: Date.now(),
+        startTime: new Date(),
         duration: 0,
       } as FullResult;
 
@@ -252,12 +301,132 @@ describe('FilteredReporter', () => {
     });
   });
 
+  describe('Time Estimation', () => {
+    it('should show low confidence estimates early in test run', () => {
+      const config: FullConfig = {
+        projects: [],
+        workers: 2,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () =>
+          Array.from({ length: 20 }, (_, i) => ({ title: `Test ${i + 1}` })) as TestCase[],
+      } as Suite;
+
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
+
+      const result: TestResult = {
+        status: 'passed',
+        duration: 1000,
+      } as TestResult;
+
+      reporter.onBegin(config, rootSuite);
+      reporter.onTestEnd(test, result);
+
+      // Should show time estimate with low confidence indicator (~)
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Running 20 tests using 2 workers'),
+      );
+    });
+
+    it('should improve confidence as more tests complete', () => {
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () =>
+          Array.from({ length: 25 }, (_, i) => ({ title: `Test ${i + 1}` })) as TestCase[],
+      } as Suite;
+
+      reporter.onBegin(config, rootSuite);
+
+      // Run 15 tests to reach medium confidence
+      for (let i = 0; i < 15; i++) {
+        const test: TestCase = {
+          title: `Test ${i + 1}`,
+          parent: { title: 'Suite' } as Suite,
+        } as TestCase;
+
+        const result: TestResult = {
+          status: 'passed',
+          duration: 1000 + i * 100, // Varying durations
+        } as TestResult;
+
+        reporter.onTestEnd(test, result);
+      }
+
+      // Should show medium confidence estimates
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Running 25 tests using 1 workers'),
+      );
+    });
+
+    it('should handle single worker configuration correctly', () => {
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () =>
+          Array.from({ length: 5 }, (_, i) => ({ title: `Test ${i + 1}` })) as TestCase[],
+      } as Suite;
+
+      reporter.onBegin(config, rootSuite);
+
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 5 tests using 1 workers\n');
+    });
+
+    it('should provide more accurate estimates with actual test durations', () => {
+      const config: FullConfig = {
+        projects: [],
+        workers: 2,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () =>
+          Array.from({ length: 10 }, (_, i) => ({ title: `Test ${i + 1}` })) as TestCase[],
+      } as Suite;
+
+      reporter.onBegin(config, rootSuite);
+
+      // Run several tests with realistic durations (1-2 seconds each)
+      for (let i = 0; i < 5; i++) {
+        const test: TestCase = {
+          title: `Test ${i + 1}`,
+          parent: { title: 'Suite' } as Suite,
+        } as TestCase;
+
+        const result: TestResult = {
+          status: 'passed',
+          duration: 1000 + i * 200, // 1s, 1.2s, 1.4s, 1.6s, 1.8s
+        } as TestResult;
+
+        reporter.onTestEnd(test, result);
+      }
+
+      // Should show more realistic estimates based on actual test durations
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Running 10 tests using 2 workers'),
+      );
+    });
+  });
+
   describe('Integration', () => {
     it('should work end-to-end with multiple tests', () => {
       const config: FullConfig = {
         projects: [],
         workers: 2,
-      } as FullConfig;
+      } as unknown as FullConfig;
 
       const rootSuite: Suite = {
         title: 'Root',
@@ -286,7 +455,7 @@ describe('FilteredReporter', () => {
 
       const finalResult: FullResult = {
         status: 'failed',
-        startTime: Date.now(),
+        startTime: new Date(),
         duration: 200,
       } as FullResult;
 
@@ -306,7 +475,7 @@ describe('FilteredReporter', () => {
       const config: FullConfig = {
         projects: [],
         workers: 8,
-      } as FullConfig;
+      } as unknown as FullConfig;
 
       const tests = Array.from({ length: 100 }, (_, i) => ({
         title: `Test ${i + 1}`,

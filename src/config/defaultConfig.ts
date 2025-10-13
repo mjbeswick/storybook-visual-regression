@@ -31,13 +31,13 @@ export function createDefaultConfig(): VisualRegressionConfig {
     locale: 'en-GB',
 
     // Test execution
-    workers: 12,
+    workers: 16, // Increased for powerful machines
     retries: 2,
     timeout: 30000,
     serverTimeout: 120000,
 
-    // Fail-fast
-    maxFailures: 1,
+    // Fail-fast - allow more failures before stopping
+    maxFailures: 10, // Increased from 1 to prevent early termination
 
     // Story filtering
     includeStories: [],
@@ -47,5 +47,17 @@ export function createDefaultConfig(): VisualRegressionConfig {
     disableAnimations: true,
     waitForNetworkIdle: true,
     contentStabilization: true,
+
+    // Loading spinner handling (always enabled)
+    loadingSpinnerSelectors: [
+      '.sb-loader',
+      '[data-testid="loading"]',
+      '[data-testid="spinner"]',
+      '[role="progressbar"]',
+      '.loading-spinner',
+      '.loading-indicator',
+      '.loading:not(.loading-button):not(.loading-text)',
+    ],
+    loadingSpinnerTimeout: 10000,
   };
 }

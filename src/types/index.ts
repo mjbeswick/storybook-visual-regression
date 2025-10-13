@@ -61,6 +61,10 @@ export type VisualRegressionConfig = {
   disableAnimations: boolean;
   waitForNetworkIdle: boolean;
   contentStabilization: boolean;
+
+  // Loading spinner handling (always enabled)
+  loadingSpinnerSelectors: string[];
+  loadingSpinnerTimeout: number;
 };
 
 export type TestResult = {

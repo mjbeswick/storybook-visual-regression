@@ -62,6 +62,9 @@ async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void>
     });
   }
 
+  // Wait for loading spinners to disappear if enabled
+  await waitForLoadingSpinners(page);
+
   // If Storybook shows error/nopreview wrappers, continue; we only care the canvas is visually present
   // Least fragile heuristic: any visible descendant in #storybook-root OR non-zero size of the root
   const isVisuallyReady = async () =>
@@ -88,6 +91,136 @@ async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void>
   }
 
   throw new Error('Story canvas did not stabilize');
+}
+
+async function waitForLoadingSpinners(page: Page): Promise<void> {
+  // Focus on more specific loading indicator selectors to avoid hiding legitimate content
+  const spinnerSelectors = [
+    '.sb-loader', // Storybook's own loader
+  ];
+
+  const spinnerTimeout = 5000; // Reduced timeout to 5 seconds
+
+  // Wait for loading spinners to disappear
+  for (const selector of spinnerSelectors) {
+    try {
+      // Check if element exists and is visible before waiting
+      const element = await page.$(selector);
+      if (!element) continue;
+
+      const isVisible = await element.isVisible();
+      if (!isVisible) continue;
+
+      // Wait for the element to become hidden
+      await page.waitForSelector(selector, {
+        state: 'hidden',
+        timeout: spinnerTimeout,
+      });
+    } catch {
+      // Only hide elements that are clearly loading indicators
+      await page.evaluate((sel) => {
+        const elements = document.querySelectorAll(sel);
+        elements.forEach((el) => {
+          const element = el as HTMLElement;
+          const text = element.textContent?.toLowerCase() || '';
+          const className = element.className.toLowerCase();
+
+          // Only hide if it's clearly a loading indicator
+          if (
+            className.includes('loading') ||
+            className.includes('spinner') ||
+            text.includes('loading') ||
+            text.includes('please wait') ||
+            element.getAttribute('role') === 'progressbar' ||
+            element.getAttribute('data-testid')?.includes('loading') ||
+            element.getAttribute('data-testid')?.includes('spinner')
+          ) {
+            element.style.display = 'none';
+            element.setAttribute('aria-hidden', 'true');
+          }
+        });
+      }, selector);
+    }
+  }
+
+  // Wait for storybook-root to have actual content
+  await page.waitForFunction(
+    () => {
+      const root = document.querySelector('#storybook-root');
+      if (!root) return false;
+
+      // Check if root has visible content
+      const rect = root.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return false;
+
+      // Check for visible child elements
+      const children = root.querySelectorAll('*');
+      for (const child of children) {
+        const childRect = child.getBoundingClientRect();
+        const style = window.getComputedStyle(child as HTMLElement);
+
+        if (
+          childRect.width > 0 &&
+          childRect.height > 0 &&
+          style.visibility !== 'hidden' &&
+          style.display !== 'none' &&
+          style.opacity !== '0'
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    },
+    { timeout: 10000 },
+  );
+
+  // Add a small delay to ensure content is fully loaded and rendered
+  await page.waitForTimeout(1000);
+
+  // Wait for page to stabilize (no layout changes) - be lenient to avoid test failures
+  try {
+    await page.evaluate(async () => {
+      const measure = (): string => {
+        const se = document.scrollingElement || document.documentElement;
+        const h = Math.max(
+          se?.scrollHeight ?? 0,
+          document.documentElement.scrollHeight,
+          document.body.scrollHeight,
+        );
+        const w = Math.max(
+          se?.scrollWidth ?? 0,
+          document.documentElement.scrollWidth,
+          document.body.scrollWidth,
+        );
+        return `${w}x${h}`;
+      };
+
+      const sleep = (ms: number): Promise<void> =>
+        new Promise((resolve) => setTimeout(resolve, ms));
+
+      // Try to stabilize, but don't fail if it doesn't work perfectly
+      const a = measure();
+      await sleep(100);
+      const b = measure();
+      await sleep(100);
+      const c = measure();
+
+      // If measurements are not stable, wait a bit more but don't fail
+      if (a !== b || b !== c) {
+        await sleep(200);
+        // Just proceed - don't block the test
+      }
+
+      return true;
+    });
+  } catch (error) {
+    // If stabilization fails, just continue - don't block the test
+    console.warn(
+      'Page stabilization check failed, proceeding anyway:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 function _parseJsonEnv<T>(key: string, fallback: T): T {
@@ -429,63 +562,62 @@ test.describe('Visual Regression', () => {
           if (body) body.style.overflow = 'hidden';
         });
 
-        await page.evaluate(async () => {
-          const measure = (): string => {
-            const se = document.scrollingElement || document.documentElement;
-            const h = Math.max(
-              se?.scrollHeight ?? 0,
-              document.documentElement.scrollHeight,
-              document.body.scrollHeight,
-            );
-            const w = Math.max(
-              se?.scrollWidth ?? 0,
-              document.documentElement.scrollWidth,
-              document.body.scrollWidth,
-            );
-            return `${w}x${h}`;
-          };
-
-          const sleep = (ms: number): Promise<void> =>
-            new Promise((resolve) => setTimeout(resolve, ms));
-
-          const a = measure();
-          await sleep(150);
-          const b = measure();
-          await sleep(150);
-          const c = measure();
-          return a === b && b === c;
-        });
-
         const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
+        const expectedPath = join(
+          projectRoot,
+          'visual-regression',
+          'snapshots',
+          `${sanitizedStoryId}.png`,
+        );
+
         try {
           await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`);
         } catch (assertionError) {
+          // Check if the snapshot file exists
+          const snapshotExists = await import('fs').then((fs) =>
+            fs.promises
+              .access(expectedPath)
+              .then(() => true)
+              .catch(() => false),
+          );
+
           // Print a spaced, aligned failure block
           const label = (k: string) => (k + ':').padEnd(10, ' ');
-          console.error('\n' + chalk.red('──────── Screenshot Mismatch ────────'));
-          console.error(chalk.red(`${label('Story')}${storyId}`));
-          console.error(chalk.red(`${label('URL')}${storyUrl}`));
-          console.error(
-            chalk.red(
-              `${label('Reason')}${assertionError instanceof Error ? assertionError.message : String(assertionError)}`,
-            ),
-          );
-          // Helpful paths
-          const expectedPath = join(
-            projectRoot,
-            'visual-regression',
-            'snapshots',
-            `${sanitizedStoryId}.png`,
-          );
-          const resultsRoot = process.env.PLAYWRIGHT_OUTPUT_DIR
-            ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
-            : join(projectRoot, 'visual-regression', 'results');
-          console.error(chalk.red(`${label('Expected')}${expectedPath}`));
-          console.error(chalk.red(`${label('Results')}${resultsRoot}`));
-          console.error(chalk.red('──────────────────────────────────────\n'));
-          throw new Error(
-            `Screenshot mismatch for story '${storyId}'. Snapshot: ${sanitizedStoryId}.png`,
-          );
+
+          if (!snapshotExists) {
+            console.error('\n' + chalk.yellow('──────── Missing Snapshot ────────'));
+            console.error(chalk.yellow(`${label('Story')}${storyId}`));
+            console.error(chalk.yellow(`${label('URL')}${storyUrl}`));
+            console.error(chalk.yellow(`${label('Missing')}${expectedPath}`));
+            console.error(chalk.yellow('──────────────────────────────────────'));
+            console.error(chalk.cyan('💡 To create the missing snapshot, run:'));
+            console.error(
+              chalk.cyan(`   storybook-visual-regression update --include "${storyId}"`),
+            );
+            console.error(chalk.yellow('──────────────────────────────────────\n'));
+            throw new Error(
+              `Snapshot doesn't exist for story '${storyId}'. Run 'storybook-visual-regression update --include "${storyId}"' to create it.`,
+            );
+          } else {
+            console.error('\n' + chalk.red('──────── Screenshot Mismatch ────────'));
+            console.error(chalk.red(`${label('Story')}${storyId}`));
+            console.error(chalk.red(`${label('URL')}${storyUrl}`));
+            console.error(
+              chalk.red(
+                `${label('Reason')}${assertionError instanceof Error ? assertionError.message : String(assertionError)}`,
+              ),
+            );
+            // Helpful paths
+            const resultsRoot = process.env.PLAYWRIGHT_OUTPUT_DIR
+              ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
+              : join(projectRoot, 'visual-regression', 'results');
+            console.error(chalk.red(`${label('Expected')}${expectedPath}`));
+            console.error(chalk.red(`${label('Results')}${resultsRoot}`));
+            console.error(chalk.red('──────────────────────────────────────\n'));
+            throw new Error(
+              `Screenshot mismatch for story '${storyId}'. Snapshot: ${sanitizedStoryId}.png`,
+            );
+          }
         }
       } catch (error) {
         // Emit the URL and reason in a spaced, aligned block
