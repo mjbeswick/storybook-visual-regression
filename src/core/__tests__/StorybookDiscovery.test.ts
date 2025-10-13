@@ -43,7 +43,7 @@ describe('StorybookDiscovery', () => {
       maxFailures: 0,
       disableAnimations: true,
       waitForNetworkIdle: true,
-      contentStabilization: true,
+      contentStabilizationTime: 100,
     };
 
     discovery = new StorybookDiscovery(mockConfig);

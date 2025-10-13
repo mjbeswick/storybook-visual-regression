@@ -60,7 +60,7 @@ export type VisualRegressionConfig = {
   // Advanced options
   disableAnimations: boolean;
   waitForNetworkIdle: boolean;
-  contentStabilization: boolean;
+  contentStabilizationTime: number;
 
   // Loading spinner handling (always enabled)
   loadingSpinnerSelectors: string[];

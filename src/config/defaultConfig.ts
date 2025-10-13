@@ -46,7 +46,7 @@ export function createDefaultConfig(): VisualRegressionConfig {
     // Advanced options
     disableAnimations: true,
     waitForNetworkIdle: true,
-    contentStabilization: true,
+    contentStabilizationTime: 100,
 
     // Loading spinner handling (always enabled)
     loadingSpinnerSelectors: [

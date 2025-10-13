@@ -145,7 +145,7 @@ export class VisualRegressionRunner {
       // Set timezone and locale
       await page.addInitScript(() => {
         const timezone = 'UTC';
-        const locale = 'en-US';
+        const locale = 'en-GB';
         Object.defineProperty(Intl, 'DateTimeFormat', {
           value: class extends Intl.DateTimeFormat {
             constructor(...args: unknown[]) {
@@ -180,8 +180,8 @@ export class VisualRegressionRunner {
       });
 
       // Wait for content stabilization
-      if (this.config.contentStabilization) {
-        await page.waitForTimeout(1000);
+      if (this.config.contentStabilizationTime && this.config.contentStabilizationTime > 0) {
+        await page.waitForTimeout(this.config.contentStabilizationTime);
       }
 
       // Pause and reset any SVG SMIL animations once content is present
