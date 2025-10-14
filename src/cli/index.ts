@@ -364,46 +364,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
   if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
   if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
-  if (options.hideTimeEstimates) process.env.SVR_HIDE_TIME_ESTIMATES = 'true';
-  if (options.hideSpinners) process.env.SVR_HIDE_SPINNERS = 'true';
-  if (options.printUrls) process.env.SVR_PRINT_URLS = 'true';
-  // Pass test tuning knobs (parse numeric strings to handle underscores)
-  if (options.navTimeout) {
-    const parsed = parseInt(String(options.navTimeout).replace(/_/g, ''), 10);
-    process.env.SVR_NAV_TIMEOUT = String(parsed);
-  }
-  if (options.waitTimeout) {
-    const parsed = parseInt(String(options.waitTimeout).replace(/_/g, ''), 10);
-    process.env.SVR_WAIT_TIMEOUT = String(parsed);
-  }
-  if (options.overlayTimeout) {
-    const parsed = parseInt(String(options.overlayTimeout).replace(/_/g, ''), 10);
-    process.env.SVR_OVERLAY_TIMEOUT = String(parsed);
-  }
-  if (options.stabilizeInterval) {
-    const parsed = parseInt(String(options.stabilizeInterval).replace(/_/g, ''), 10);
-    process.env.SVR_STABILIZE_INTERVAL = String(parsed);
-  }
-  if (options.stabilizeAttempts) {
-    const parsed = parseInt(String(options.stabilizeAttempts).replace(/_/g, ''), 10);
-    process.env.SVR_STABILIZE_ATTEMPTS = String(parsed);
-  }
-  if (options.finalSettle) {
-    const parsed = parseInt(String(options.finalSettle).replace(/_/g, ''), 10);
-    process.env.SVR_FINAL_SETTLE_MS = String(parsed);
-  }
-  if (options.notFoundCheck) {
-    process.env.SVR_NOT_FOUND_CHECK = 'true';
-  }
-  if (options.notFoundRetryDelay) {
-    const parsed = parseInt(String(options.notFoundRetryDelay).replace(/_/g, ''), 10);
-    process.env.SVR_NOT_FOUND_RETRY_DELAY = String(parsed);
-  }
-  if (options.waitUntil) {
-    const val = String(options.waitUntil).toLowerCase();
-    const allowed = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
-    process.env.SVR_WAIT_UNTIL = allowed.has(val) ? val : 'networkidle';
-  }
   // Only set STORYBOOK_COMMAND if a command was provided (not just the default)
   // AND if the URL is not already accessible
   if (storybookLaunchCommand) {
@@ -455,6 +415,12 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
   try {
     const playwrightArgs = ['playwright', 'test'];
+    if (
+      process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ||
+      (options as CliOptions).updateSnapshots
+    ) {
+      playwrightArgs.push('--update-snapshots=all');
+    }
 
     // Use our config file instead of the project's config
     // Get the path to our config file relative to this CLI file
@@ -814,9 +780,9 @@ program
   .action(async (options) => {
     // Enable snapshot updates only via this command
     process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = 'true';
-    if ((options as CliOptions).missingOnly) {
-      process.env.SVR_MISSING_ONLY = 'true';
-    }
+    // Mark option so we can also pass an explicit Playwright flag later
+    (options as CliOptions).updateSnapshots = true;
+    // missingOnly behavior handled inside tests via file presence
     if ((options as CliOptions).reporter)
       process.env.PLAYWRIGHT_REPORTER = String((options as CliOptions).reporter);
     await runTests(options as CliOptions);
