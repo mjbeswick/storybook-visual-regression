@@ -661,15 +661,39 @@ program
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   // Timing and stability options (ms / counts)
-  .option('--nav-timeout <ms>', 'Navigation timeout', '10000')
-  .option('--wait-timeout <ms>', 'Wait-for-element timeout', '10000')
-  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide', '5000')
-  .option('--stabilize-interval <ms>', 'Interval between stability checks', '200')
-  .option('--stabilize-attempts <n>', 'Number of stability checks', '20')
-  .option('--final-settle <ms>', 'Final settle delay after readiness checks', '500')
+  .option(
+    '--nav-timeout <ms>',
+    'Max time to wait for page.goto() (story load) before failing. Lower for speed; raise for slow hosts.',
+    '10000',
+  )
+  .option(
+    '--wait-timeout <ms>',
+    'Max time waits can block (selectors/readiness checks). Not per-test timeout; use to accommodate heavy stories.',
+    '10000',
+  )
+  .option(
+    '--overlay-timeout <ms>',
+    "Time to wait for Storybook's preparing overlays to hide before we force-hide them.",
+    '5000',
+  )
+  .option(
+    '--stabilize-interval <ms>',
+    'Interval between visual stability checks (DOM/layout). Lower is stricter, higher is faster.',
+    '200',
+  )
+  .option(
+    '--stabilize-attempts <n>',
+    'Number of stability checks before we proceed. Increase for flakiness; decrease for speed.',
+    '20',
+  )
+  .option(
+    '--final-settle <ms>',
+    'A small additional wait after readiness to allow last paints/animations to settle.',
+    '500',
+  )
   .option(
     '--wait-until <state>',
-    "Navigation waitUntil ('load'|'domcontentloaded'|'networkidle'|'commit')",
+    "Navigation completion strategy: 'domcontentloaded' (fast), 'load' (full load), 'networkidle' (most stable, can hang on polling), 'commit' (earliest).",
     'networkidle',
   )
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
@@ -740,15 +764,39 @@ program
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
-  .option('--nav-timeout <ms>', 'Navigation timeout', '10000')
-  .option('--wait-timeout <ms>', 'Wait-for-element timeout', '30000')
-  .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide', '5000')
-  .option('--stabilize-interval <ms>', 'Interval between stability checks', '150')
-  .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)')
-  .option('--final-settle <ms>', 'Final settle delay after readiness checks', '500')
+  .option(
+    '--nav-timeout <ms>',
+    'Max time to wait for page.goto() (story load) before failing. Lower for speed; raise for slow hosts.',
+    '10000',
+  )
+  .option(
+    '--wait-timeout <ms>',
+    'Max time waits can block (selectors/readiness checks). Not per-test timeout; increase for heavy stories.',
+    '30000',
+  )
+  .option(
+    '--overlay-timeout <ms>',
+    "Time to wait for Storybook's preparing overlays to hide before we force-hide them.",
+    '5000',
+  )
+  .option(
+    '--stabilize-interval <ms>',
+    'Interval between visual stability checks (DOM/layout). Lower is stricter, higher is faster.',
+    '150',
+  )
+  .option(
+    '--stabilize-attempts <n>',
+    'Number of stability checks before we proceed. Increase for flakiness; decrease for speed.',
+    '20',
+  )
+  .option(
+    '--final-settle <ms>',
+    'A small additional wait after readiness to allow last paints/animations to settle.',
+    '500',
+  )
   .option(
     '--wait-until <state>',
-    "Navigation waitUntil ('load'|'domcontentloaded'|'networkidle'|'commit')",
+    "Navigation completion strategy: 'domcontentloaded' (fast), 'load' (full load), 'networkidle' (most stable, can hang on polling), 'commit' (earliest).",
     'networkidle',
   )
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')

@@ -11,6 +11,7 @@ export default defineConfig({
       '**/dist/**',
       '**/test/**',
       '**/src/tests/**',
+      '**/__tests__/**',
       '**/test/.svr-playwright/**',
       '**/*.spec.ts',
       '**/*.spec.js',
