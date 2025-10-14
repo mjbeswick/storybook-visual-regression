@@ -547,13 +547,13 @@ test.describe('Visual Regression', () => {
             () => {
               const root = document.querySelector('#storybook-root');
               if (!root) return false;
-              
+
               // First check: does root itself have dimensions?
               const rootRect = root.getBoundingClientRect();
               if (rootRect.width > 0 && rootRect.height > 0) {
                 return true;
               }
-              
+
               // Second check: does any child have dimensions?
               const nodes = root.querySelectorAll('*');
               for (const el of Array.from(nodes)) {

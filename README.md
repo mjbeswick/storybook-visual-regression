@@ -56,6 +56,7 @@ npx storybook-visual-regression init
 ```
 
 This creates a `svr.config.js` file with all available options. You can also use:
+
 - `--format ts` for TypeScript config
 - `--format json` for JSON config
 
@@ -75,6 +76,7 @@ export default {
 ```
 
 Config files are discovered automatically in this order:
+
 1. `svr.config.js`
 2. `svr.config.ts`
 3. `svr.config.mjs`
@@ -130,12 +132,14 @@ npx storybook-visual-regression test --grep "button.*primary"
 
 Commands:
 
+- `init`: create a default config file (js/ts/json)
 - `test`: run visual regression tests
 - `update`: update snapshots instead of comparing
 - `install-browsers`: install Playwright browsers (`chromium|firefox|webkit|all`)
 
 Common options (defaults shown):
 
+- `--config <path>`: Path to config file (auto-discovers svr.config.js, .svrrc.json, etc.)
 - `-u, --url <url>`: Storybook server URL (default `http://localhost`)
 - `-p, --port <port>`: Storybook port (default `9009`)
 - `-c, --command <cmd>`: command to start Storybook (default `npm run storybook`)
@@ -145,55 +149,98 @@ Common options (defaults shown):
   - Results: `<output>/results`
 - `-w, --workers <n>`: parallel workers (default `12`)
 - `--retries <n>`: retries on failure (default `0`)
-- `--max-failures <n>`: stop early after N failures (default `1`, <=0 disables)
+- `--max-failures <n>`: stop early after N failures (default `10`, <=0 disables)
+- `--browser <browser>`: Browser to use (chromium|firefox|webkit) (default `chromium`)
 - `--timezone <tz>`: e.g. `Europe/London` (default `Europe/London`)
 - `--locale <bcp47>`: e.g. `en-GB` (default `en-GB`)
 - `--reporter <reporter>`: Playwright reporter (list|line|dot|json|junit) (default `list`)
 - `--quiet`: suppress verbose failure output, show only test progress
 - `--debug`: print environment information before running Playwright
+- `--print-urls`: show story URLs inline with test results
+
+**Performance & Stability Options:**
+
 - `--nav-timeout <ms>`: navigation timeout in ms (default `10000`)
-- `--wait-timeout <ms>`: wait-for-element timeout in ms (default `30000`)
+- `--wait-timeout <ms>`: wait-for-element timeout in ms (default `10000` for test, `30000` for update)
 - `--overlay-timeout <ms>`: timeout waiting for Storybook preparing overlays to hide (default `5000`)
-- `--stabilize-interval <ms>`: interval between canvas stability checks in ms (default `200`)
+- `--stabilize-interval <ms>`: interval between canvas stability checks in ms (default `200` for test, `150` for update)
 - `--stabilize-attempts <n>`: number of canvas stability checks (default `20`)
+- `--final-settle <ms>`: final settle delay after readiness checks (default `500`)
+- `--wait-until <state>`: navigation waitUntil strategy: `load`|`domcontentloaded`|`networkidle`|`commit` (default `networkidle`)
+
+**Story Filtering:**
+
 - `--include <patterns>`: include stories matching patterns (comma-separated, supports globs)
 - `--exclude <patterns>`: exclude stories matching patterns (comma-separated, supports globs)
 - `--grep <pattern>`: filter stories by regex pattern
+- `--missing-only`: (update command only) only create snapshots for stories without existing baselines
+
+**CI Options:**
+
 - `--install-browsers [browser]`: install Playwright browsers before running (default `chromium`, options: `chromium|firefox|webkit|all`)
 - `--install-deps`: install system dependencies for browsers (useful on Linux CI images)
-- `--not-found-check` (optional): enable a heuristic that fails when the host app shows a "Not Found"/404 page. Retries once before failing.
+- `--hide-time-estimates`: hide time estimates in progress display
+- `--hide-spinners`: hide progress spinners (useful for CI)
+
+**Advanced:**
+
+- `--not-found-check`: enable a heuristic that fails when the host app shows a "Not Found"/404 page
 - `--not-found-retry-delay <ms>`: delay between Not Found retries (default `200`)
 
 ### Example workflows
 
-Create snapshots for first time:
+**Create snapshots for first time:**
 
 ```bash
-npx storybook-visual-regression update --command "npm run storybook" --url http://localhost:9009
+# Using config file (recommended)
+npx storybook-visual-regression init
+npx storybook-visual-regression update
+
+# Or with CLI options
+npx storybook-visual-regression update \
+  --command "npm run storybook" \
+  --url http://localhost:9009
 ```
 
-or update snapshots after intentional UI changes:
+**Update snapshots after UI changes:**
 
 ```bash
-npx storybook-visual-regression test --command "npm run storybook" --url http://localhost:9009 --grep "MyComponent"
+npx storybook-visual-regression update --include "MyComponent"
 ```
 
-Only create snapshots for stories that are missing baselines:
+**Only create missing snapshots:**
 
 ```bash
 npx storybook-visual-regression update --missing-only
 ```
 
-Run all stories:
+**Run tests:**
 
 ```bash
-npx storybook-visual-regression test --command "npm run storybook" --url http://localhost:9009
+# All stories
+npx storybook-visual-regression test
+
+# Filtered stories
+npx storybook-visual-regression test --include "button*,card*" --exclude "**/wip"
+npx storybook-visual-regression test --grep "MyComponent.*primary"
 ```
 
-Run all stories with a specific grep pattern:
+**Performance optimization:**
 
 ```bash
-npx storybook-visual-regression test --command "npm run storybook" --url http://localhost:9009 --grep "MyComponent"
+# Fast test run (for quick feedback)
+npx storybook-visual-regression test \
+  -w 16 \
+  --wait-until domcontentloaded \
+  --final-settle 200 \
+  --nav-timeout 8000
+
+# Stable update run (for creating baselines)
+npx storybook-visual-regression update \
+  -w 8 \
+  --wait-until networkidle \
+  --wait-timeout 60000 \
+  --final-settle 1000
 ```
 
 ### Outputs
