@@ -41,6 +41,8 @@ type CliOptions = {
   overlayTimeout?: string; // ms
   stabilizeInterval?: string; // ms
   stabilizeAttempts?: string; // count
+  finalSettle?: string; // ms
+  waitUntil?: string; // 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
   // Not found check configuration
   notFoundCheck?: boolean;
   notFoundRetryDelay?: string; // ms
@@ -362,12 +364,21 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     const parsed = parseInt(String(options.stabilizeAttempts).replace(/_/g, ''), 10);
     process.env.SVR_STABILIZE_ATTEMPTS = String(parsed);
   }
+  if (options.finalSettle) {
+    const parsed = parseInt(String(options.finalSettle).replace(/_/g, ''), 10);
+    process.env.SVR_FINAL_SETTLE_MS = String(parsed);
+  }
   if (options.notFoundCheck) {
     process.env.SVR_NOT_FOUND_CHECK = 'true';
   }
   if (options.notFoundRetryDelay) {
     const parsed = parseInt(String(options.notFoundRetryDelay).replace(/_/g, ''), 10);
     process.env.SVR_NOT_FOUND_RETRY_DELAY = String(parsed);
+  }
+  if (options.waitUntil) {
+    const val = String(options.waitUntil).toLowerCase();
+    const allowed = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
+    process.env.SVR_WAIT_UNTIL = allowed.has(val) ? val : 'networkidle';
   }
   // Only set STORYBOOK_COMMAND if a command was provided (not just the default)
   // AND if the URL is not already accessible
@@ -554,12 +565,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         (errorMessage.includes('webServer') && errorMessage.includes('timeout')) ||
         (errorMessage.includes('WebServer') && errorMessage.includes('timeout')) ||
         errorMessage.includes('server startup timeout') ||
-        (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer')) ||
-        // Only consider it a webserver timeout if STORYBOOK_COMMAND was actually set
-        (errorMessage.includes('Command failed') &&
-          errorMessage.includes('playwright test') &&
-          errorMessage.includes('exit code 1') &&
-          process.env.STORYBOOK_COMMAND);
+        (errorMessage.includes('Timed out waiting') && errorMessage.includes('config.webServer'));
 
       if (isWebserverTimeout) {
         // Show prominent webserver timeout message
@@ -635,6 +641,12 @@ program
   .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide', '5000')
   .option('--stabilize-interval <ms>', 'Interval between stability checks', '200')
   .option('--stabilize-attempts <n>', 'Number of stability checks', '20')
+  .option('--final-settle <ms>', 'Final settle delay after readiness checks', '500')
+  .option(
+    '--wait-until <state>',
+    "Navigation waitUntil ('load'|'domcontentloaded'|'networkidle'|'commit')",
+    'networkidle',
+  )
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
@@ -707,6 +719,12 @@ program
   .option('--overlay-timeout <ms>', 'Timeout waiting for Storybook overlays to hide', '5000')
   .option('--stabilize-interval <ms>', 'Interval between stability checks', '150')
   .option('--stabilize-attempts <n>', 'Number of stability checks (default 20)')
+  .option('--final-settle <ms>', 'Final settle delay after readiness checks', '500')
+  .option(
+    '--wait-until <state>',
+    "Navigation waitUntil ('load'|'domcontentloaded'|'networkidle'|'commit')",
+    'networkidle',
+  )
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')

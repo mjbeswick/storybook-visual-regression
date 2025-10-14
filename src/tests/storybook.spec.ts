@@ -175,8 +175,11 @@ async function waitForLoadingSpinners(page: Page): Promise<void> {
     { timeout: 10000 },
   );
 
-  // Add a small delay to ensure content is fully loaded and rendered
-  await page.waitForTimeout(1000);
+  // Add a small delay to ensure content is fully loaded and rendered (configurable)
+  const finalSettleMs = parseInt(process.env.SVR_FINAL_SETTLE_MS || '500', 10);
+  if (finalSettleMs > 0) {
+    await page.waitForTimeout(finalSettleMs);
+  }
 
   // Wait for page to stabilize (no layout changes) - be lenient to avoid test failures
   try {
@@ -473,8 +476,14 @@ test.describe('Visual Regression', () => {
         const stabilizeInterval = parseInt(process.env.SVR_STABILIZE_INTERVAL || '150', 10);
         const stabilizeAttempts = parseInt(process.env.SVR_STABILIZE_ATTEMPTS || '20', 10);
 
+        const waitUntilEnv = (process.env.SVR_WAIT_UNTIL || 'networkidle').toLowerCase();
+        const allowedWaitUntil = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
+        const waitUntilOption = (
+          allowedWaitUntil.has(waitUntilEnv) ? waitUntilEnv : 'networkidle'
+        ) as 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
+
         let resp = await page.goto(storyUrl, {
-          waitUntil: 'networkidle',
+          waitUntil: waitUntilOption,
           timeout: navTimeout,
         });
 
@@ -484,7 +493,7 @@ test.describe('Visual Regression', () => {
           const altUrl = candidateUrls[1];
           if (storyUrl !== altUrl) {
             storyUrl = altUrl;
-            resp = await page.goto(storyUrl, { waitUntil: 'networkidle', timeout: navTimeout });
+            resp = await page.goto(storyUrl, { waitUntil: waitUntilOption, timeout: navTimeout });
             if (process.env.SVR_DEBUG === 'true') {
               console.log(`SVR: url (retry): ${storyUrl}`);
             }
@@ -495,8 +504,7 @@ test.describe('Visual Regression', () => {
             throw new Error(`Failed to load story: ${status}`);
           }
         }
-
-        await page.waitForLoadState('networkidle');
+        // Avoid redundant global networkidle wait; readiness checks below guard stability
 
         // Wait for Storybook to finish preparing the story and for the canvas to exist
         await page.waitForSelector('#storybook-root', { state: 'attached', timeout: waitTimeout });

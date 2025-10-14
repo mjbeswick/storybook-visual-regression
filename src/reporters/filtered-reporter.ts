@@ -402,7 +402,13 @@ class FilteredReporter implements Reporter {
         this.removePathIfExists(attachment.path);
       }
     } else if (result.status === 'timedOut') {
+      this.failures.push(test);
       this.timedOut++;
+
+      // Store timeout details
+      const errorMessage = result.error?.message || result.error?.toString() || 'Test timeout';
+      this.failureDetails.push({ test, retry: result.retry, error: errorMessage });
+
       if (this.spinner) {
         this.spinner.stop();
         this.spinner.clear();
