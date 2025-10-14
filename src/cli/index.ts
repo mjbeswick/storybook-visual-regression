@@ -62,7 +62,7 @@ async function createConfigFromOptions(
 ): Promise<VisualRegressionConfig> {
   // Load user config file (if exists)
   const userConfig = await loadUserConfig(cwd, options.config);
-  
+
   const defaultConfig = createDefaultConfig();
   const detector = new StorybookConfigDetector(cwd);
 
@@ -117,7 +117,8 @@ async function createConfigFromOptions(
   // Priority: CLI flags override user config file, which overrides detected config
   const workersOpt = parseNumberOption(options.workers) ?? userConfig.workers;
   const retriesOpt = parseNumberOption(options.retries) ?? userConfig.retries;
-  const serverTimeoutOpt = parseNumberOption(options.webserverTimeout) ?? userConfig.webserverTimeout;
+  const serverTimeoutOpt =
+    parseNumberOption(options.webserverTimeout) ?? userConfig.webserverTimeout;
 
   // Use silent reporter for very short webserver timeouts to prevent confusing output
   if (serverTimeoutOpt && serverTimeoutOpt < 1000) {
