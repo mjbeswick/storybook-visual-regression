@@ -10,10 +10,13 @@ import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
 import { execa } from 'execa';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadUserConfig } from './config-loader.js';
+import { initConfig, type ConfigFormat } from './init-config.js';
 
 const program = new Command();
 
 type CliOptions = {
+  config?: string;
   url?: string;
   port?: string;
   command?: string;
@@ -57,6 +60,9 @@ async function createConfigFromOptions(
   options: CliOptions,
   cwd: string,
 ): Promise<VisualRegressionConfig> {
+  // Load user config file (if exists)
+  const userConfig = await loadUserConfig(cwd, options.config);
+  
   const defaultConfig = createDefaultConfig();
   const detector = new StorybookConfigDetector(cwd);
 
@@ -107,9 +113,11 @@ async function createConfigFromOptions(
     return Number.isFinite(n) && !Number.isNaN(n) ? n : undefined;
   };
 
-  const workersOpt = parseNumberOption(options.workers);
-  const retriesOpt = parseNumberOption(options.retries);
-  const serverTimeoutOpt = parseNumberOption(options.webserverTimeout);
+  // Merge configs: CLI options > user config > detected config > defaults
+  // Priority: CLI flags override user config file, which overrides detected config
+  const workersOpt = parseNumberOption(options.workers) ?? userConfig.workers;
+  const retriesOpt = parseNumberOption(options.retries) ?? userConfig.retries;
+  const serverTimeoutOpt = parseNumberOption(options.webserverTimeout) ?? userConfig.webserverTimeout;
 
   // Use silent reporter for very short webserver timeouts to prevent confusing output
   if (serverTimeoutOpt && serverTimeoutOpt < 1000) {
@@ -200,6 +208,21 @@ program
   .name('storybook-visual-regression')
   .description('Visual regression testing tool for Storybook')
   .version('1.0.0');
+
+// Init command - create default config file
+program
+  .command('init')
+  .description('Create a default config file')
+  .option('-f, --format <format>', 'Config format (js|ts|json)', 'js')
+  .option('--force', 'Overwrite existing config file')
+  .action((options: { format?: string; force?: boolean }) => {
+    const format = (options.format || 'js') as ConfigFormat;
+    if (!['js', 'ts', 'json'].includes(format)) {
+      console.error(chalk.red(`Invalid format: ${format}. Use js, ts, or json`));
+      process.exit(1);
+    }
+    initConfig(process.cwd(), format, options.force || false);
+  });
 
 // Shared runner used by multiple commands
 async function runTests(options: CliOptions): Promise<void> {
@@ -614,6 +637,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 program
   .command('test')
   .description('Run visual regression tests')
+  .option('--config <path>', 'Path to config file')
   .option('-p, --port <port>', 'Storybook server port', '9009')
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
@@ -693,6 +717,7 @@ program
 program
   .command('update')
   .description('Update visual regression snapshots')
+  .option('--config <path>', 'Path to config file')
   .option('-p, --port <port>', 'Storybook server port', '9009')
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')

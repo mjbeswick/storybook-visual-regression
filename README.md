@@ -47,7 +47,43 @@ npm install --save-dev storybook-visual-regression @playwright/test
 npx storybook-visual-regression install-browsers --browser all
 ```
 
-### Quick start
+### Quick Start
+
+#### 1. Create a config file (recommended)
+
+```bash
+npx storybook-visual-regression init
+```
+
+This creates a `svr.config.js` file with all available options. You can also use:
+- `--format ts` for TypeScript config
+- `--format json` for JSON config
+
+Example `svr.config.js`:
+
+```javascript
+export default {
+  url: 'http://localhost',
+  port: 9009,
+  workers: 16,
+  browser: 'chromium',
+  waitUntil: 'domcontentloaded', // Faster than 'networkidle'
+  finalSettle: 500,
+  // Story filtering
+  exclude: ['**/Docs'],
+};
+```
+
+Config files are discovered automatically in this order:
+1. `svr.config.js`
+2. `svr.config.ts`
+3. `svr.config.mjs`
+4. `.svrrc.json`
+5. `.svrrc`
+
+You can specify a custom config path with `--config <path>`.
+
+#### 2. Run tests
 
 Run against a running Storybook on the default port 9009:
 
