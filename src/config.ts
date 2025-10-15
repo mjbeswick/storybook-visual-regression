@@ -1,67 +1,105 @@
 import { defineConfig } from '@playwright/test';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import type { VisualRegressionConfig } from './types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Determine which browser to use
-const browserName = process.env.PLAYWRIGHT_BROWSER || 'chromium';
+// Configuration will be passed directly from CLI
+let config: VisualRegressionConfig | null = null;
 
-// Check if the Storybook URL is already accessible
-const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:9009';
-const storybookIndexUrl = `${storybookUrl.replace(/\/$/, '')}/index.json`;
+export function setConfig(userConfig: VisualRegressionConfig): void {
+  config = userConfig;
+}
+
+export function getConfig(): VisualRegressionConfig | null {
+  return config;
+}
+
+export function createPlaywrightConfig(
+  userConfig: VisualRegressionConfig,
+  updateMode: boolean = false,
+) {
+  const storybookIndexUrl = `${userConfig.storybookUrl.replace(/\/$/, '')}/index.json`;
+
+  return defineConfig({
+    testDir: join(__dirname, 'tests'),
+    outputDir: 'visual-regression/results',
+    fullyParallel: true,
+    retries: userConfig.retries,
+    workers: userConfig.workers,
+    maxFailures: userConfig.maxFailures,
+    reporter: 'list',
+    updateSnapshots: updateMode ? 'all' : 'none',
+    projects: [
+      {
+        name: userConfig.browser,
+        use: {
+          ...(userConfig.browser === 'chromium' && { channel: 'chromium' }),
+          ...(userConfig.browser === 'firefox' && { channel: 'firefox' }),
+          ...(userConfig.browser === 'webkit' && { channel: 'webkit' }),
+          baseURL: userConfig.storybookUrl,
+          headless: userConfig.headless,
+          timezoneId: userConfig.timezone,
+          locale: userConfig.locale,
+          screenshot: 'only-on-failure',
+        },
+      },
+    ],
+    snapshotPathTemplate: 'visual-regression/snapshots/{arg}{ext}',
+    expect: {
+      toHaveScreenshot: {
+        threshold: userConfig.threshold,
+        animations: userConfig.disableAnimations ? 'disabled' : 'allow',
+      },
+    },
+    webServer: userConfig.storybookCommand
+      ? {
+          command: userConfig.storybookCommand,
+          url: storybookIndexUrl,
+          reuseExistingServer: true,
+          timeout: userConfig.serverTimeout,
+          cwd: process.cwd(),
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: {
+            NODE_ENV: 'development',
+            NODE_NO_WARNINGS: '1',
+          },
+          ignoreHTTPSErrors: true,
+        }
+      : undefined,
+  });
+}
 
 export default defineConfig({
   testDir: join(__dirname, 'tests'),
-  outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR
-    ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
-    : 'visual-regression/results',
+  outputDir: 'visual-regression/results',
   fullyParallel: true,
-  retries: parseInt(process.env.PLAYWRIGHT_RETRIES || '0'),
-  workers: parseInt(process.env.PLAYWRIGHT_WORKERS || '16'),
-  maxFailures: parseInt(process.env.PLAYWRIGHT_MAX_FAILURES || '10'),
-  reporter: process.env.PLAYWRIGHT_REPORTER || 'list',
-  updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ? 'all' : 'none',
+  retries: 0,
+  workers: 16,
+  maxFailures: 10,
+  reporter: 'list',
+  updateSnapshots: 'none',
   projects: [
     {
-      name: browserName,
+      name: 'chromium',
       use: {
-        ...(browserName === 'chromium' && { channel: 'chromium' }),
-        ...(browserName === 'firefox' && { channel: 'firefox' }),
-        ...(browserName === 'webkit' && { channel: 'webkit' }),
-        baseURL: storybookUrl,
-        headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
-        timezoneId: process.env.PLAYWRIGHT_TIMEZONE || 'Europe/London',
-        locale: process.env.PLAYWRIGHT_LOCALE || 'en-GB',
+        channel: 'chromium',
+        baseURL: 'http://localhost:9009',
+        headless: true,
+        timezoneId: 'Europe/London',
+        locale: 'en-GB',
         screenshot: 'only-on-failure',
       },
     },
   ],
-  snapshotPathTemplate: process.env.PLAYWRIGHT_OUTPUT_DIR
-    ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/snapshots/{arg}{ext}`
-    : 'visual-regression/snapshots/{arg}{ext}',
+  snapshotPathTemplate: 'visual-regression/snapshots/{arg}{ext}',
   expect: {
     toHaveScreenshot: {
       threshold: 0.2,
       animations: 'disabled',
     },
   },
-  webServer: process.env.STORYBOOK_COMMAND
-    ? {
-        command: process.env.STORYBOOK_COMMAND,
-        url: storybookIndexUrl,
-        reuseExistingServer: true,
-        timeout: parseInt(process.env.STORYBOOK_TIMEOUT || '120000'),
-        cwd: process.env.STORYBOOK_CWD,
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: {
-          ...process.env,
-          NODE_ENV: 'development',
-          NODE_NO_WARNINGS: '1',
-        },
-        ignoreHTTPSErrors: true,
-      }
-    : undefined,
 });

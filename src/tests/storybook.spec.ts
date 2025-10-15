@@ -597,9 +597,21 @@ test.describe('Visual Regression', () => {
           `${sanitizedStoryId}.png`,
         );
 
+        console.log(
+          `About to take screenshot for ${sanitizedStoryId}, SVR_UPDATE_MODE: ${process.env.SVR_UPDATE_MODE}`,
+        );
         try {
           await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`);
         } catch (assertionError) {
+          // Check if we're in update mode - if so, let Playwright handle snapshot creation
+          const isUpdateMode = process.env.SVR_UPDATE_MODE === 'true';
+          console.log(`Screenshot failed for ${sanitizedStoryId}, isUpdateMode: ${isUpdateMode}`);
+
+          if (isUpdateMode) {
+            // In update mode, re-throw the original assertion error to let Playwright create the snapshot
+            throw assertionError;
+          }
+
           // Check if the snapshot file exists
           const snapshotExists = await import('fs').then((fs) =>
             fs.promises

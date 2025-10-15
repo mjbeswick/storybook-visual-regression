@@ -9,7 +9,7 @@ import { createDefaultConfig } from '../config/defaultConfig.js';
 import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
 import { execa } from 'execa';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import path, { dirname, join } from 'path';
 import { loadUserConfig } from './config-loader.js';
 import { initConfig, type ConfigFormat } from './init-config.js';
 
@@ -349,25 +349,23 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     ? buildStorybookLaunchCommand(storybookCommand, config.storybookPort)
     : undefined;
 
-  // Set environment variables for Playwright
-  process.env.PLAYWRIGHT_RETRIES = config.retries.toString();
-  process.env.PLAYWRIGHT_WORKERS = config.workers.toString();
-  process.env.PLAYWRIGHT_MAX_FAILURES = (options.maxFailures || 1).toString();
-  // Snapshot updates are controlled exclusively by the `update` command
-  process.env.STORYBOOK_URL = config.storybookUrl;
-  process.env.PLAYWRIGHT_HEADLESS = config.headless ? 'true' : 'false';
-  process.env.PLAYWRIGHT_TIMEZONE = config.timezone;
-  process.env.PLAYWRIGHT_LOCALE = config.locale;
-  process.env.PLAYWRIGHT_BROWSER = config.browser;
-  if (options.reporter) process.env.PLAYWRIGHT_REPORTER = String(options.reporter);
-  if (options.quiet) process.env.PLAYWRIGHT_REPORTER = 'src/reporters/filtered-reporter.ts';
-  if (options.include) process.env.STORYBOOK_INCLUDE = String(options.include);
-  if (options.exclude) process.env.STORYBOOK_EXCLUDE = String(options.exclude);
-  if (options.grep) process.env.STORYBOOK_GREP = String(options.grep);
-  // Only set STORYBOOK_COMMAND if a command was provided (not just the default)
-  // AND if the URL is not already accessible
+  // Prepare configuration for Playwright
+  const playwrightConfig = {
+    ...config,
+    maxFailures: options.maxFailures || config.maxFailures,
+    storybookCommand: storybookLaunchCommand,
+    updateSnapshots: (options as CliOptions).updateSnapshots || false,
+    reporter:
+      options.reporter || (options.quiet ? 'src/reporters/filtered-reporter.ts' : undefined),
+    include: options.include,
+    exclude: options.exclude,
+    grep: options.grep,
+    debug: options.debug,
+    output: options.output,
+  };
+
+  // Check if Storybook is already running if we have a command
   if (storybookLaunchCommand) {
-    // Check if Storybook is already running at the target URL
     const storybookIndexUrl = `${config.storybookUrl.replace(/\/$/, '')}/index.json`;
     console.log(`🔍 Checking if Storybook is already running at: ${storybookIndexUrl}`);
 
@@ -379,21 +377,16 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
       if (response.ok) {
         console.log(`🔍 Storybook is already running, skipping webserver startup`);
-        // Don't set STORYBOOK_COMMAND if the server is already running
+        playwrightConfig.storybookCommand = undefined;
       } else {
         console.log(`🔍 Storybook not accessible (${response.status}), will start webserver`);
-        process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
       }
     } catch (error) {
       console.log(
         `🔍 Storybook not accessible (${error instanceof Error ? error.message : 'unknown error'}), will start webserver`,
       );
-      process.env.STORYBOOK_COMMAND = storybookLaunchCommand;
     }
   }
-  process.env.STORYBOOK_CWD = originalCwd; // Use original working directory for Storybook
-  process.env.STORYBOOK_TIMEOUT = config.serverTimeout.toString();
-  process.env.ORIGINAL_CWD = originalCwd;
 
   console.log('');
   console.log(chalk.bold('🚀 Starting Playwright visual regression tests'));
@@ -415,12 +408,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
   try {
     const playwrightArgs = ['playwright', 'test'];
-    if (
-      process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true' ||
-      (options as CliOptions).updateSnapshots
-    ) {
-      playwrightArgs.push('--update-snapshots=all');
-    }
 
     // Use our config file instead of the project's config
     // Get the path to our config file relative to this CLI file
@@ -442,8 +429,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     // Use absolute path to ensure Playwright uses our config, not the project's config
     playwrightArgs.push('--config', resolvedConfigPath);
 
-    // Always point tests to source tests to avoid missing specs in dist
-    const testsDir = join(projectRoot, 'src', 'tests');
+    // Always point tests to built tests to ensure availability in installed package
+    const testsDir = join(projectRoot, 'dist', 'tests');
 
     // Resolve our minimal reporter path (used by default and in quiet mode)
     const customReporterCandidates = [
@@ -467,7 +454,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     }
 
     const child = execa('npx', playwrightArgs, {
-      cwd: projectRoot, // Run from the main project directory where CLI is installed
+      cwd: projectRoot, // Run from the tool's project root so Playwright finds our tests/config
       stdin: 'inherit',
       stdout: 'inherit',
       stderr: 'inherit',
@@ -488,7 +475,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         PLAYWRIGHT_TIMEZONE: config.timezone,
         PLAYWRIGHT_LOCALE: config.locale,
         PLAYWRIGHT_BROWSER: config.browser,
-        PLAYWRIGHT_OUTPUT_DIR: join(originalCwd, options.output || 'visual-regression'),
+        PLAYWRIGHT_OUTPUT_DIR: options.output
+          ? path.isAbsolute(options.output)
+            ? path.relative(originalCwd, options.output)
+            : options.output
+          : 'visual-regression',
         // Respect explicit reporter or debug; otherwise use our custom reporter if available
         PLAYWRIGHT_REPORTER: options.debug
           ? 'line'
@@ -498,10 +489,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
               process.env.PLAYWRIGHT_REPORTER,
         // Surface a simple debug flag for tests to log helpful info like Story URLs
         SVR_DEBUG: options.debug ? 'true' : undefined,
-        // Only set STORYBOOK_COMMAND if a command was provided (not just the default)
-        STORYBOOK_COMMAND: storybookLaunchCommand || undefined,
-        STORYBOOK_CWD: originalCwd,
-        STORYBOOK_TIMEOUT: config.serverTimeout.toString(),
+        // Pass options directly to tests without environment variables
         ORIGINAL_CWD: originalCwd,
       },
     });
@@ -778,9 +766,7 @@ program
   .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries', '200')
   .option('--missing-only', 'Only create snapshots for stories without existing baselines')
   .action(async (options) => {
-    // Enable snapshot updates only via this command
-    process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS = 'true';
-    // Mark option so we can also pass an explicit Playwright flag later
+    // Mark option so we can pass update mode to tests
     (options as CliOptions).updateSnapshots = true;
     // missingOnly behavior handled inside tests via file presence
     if ((options as CliOptions).reporter)

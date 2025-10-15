@@ -1,5 +1,25 @@
 # Agent Memory - Storybook Visual Regression Tool
 
+## Application Overview
+
+This is a CLI tool for running visual regression tests on Storybook stories using Playwright. The tool discovers all stories from a running Storybook instance, takes screenshots of each story, and compares them against baseline snapshots to detect visual changes.
+
+### How It Works
+
+1. **Story Discovery**: The tool connects to a running Storybook server and fetches the story index (`/index.json`) to discover all available stories
+2. **Story Filtering**: Stories can be filtered using `--include`, `--exclude`, and `--grep` patterns
+3. **Screenshot Capture**: For each story, the tool navigates to the story URL and takes a screenshot
+4. **Visual Comparison**: Screenshots are compared against baseline snapshots stored in `visual-regression/snapshots/`
+5. **Update Mode**: The `update` command creates new baseline snapshots when they don't exist or when visual changes are intentional
+
+### Key Components
+
+- **CLI (`src/cli/index.ts`)**: Main entry point that parses commands and options
+- **Config (`src/config.ts`)**: Playwright configuration factory that creates test configs
+- **Test Runner (`src/tests/storybook.spec.ts`)**: Playwright test that discovers stories and takes screenshots
+- **Story Discovery (`src/core/StorybookDiscovery.ts`)**: Logic for fetching and filtering stories from Storybook
+- **Visual Regression Runner (`src/core/VisualRegressionRunner.ts`)**: Orchestrates the test execution
+
 ## Key Architectural Decisions
 
 ### 1. Use Playwright's webServer Configuration
@@ -38,29 +58,73 @@ The CLI has two main paths:
 
 **Always prefer the Playwright reporter path** as it handles webServer properly.
 
-### 3.1. Configuration vs Command Line Options
+### 3.1. NO Environment Variables Rule
 
-**CRITICAL**: Only use Playwright configuration to pass options, not command line arguments.
+**CRITICAL**: This application MUST NOT use environment variables for configuration or communication between components.
 
-- ✓ **Correct**: Pass options via environment variables to Playwright config
-- ✓ **Correct**: Use `updateSnapshots: process.env.PLAYWRIGHT_UPDATE_SNAPSHOTS === 'true'` in config
-- ✘ **Wrong**: Use `--update-snapshots` command line argument
-- ✘ **Wrong**: Use `--workers` command line argument
+- ✓ **Correct**: Pass all options directly through function parameters and configuration objects
+- ✓ **Correct**: Use `createPlaywrightConfig(userConfig, updateMode)` with explicit parameters
+- ✓ **Correct**: Pass filtering options (`include`, `exclude`, `grep`) directly to test functions
+- ✘ **Wrong**: Use ANY environment variables (`process.env.*`)
+- ✘ **Wrong**: Use `process.env.PLAYWRIGHT_*` variables
+- ✘ **Wrong**: Use `process.env.STORYBOOK_*` variables  
+- ✘ **Wrong**: Use `process.env.SVR_*` variables
+- ✘ **Wrong**: Use `process.env.NODE_ENV` for application logic
 
-**Why**: Configuration-based approach is more maintainable and follows Playwright best practices.
+**Why**: 
+- Direct parameter passing is more maintainable and type-safe
+- Eliminates hidden dependencies and side effects
+- Makes the code more testable and predictable
+- Prevents configuration drift and environment-specific bugs
 
-### 4. Error Handling Patterns
+### 3.2. Configuration Architecture
+
+**CRITICAL**: All configuration must flow through explicit function parameters and typed interfaces.
+
+- ✓ **Correct**: `createPlaywrightConfig(userConfig: VisualRegressionConfig, updateMode: boolean)`
+- ✓ **Correct**: Pass CLI options directly to test functions as parameters
+- ✓ **Correct**: Use TypeScript interfaces for all configuration objects
+- ✘ **Wrong**: Rely on environment variables for any configuration
+- ✘ **Wrong**: Use global variables or singletons for configuration
+
+### 4. Update Mode Implementation
+
+**CRITICAL**: Update mode must be implemented without environment variables.
+
+- ✓ **Correct**: Pass `updateMode: boolean` parameter to `createPlaywrightConfig(userConfig, updateMode)`
+- ✓ **Correct**: Set `updateSnapshots: updateMode ? 'all' : 'none'` in Playwright config
+- ✓ **Correct**: Use Playwright's built-in snapshot creation when `updateSnapshots: 'all'`
+- ✘ **Wrong**: Use environment variables to detect update mode
+- ✘ **Wrong**: Manually handle snapshot creation in test code
+- ✘ **Wrong**: Use custom logic to bypass Playwright's snapshot handling
+
+**Why**: Playwright's built-in update mode handles all edge cases and provides consistent behavior.
+
+### 5. Test Execution Flow
+
+**CRITICAL**: Tests must discover stories dynamically and handle filtering without environment variables.
+
+- ✓ **Correct**: Fetch stories from Storybook's `/index.json` endpoint
+- ✓ **Correct**: Apply filtering logic (`include`, `exclude`, `grep`) in test code
+- ✓ **Correct**: Use `toHaveScreenshot()` with proper naming convention
+- ✘ **Wrong**: Pre-generate test files for each story
+- ✘ **Wrong**: Use environment variables for story filtering
+- ✘ **Wrong**: Hardcode story lists or use static configuration
+
+### 6. Error Handling Patterns
 
 - Use `reuseExistingServer: true` in webServer config
 - Provide clear troubleshooting steps in error messages
 - Include port detection in error diagnostics
 - Always clean up processes in finally blocks
+- Handle missing snapshots gracefully in update mode
 
 ### 5. File Structure
 
 - `src/cli/index.ts` - Main CLI entry point
 - `src/core/VisualRegressionRunner.ts` - Test execution logic
 - `src/core/StorybookDiscovery.ts` - Story discovery (assumes server running)
+- `src/config.ts` - Playwright configuration factory (`createPlaywrightConfig`)
 - `src/config/defaultConfig.ts` - Default configuration
 - `src/types/index.ts` - TypeScript definitions
 
@@ -155,5 +219,6 @@ storybook-visual-regression test -c "npm run dev:ui" --use-playwright-reporter
 - **Error context**: Provide helpful troubleshooting steps
 - **Cleanup**: Always clean up processes and temp files
 - **Playwright reporter**: Prefer the Playwright reporter path over direct CLI
+- **Direct configuration**: Pass all options through configuration objects, not environment variables
 - **Git hygiene**: Always update .gitignore when adding new generated files or directories
 - **Documentation**: Update README.md when making significant changes to functionality or usage
