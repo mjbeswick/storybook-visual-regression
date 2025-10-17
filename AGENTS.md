@@ -67,11 +67,12 @@ The CLI has two main paths:
 - ✓ **Correct**: Pass filtering options (`include`, `exclude`, `grep`) directly to test functions
 - ✘ **Wrong**: Use ANY environment variables (`process.env.*`)
 - ✘ **Wrong**: Use `process.env.PLAYWRIGHT_*` variables
-- ✘ **Wrong**: Use `process.env.STORYBOOK_*` variables  
+- ✘ **Wrong**: Use `process.env.STORYBOOK_*` variables
 - ✘ **Wrong**: Use `process.env.SVR_*` variables
 - ✘ **Wrong**: Use `process.env.NODE_ENV` for application logic
 
-**Why**: 
+**Why**:
+
 - Direct parameter passing is more maintainable and type-safe
 - Eliminates hidden dependencies and side effects
 - Makes the code more testable and predictable
@@ -119,7 +120,48 @@ The CLI has two main paths:
 - Always clean up processes in finally blocks
 - Handle missing snapshots gracefully in update mode
 
-### 5. File Structure
+### 6.1. Test Timeout Architecture
+
+**CRITICAL**: The Playwright test timeout must be calculated dynamically based on all possible wait operations to prevent "Test timeout exceeded while setting up 'page'" errors.
+
+- ✓ **Correct**: Calculate `testTimeout` as sum of all wait timeouts plus buffer with safety multiplier:
+
+  ```typescript
+  const calculatedTimeout =
+    navTimeout +
+    waitTimeout +
+    overlayTimeout +
+    stabilizeInterval * stabilizeAttempts +
+    finalSettle +
+    10000 + // Additional waits in waitForLoadingSpinners
+    5000 + // Additional checks (error page, content visibility)
+    20000; // Buffer for screenshot capture and other operations
+
+  // Apply 1.5x safety multiplier for edge cases
+  const testTimeout = Math.max(Math.ceil(calculatedTimeout * 1.5), 60000);
+  ```
+
+- ✓ **Correct**: Set minimum test timeout of 60 seconds
+- ✓ **Correct**: Apply test timeout to Playwright config: `timeout: testTimeout`
+- ✓ **Correct**: Add debug logging to track operation timing
+- ✓ **Correct**: Handle screenshot buffer errors gracefully with clear error messages
+- ✘ **Wrong**: Use fixed test timeout (like 30000ms default)
+- ✘ **Wrong**: Set test timeout lower than the sum of all wait operations
+
+**Why**:
+
+- Individual operations (navigation, waiting for elements, stabilization) have their own timeouts
+- The test timeout must be **longer** than the sum of all possible waits
+- Otherwise, the test will timeout before operations can complete, causing cryptic errors
+- Buffer time accounts for screenshot capture and other overhead
+
+**Error Prevention**:
+
+- Check for closed pages before taking screenshots: `if (page.isClosed())`
+- Detect buffer errors: `errorMessage.includes('The "data" argument must be of type string')`
+- Provide clear error messages when page is in invalid state
+
+### 7. File Structure
 
 - `src/cli/index.ts` - Main CLI entry point
 - `src/core/VisualRegressionRunner.ts` - Test execution logic
@@ -128,7 +170,7 @@ The CLI has two main paths:
 - `src/config/defaultConfig.ts` - Default configuration
 - `src/types/index.ts` - TypeScript definitions
 
-### 5.1. Output Directory Structure
+### 7.1. Output Directory Structure
 
 **CRITICAL**: The CLI should only create one directory: `visual-regression` in the directory where the CLI is executed.
 
@@ -136,15 +178,44 @@ The CLI has two main paths:
 
 ```
 visual-regression/
-├── snapshots/           # Baseline snapshot images
-│   ├── story-1.png
-│   ├── story-2.png
-│   └── ...
+├── snapshots/           # Baseline snapshot images organized by story hierarchy
+│   ├── ComponentName/
+│   │   ├── Story Name 1.png
+│   │   └── Story Name 2.png
+│   └── Screens/
+│       └── Colleague/
+│           └── SSC Cash/
+│               └── Cash Management/
+│                   ├── Dashboard.png
+│                   └── Dashboard With Scroll.png
 └── results/            # Playwright test results
     ├── test-results/
     ├── reports/
     └── ...
 ```
+
+**Snapshot Organization**:
+
+Snapshots are organized in a hierarchical folder structure that mirrors the Storybook story organization:
+
+- **Story Title**: Used as the folder path (e.g., `Screens / Colleague / SSC Cash / Cash Management` becomes `Screens/Colleague/SSC Cash/Cash Management/`)
+- **Story Name**: Used as the filename (e.g., `Dashboard` becomes `Dashboard.png`)
+- **Result**: `Screens/Colleague/SSC Cash/Cash Management/Dashboard.png`
+
+This organization makes it easy to:
+
+- Find snapshots that correspond to specific stories
+- Organize snapshots by feature or component area
+- Navigate the snapshot directory structure
+
+**Results Organization**:
+
+Test results (diff images, expected images) are automatically organized using the same hierarchical structure:
+
+- When a test fails, Playwright creates a test result directory
+- Inside that directory, diff and expected images use the same folder hierarchy as snapshots
+- Example: `visual-regression/results/{test-result-folder}/Screens/Colleague/SSC Cash/Cash Management/Dashboard-diff.png`
+- This makes it easy to correlate failures with their corresponding snapshots
 
 **Directory Behavior**:
 
@@ -155,7 +226,7 @@ visual-regression/
 
 **Why**: This keeps the tool clean and predictable - users know exactly where their visual regression data will be stored.
 
-### 6. Build and Publish Process
+### 8. Build and Publish Process
 
 - Always run `npm run build` before publishing
 - Use `npm version patch/minor/major` for versioning
@@ -165,7 +236,29 @@ visual-regression/
 - **NEVER commit code until you have tested that it works**
 - Test changes locally before committing to ensure functionality
 
-### 7. Common Issues and Solutions
+### 9. Common Issues and Solutions
+
+#### Test Timeout Errors
+
+- **Cause**: Test timeout (default 30s) is shorter than the sum of all wait operations
+- **Solution**: The tool now auto-calculates test timeout based on all timeouts + buffer (minimum 60s with 1.5x safety multiplier)
+
+#### Stories That Load Instantly in Browser But Timeout in Tests
+
+- **Cause**: `waitUntil: 'load'` waits for ALL resources to finish, but some font/asset requests may hang or timeout, even though the page visually loads instantly
+- **Solution**: Tool automatically falls back to `networkidle` if `load` times out, then explicitly waits for fonts
+- **Result**: Tests won't hang on stuck resources, but fonts still load properly for consistent screenshots
+- **Alternative**: Use `--wait-until networkidle` from the start for faster tests
+
+#### Storybook Preparing Overlays Not Hiding
+
+- **Cause**: Storybook's `.sb-preparing-story` and `.sb-preparing-docs` overlays sometimes stay visible
+- **Solution**: Tool now immediately force-hides these overlays instead of waiting for them
+
+#### Buffer/Screenshot Errors (TypeError: The "data" argument...)
+
+- **Cause**: Page is in invalid state when screenshot is attempted (usually after timeout)
+- **Solution**: Tool now checks page state and provides clear error messages
 
 #### ECONNREFUSED Error
 
@@ -182,7 +275,7 @@ visual-regression/
 - **Cause**: Storybook takes longer than expected to start
 - **Solution**: Increase `serverTimeout` in config, use webServer health checks
 
-### 8. Testing Commands
+### 10. Testing Commands
 
 ```bash
 # Basic test
@@ -194,11 +287,15 @@ storybook-visual-regression test -c "npm run dev:ui" -p 6006
 # Update snapshots
 storybook-visual-regression update -c "npm run dev:ui"
 
-# Use Playwright reporter (recommended)
-storybook-visual-regression test -c "npm run dev:ui" --use-playwright-reporter
+# With custom timeouts for slow stories
+storybook-visual-regression update \
+  --wait-timeout 30000 \
+  --nav-timeout 10000 \
+  --stabilize-attempts 30 \
+  -c "npm run dev:ui"
 ```
 
-### 9. Development Workflow
+### 11. Development Workflow
 
 1. Make changes to TypeScript files
 2. Run `npm run build` to compile
@@ -206,7 +303,7 @@ storybook-visual-regression test -c "npm run dev:ui" --use-playwright-reporter
 4. Commit changes with descriptive messages
 5. Version bump and publish
 
-### 10. Dependencies
+### 12. Dependencies
 
 - **Core**: `@playwright/test`, `commander`, `chalk`, `ora`
 - **Dev**: `typescript`, `eslint`, `prettier`, `vitest`

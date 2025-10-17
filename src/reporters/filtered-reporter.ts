@@ -8,11 +8,13 @@ import {
 } from '@playwright/test/reporter';
 import chalk from 'chalk';
 import { existsSync, rmSync, statSync, readdirSync, unlinkSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, resolve, sep } from 'path';
 import ora from 'ora';
 import type { Ora } from 'ora';
+import { tryLoadRuntimeOptions } from '../runtime/runtime-options.js';
 
 class FilteredReporter implements Reporter {
+  private runtimeOptions = tryLoadRuntimeOptions();
   private failures: TestCase[] = [];
   private failureDetails: Array<{
     test: TestCase;
@@ -56,11 +58,10 @@ class FilteredReporter implements Reporter {
 
   private getResultsRoot(_config: FullConfig): string {
     if (this.resultsRoot) return this.resultsRoot;
-    const base = process.env.PLAYWRIGHT_OUTPUT_DIR
-      ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
-      : 'visual-regression/results';
-    this.resultsRoot = base;
-    return base;
+    const resolved =
+      this.runtimeOptions?.visualRegression.resultsPath ?? 'visual-regression/results';
+    this.resultsRoot = resolved;
+    return resolved;
   }
 
   private computeP95(values: number[]): number | null {
@@ -166,6 +167,13 @@ class FilteredReporter implements Reporter {
     }
   }
 
+  private isWithinResultsRoot(filePath: string): boolean {
+    if (!this.resultsRoot) return false;
+    const normalizedRoot = resolve(this.resultsRoot);
+    const normalizedPath = resolve(filePath);
+    return normalizedPath === normalizedRoot || normalizedPath.startsWith(normalizedRoot + sep);
+  }
+
   onBegin(config: FullConfig, suite: Suite): void {
     this.getResultsRoot(config);
     this.totalTests = suite.allTests().length;
@@ -176,9 +184,10 @@ class FilteredReporter implements Reporter {
       Number.isFinite(configuredWorkers) && configuredWorkers > 0 ? configuredWorkers : 1;
 
     // Detect CI environment and configure display options
-    this.isCI = process.env.CI === 'true' || process.env.CONTINUOUS_INTEGRATION === 'true';
-    this.showTimeEstimates = !this.isCI && process.env.SVR_HIDE_TIME_ESTIMATES !== 'true';
-    this.showSpinners = !this.isCI && process.env.SVR_HIDE_SPINNERS !== 'true';
+    this.isCI = this.runtimeOptions?.isCI ?? false;
+    this.showTimeEstimates =
+      !this.isCI && !(this.runtimeOptions?.hideTimeEstimates ?? false);
+    this.showSpinners = !this.isCI && !(this.runtimeOptions?.hideSpinners ?? false);
 
     // Set first batch size for improved time estimation
     this.firstBatchSize = Math.min(Math.max(this.workers * 2, 5), Math.floor(this.totalTests / 3));
@@ -210,7 +219,7 @@ class FilteredReporter implements Reporter {
 
   onTestEnd(test: TestCase, result: TestResult): void {
     const displayTitle = test.title.replace(/^snapshots-/, '');
-    const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
+    const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:9009').replace(/\/$/, '');
     const idMatch = displayTitle.match(/\[(.*)\]$/);
     const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
 
@@ -250,10 +259,9 @@ class FilteredReporter implements Reporter {
     // Combine colored category path with uncolored story name and retry suffix
     formattedTitle = categoryPath + storyName + retrySuffix;
 
-    const outputCore =
-      process.env.SVR_PRINT_URLS === 'true'
-        ? `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`
-        : formattedTitle;
+    const outputCore = this.runtimeOptions?.printUrls
+      ? `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`
+      : formattedTitle;
 
     // Update progress stats for ETA calculation
     this.completed += 1;
@@ -362,6 +370,7 @@ class FilteredReporter implements Reporter {
       // Keep diffs, remove non-diff attachments for failures
       for (const attachment of result.attachments || []) {
         if (!attachment.path) continue;
+        if (!this.isWithinResultsRoot(attachment.path)) continue;
         const name = (attachment.name || '').toLowerCase();
         if (name.includes('diff')) continue;
         this.removePathIfExists(attachment.path);
@@ -380,6 +389,7 @@ class FilteredReporter implements Reporter {
       // Remove all artifacts for passed tests and prune empty folders up to results root
       for (const attachment of result.attachments || []) {
         if (!attachment.path) continue;
+        if (!this.isWithinResultsRoot(attachment.path)) continue;
         const attachmentDir = dirname(attachment.path);
         this.removePathIfExists(attachment.path);
         const root = this.resultsRoot || '';
@@ -399,6 +409,7 @@ class FilteredReporter implements Reporter {
       // Remove all artifacts for skipped tests
       for (const attachment of result.attachments || []) {
         if (!attachment.path) continue;
+        if (!this.isWithinResultsRoot(attachment.path)) continue;
         this.removePathIfExists(attachment.path);
       }
     } else if (result.status === 'timedOut') {
@@ -463,7 +474,10 @@ class FilteredReporter implements Reporter {
       // Show failure summary with URLs and diff paths if there are failures
       if (this.failureDetails.length > 0) {
         console.log(chalk.yellow('\n📋 Failed Tests Summary:'));
-        const baseUrl = (process.env.STORYBOOK_URL || 'http://localhost:9009').replace(/\/$/, '');
+        const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:9009').replace(
+          /\/$/,
+          '',
+        );
 
         // Deduplicate failures by test title (keep the first occurrence)
         const uniqueFailures = new Map<string, (typeof this.failureDetails)[0]>();

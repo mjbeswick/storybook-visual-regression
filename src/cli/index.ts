@@ -3,7 +3,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { existsSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import type { VisualRegressionConfig } from '../types/index.js';
 import { createDefaultConfig } from '../config/defaultConfig.js';
 import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import path, { dirname, join } from 'path';
 import { loadUserConfig } from './config-loader.js';
 import { initConfig, type ConfigFormat } from './init-config.js';
+import type { RuntimeOptions } from '../runtime/runtime-options.js';
 
 const program = new Command();
 
@@ -51,6 +52,7 @@ type CliOptions = {
   notFoundRetryDelay?: string; // ms
   // Update behavior
   missingOnly?: boolean;
+  clean?: boolean;
   // CI convenience
   installBrowsers?: string;
   installDeps?: boolean;
@@ -119,13 +121,7 @@ async function createConfigFromOptions(
   const retriesOpt = parseNumberOption(options.retries) ?? userConfig.retries;
   const serverTimeoutOpt =
     parseNumberOption(options.webserverTimeout) ?? userConfig.webserverTimeout;
-
-  // Use silent reporter for very short webserver timeouts to prevent confusing output
-  if (serverTimeoutOpt && serverTimeoutOpt < 1000) {
-    const currentDir = dirname(fileURLToPath(import.meta.url));
-    const silentReporterPath = join(currentDir, '..', 'reporters', 'silent-reporter.js');
-    process.env.PLAYWRIGHT_REPORTER = silentReporterPath;
-  }
+  const maxFailuresOpt = parseNumberOption(options.maxFailures) ?? userConfig.maxFailures;
 
   // Handle browser selection
   const browserOpt = options.browser;
@@ -134,6 +130,20 @@ async function createConfigFromOptions(
     browserOpt && allowedBrowsers.has(browserOpt)
       ? (browserOpt as 'chromium' | 'firefox' | 'webkit')
       : detectedConfig.browser;
+
+  const outputRoot = options.output
+    ? path.isAbsolute(options.output)
+      ? options.output
+      : join(cwd, options.output)
+    : join(cwd, 'visual-regression');
+  const snapshotsDir = join(outputRoot, 'snapshots');
+  const resultsDir = join(outputRoot, 'results');
+
+  for (const dir of [outputRoot, snapshotsDir, resultsDir]) {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+  }
 
   return {
     ...detectedConfig,
@@ -144,10 +154,13 @@ async function createConfigFromOptions(
     retries: retriesOpt ?? detectedConfig.retries,
     timeout: detectedConfig.timeout,
     serverTimeout: serverTimeoutOpt ?? detectedConfig.serverTimeout,
+    maxFailures: maxFailuresOpt ?? detectedConfig.maxFailures,
     headless: detectedConfig.headless,
     timezone: options.timezone || detectedConfig.timezone,
     locale: options.locale || detectedConfig.locale,
     browser,
+    snapshotPath: snapshotsDir,
+    resultsPath: resultsDir,
   };
 }
 
@@ -257,9 +270,49 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const originalCwd = process.cwd();
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
+  const projectRoot = join(__dirname, '..', '..');
 
   const config = await createConfigFromOptions(options, originalCwd);
   const storybookCommand = config.storybookCommand;
+
+  const parsePatterns = (value?: string): string[] =>
+    value
+      ? value
+          .split(',')
+          .map((pattern) => pattern.trim())
+          .filter(Boolean)
+      : [];
+
+  const parseNumber = (value: string | undefined, fallback: number): number => {
+    if (typeof value === 'undefined') return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const includePatterns = parsePatterns(options.include);
+  const excludePatterns = parsePatterns(options.exclude);
+  const grepPattern = options.grep?.trim() || undefined;
+  const navTimeout = parseNumber(options.navTimeout, 10_000);
+  const waitTimeout = parseNumber(options.waitTimeout, 30_000);
+  const overlayTimeout = parseNumber(options.overlayTimeout, 5_000);
+  const stabilizeInterval = parseNumber(options.stabilizeInterval, 150);
+  const stabilizeAttempts = parseNumber(options.stabilizeAttempts, 20);
+  const finalSettle = parseNumber(options.finalSettle, 500);
+  const waitUntilCandidates = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
+  const waitUntilInput = (options.waitUntil || '').toLowerCase();
+  const waitUntilValue = waitUntilCandidates.has(waitUntilInput)
+    ? (waitUntilInput as 'load' | 'domcontentloaded' | 'networkidle' | 'commit')
+    : 'networkidle';
+  const notFoundRetryDelay = parseNumber(options.notFoundRetryDelay, 200);
+  const debugEnabled = Boolean(options.debug);
+  const updateSnapshots = Boolean(options.updateSnapshots);
+  const hideTimeEstimates = Boolean(options.hideTimeEstimates);
+  const hideSpinners = Boolean(options.hideSpinners);
+  const printUrls = Boolean(options.printUrls);
+  const missingOnly = Boolean(options.missingOnly);
+  const clean = Boolean(options.clean);
+  const notFoundCheck = Boolean(options.notFoundCheck);
+  const isCIEnvironment = !process.stdout.isTTY;
 
   // Optionally install Playwright browsers/deps for CI convenience
   // Only install if the --install-browsers flag was explicitly provided
@@ -348,21 +401,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const storybookLaunchCommand = storybookCommand
     ? buildStorybookLaunchCommand(storybookCommand, config.storybookPort)
     : undefined;
-
-  // Prepare configuration for Playwright
-  const playwrightConfig = {
-    ...config,
-    maxFailures: options.maxFailures || config.maxFailures,
-    storybookCommand: storybookLaunchCommand,
-    updateSnapshots: (options as CliOptions).updateSnapshots || false,
-    reporter:
-      options.reporter || (options.quiet ? 'src/reporters/filtered-reporter.ts' : undefined),
-    include: options.include,
-    exclude: options.exclude,
-    grep: options.grep,
-    debug: options.debug,
-    output: options.output,
-  };
+  let finalStorybookCommand = storybookLaunchCommand;
 
   // Check if Storybook is already running if we have a command
   if (storybookLaunchCommand) {
@@ -377,7 +416,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
       if (response.ok) {
         console.log(`🔍 Storybook is already running, skipping webserver startup`);
-        playwrightConfig.storybookCommand = undefined;
+        finalStorybookCommand = undefined;
       } else {
         console.log(`🔍 Storybook not accessible (${response.status}), will start webserver`);
       }
@@ -387,6 +426,60 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       );
     }
   }
+
+  const runtimeConfig: VisualRegressionConfig = {
+    ...config,
+    storybookCommand: finalStorybookCommand,
+  };
+
+  // Calculate test timeout: sum of all possible waits + buffer
+  // This prevents "Test timeout exceeded while setting up 'page'" errors
+  const calculatedTestTimeout =
+    navTimeout * 2 + // Initial navigation + possible retry (e.g., 'load' -> 'networkidle')
+    10000 + // Explicit font loading wait
+    waitTimeout + // Wait for #storybook-root
+    overlayTimeout + // Wait for overlays
+    stabilizeInterval * stabilizeAttempts + // Stabilization attempts
+    finalSettle + // Final settle time
+    10000 + // Additional waits in waitForLoadingSpinners
+    5000 + // Additional checks (error page, content visibility)
+    20000; // Buffer for screenshot capture and other operations
+
+  // Apply 1.5x safety multiplier for edge cases and use a minimum of 60 seconds
+  const testTimeout = Math.max(Math.ceil(calculatedTestTimeout * 1.5), 60000);
+
+  const outputDir = path.dirname(runtimeConfig.resultsPath);
+  const runtimeOptions: RuntimeOptions = {
+    originalCwd,
+    storybookUrl: runtimeConfig.storybookUrl,
+    outputDir,
+    visualRegression: runtimeConfig,
+    include: includePatterns,
+    exclude: excludePatterns,
+    grep: grepPattern,
+    navTimeout,
+    waitTimeout,
+    overlayTimeout,
+    stabilizeInterval,
+    stabilizeAttempts,
+    finalSettle,
+    waitUntil: waitUntilValue,
+    missingOnly,
+    clean,
+    notFoundCheck,
+    notFoundRetryDelay,
+    debug: debugEnabled,
+    updateSnapshots,
+    hideTimeEstimates,
+    hideSpinners,
+    printUrls,
+    isCI: isCIEnvironment,
+    testTimeout,
+  };
+
+  const runtimeOptionsPath = join(projectRoot, 'dist', 'runtime-options.json');
+  mkdirSync(path.dirname(runtimeOptionsPath), { recursive: true });
+  writeFileSync(runtimeOptionsPath, JSON.stringify(runtimeOptions, null, 2), 'utf8');
 
   console.log('');
   console.log(chalk.bold('🚀 Starting Playwright visual regression tests'));
@@ -409,12 +502,12 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   try {
     const playwrightArgs = ['playwright', 'test'];
 
+    if (options.updateSnapshots) {
+      playwrightArgs.push('--update-snapshots');
+    }
+
     // Use our config file instead of the project's config
     // Get the path to our config file relative to this CLI file
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    const projectRoot = join(__dirname, '..', '..');
-
     // Prefer new config location: dist/config.js then src/config.ts; keep legacy svr.config
     const configCandidates = [
       join(projectRoot, 'dist', 'config.js'),
@@ -429,8 +522,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     // Use absolute path to ensure Playwright uses our config, not the project's config
     playwrightArgs.push('--config', resolvedConfigPath);
 
-    // Always point tests to built tests to ensure availability in installed package
-    const testsDir = join(projectRoot, 'dist', 'tests');
+    playwrightArgs.push('--workers', String(runtimeConfig.workers));
+    playwrightArgs.push('--retries', String(runtimeConfig.retries));
+    playwrightArgs.push('--max-failures', String(runtimeConfig.maxFailures));
 
     // Resolve our minimal reporter path (used by default and in quiet mode)
     const customReporterCandidates = [
@@ -438,19 +532,30 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       join(projectRoot, 'src', 'reporters', 'filtered-reporter.ts'),
     ];
     const resolvedCustomReporter = customReporterCandidates.find((p) => existsSync(p));
+    const silentReporterCandidates = [
+      join(projectRoot, 'dist', 'reporters', 'silent-reporter.js'),
+      join(projectRoot, 'src', 'reporters', 'silent-reporter.ts'),
+    ];
+    const resolvedSilentReporter = silentReporterCandidates.find((p) => existsSync(p));
+    const useSilentReporter =
+      typeof runtimeConfig.serverTimeout === 'number' &&
+      runtimeConfig.serverTimeout > 0 &&
+      runtimeConfig.serverTimeout < 1000 &&
+      resolvedSilentReporter;
 
-    // Prefer our reporter unless user explicitly requested another or debug is enabled
-    // Don't use custom reporter if silent reporter is set
-    const shouldUseCustomReporter =
-      !options.debug &&
-      !(options as CliOptions).reporter &&
-      !!resolvedCustomReporter &&
-      !process.env.PLAYWRIGHT_REPORTER?.includes('silent-reporter');
-    if (shouldUseCustomReporter && resolvedCustomReporter) {
-      // Pass via CLI arg (highest precedence)
-      playwrightArgs.push('--reporter', resolvedCustomReporter);
-      // And also set env for redundancy/fallback
-      process.env.PLAYWRIGHT_REPORTER = resolvedCustomReporter;
+    let reporterArg: string | undefined;
+    if (useSilentReporter) {
+      reporterArg = resolvedSilentReporter;
+    } else if ((options as CliOptions).reporter) {
+      reporterArg = String((options as CliOptions).reporter);
+    } else if (debugEnabled) {
+      reporterArg = 'line';
+    } else if (resolvedCustomReporter) {
+      reporterArg = resolvedCustomReporter;
+    }
+
+    if (reporterArg) {
+      playwrightArgs.push('--reporter', reporterArg);
     }
 
     const child = execa('npx', playwrightArgs, {
@@ -458,40 +563,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       stdin: 'inherit',
       stdout: 'inherit',
       stderr: 'inherit',
-      // Force Playwright to use absolute paths and not create its own config
-      env: {
-        ...process.env,
-        // Prevent Playwright from creating its own config in the wrong location
-        PLAYWRIGHT_CONFIG_FILE: resolvedConfigPath,
-        // Force Playwright to use the correct working directory
-        PLAYWRIGHT_TEST_DIR: testsDir,
-        PLAYWRIGHT_RETRIES: config.retries.toString(),
-        PLAYWRIGHT_WORKERS: config.workers.toString(),
-        PLAYWRIGHT_MAX_FAILURES: (options.maxFailures || 10).toString(),
-        // Respect pre-set PLAYWRIGHT_UPDATE_SNAPSHOTS (set by `update` command)
-        // Do not override here so updates actually occur
-        STORYBOOK_URL: config.storybookUrl,
-        PLAYWRIGHT_HEADLESS: config.headless ? 'true' : 'false',
-        PLAYWRIGHT_TIMEZONE: config.timezone,
-        PLAYWRIGHT_LOCALE: config.locale,
-        PLAYWRIGHT_BROWSER: config.browser,
-        PLAYWRIGHT_OUTPUT_DIR: options.output
-          ? path.isAbsolute(options.output)
-            ? path.relative(originalCwd, options.output)
-            : options.output
-          : 'visual-regression',
-        // Respect explicit reporter or debug; otherwise use our custom reporter if available
-        PLAYWRIGHT_REPORTER: options.debug
-          ? 'line'
-          : (options as CliOptions).reporter
-            ? String((options as CliOptions).reporter)
-            : (shouldUseCustomReporter && resolvedCustomReporter) ||
-              process.env.PLAYWRIGHT_REPORTER,
-        // Surface a simple debug flag for tests to log helpful info like Story URLs
-        SVR_DEBUG: options.debug ? 'true' : undefined,
-        // Pass options directly to tests without environment variables
-        ORIGINAL_CWD: originalCwd,
-      },
+      env: process.env,
     });
 
     // stdio inherited; no manual piping required
@@ -502,7 +574,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     console.log(chalk.green('🎉 Visual regression tests completed successfully'));
 
     if (options.updateSnapshots) {
-      const resultsDir = join(originalCwd, options.output || 'visual-regression', 'results');
+      const resultsDir = runtimeConfig.resultsPath;
       if (existsSync(resultsDir)) {
         try {
           rmSync(resultsDir, { recursive: true, force: true });
@@ -532,7 +604,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
     if (exitCode !== 130) {
       // Debug: Log the actual error message to help identify patterns (only in debug mode)
-      if (process.env.SVR_DEBUG === 'true') {
+      if (debugEnabled) {
         console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
         console.error(chalk.gray(`Debug - Error object:`, error));
       }
@@ -765,12 +837,11 @@ program
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
   .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries', '200')
   .option('--missing-only', 'Only create snapshots for stories without existing baselines')
+  .option('--clean', 'Delete existing snapshots before updating (respects include/exclude filters)')
   .action(async (options) => {
     // Mark option so we can pass update mode to tests
     (options as CliOptions).updateSnapshots = true;
     // missingOnly behavior handled inside tests via file presence
-    if ((options as CliOptions).reporter)
-      process.env.PLAYWRIGHT_REPORTER = String((options as CliOptions).reporter);
     await runTests(options as CliOptions);
   });
 

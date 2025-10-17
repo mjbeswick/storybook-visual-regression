@@ -3,6 +3,9 @@ import { join } from 'path';
 
 import { expect, test, type Page } from '@playwright/test';
 import chalk from 'chalk';
+import { loadRuntimeOptions } from '../runtime/runtime-options.js';
+
+const runtimeOptions = loadRuntimeOptions();
 
 const defaultViewportSizes: Record<string, { width: number; height: number }> = {
   mobile: { width: 375, height: 667 },
@@ -11,8 +14,14 @@ const defaultViewportSizes: Record<string, { width: number; height: number }> = 
 };
 const defaultViewportKey = 'desktop';
 
-const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:9009';
-const projectRoot = process.env.ORIGINAL_CWD || process.cwd();
+const storybookUrl = runtimeOptions.storybookUrl;
+const projectRoot = runtimeOptions.originalCwd;
+const snapshotsDirectory = runtimeOptions.visualRegression.snapshotPath;
+const resultsDirectory = runtimeOptions.visualRegression.resultsPath;
+const includePatterns = runtimeOptions.include;
+const excludePatterns = runtimeOptions.exclude;
+const grepPattern = runtimeOptions.grep;
+const debugEnabled = runtimeOptions.debug;
 
 async function disableAnimations(page: Page): Promise<void> {
   // Respect reduced motion globally
@@ -34,33 +43,29 @@ type ReadyOptions = {
 };
 
 async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void> {
-  const overlayTimeout =
-    opts?.overlayTimeout ?? parseInt(process.env.SVR_OVERLAY_TIMEOUT || '5000', 10);
-  const stabilizeInterval =
-    opts?.stabilizeInterval ?? parseInt(process.env.SVR_STABILIZE_INTERVAL || '200', 10);
-  const stabilizeAttempts =
-    opts?.stabilizeAttempts ?? parseInt(process.env.SVR_STABILIZE_ATTEMPTS || '20', 10);
+  const overlayTimeout = opts?.overlayTimeout ?? runtimeOptions.overlayTimeout;
+  const stabilizeInterval = opts?.stabilizeInterval ?? runtimeOptions.stabilizeInterval;
+  const stabilizeAttempts = opts?.stabilizeAttempts ?? runtimeOptions.stabilizeAttempts;
+  const debugEnabled = runtimeOptions.debug;
   // Make sure the canvas container exists
-  const waitTimeout = parseInt(process.env.SVR_WAIT_TIMEOUT || '30000', 10);
+  const waitTimeout = runtimeOptions.waitTimeout;
   await page.waitForSelector('#storybook-root', { state: 'attached', timeout: waitTimeout });
 
-  // Try to wait for Storybook's preparing overlays to go away
-  try {
-    await page.waitForSelector('.sb-preparing-story, .sb-preparing-docs', {
-      state: 'hidden',
-      timeout: overlayTimeout,
-    });
-  } catch {
-    // If they don't hide in time, force-hide them and continue
-    await page.evaluate(() => {
-      for (const sel of ['.sb-preparing-story', '.sb-preparing-docs']) {
-        document.querySelectorAll(sel).forEach((el) => {
-          (el as HTMLElement).style.display = 'none';
-          (el as HTMLElement).setAttribute('aria-hidden', 'true');
-        });
-      }
-    });
-  }
+  // Immediately force-hide Storybook's preparing overlays since they often don't hide properly
+  // This is more reliable than waiting for them to hide naturally
+  await page.evaluate(() => {
+    const overlaySelectors = [
+      '.sb-preparing-story',
+      '.sb-preparing-docs',
+      '.sb-loader', // Also hide any standalone loaders
+    ];
+    for (const sel of overlaySelectors) {
+      document.querySelectorAll(sel).forEach((el) => {
+        (el as HTMLElement).style.display = 'none';
+        (el as HTMLElement).setAttribute('aria-hidden', 'true');
+      });
+    }
+  });
 
   // Wait for loading spinners to disappear if enabled
   await waitForLoadingSpinners(page);
@@ -85,12 +90,21 @@ async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void>
       return false;
     });
 
+  // Try to detect when story is visually ready, but don't block if it doesn't stabilize
+  let isReady = false;
   for (let attempt = 0; attempt < stabilizeAttempts; attempt++) {
-    if (await isVisuallyReady()) return;
+    if (await isVisuallyReady()) {
+      isReady = true;
+      break;
+    }
     await page.waitForTimeout(stabilizeInterval);
   }
 
-  throw new Error('Story canvas did not stabilize');
+  // If story didn't become visually ready, log warning but continue
+  // The story might be ready but our heuristic failed, or it might be blank intentionally
+  if (!isReady && debugEnabled) {
+    console.warn('Story did not become visually ready, but proceeding anyway');
+  }
 }
 
 async function waitForLoadingSpinners(page: Page): Promise<void> {
@@ -143,40 +157,45 @@ async function waitForLoadingSpinners(page: Page): Promise<void> {
     }
   }
 
-  // Wait for storybook-root to have actual content
-  await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#storybook-root');
-      if (!root) return false;
+  // Wait for storybook-root to have actual content (reduced timeout for faster feedback)
+  try {
+    await page.waitForFunction(
+      () => {
+        const root = document.querySelector('#storybook-root');
+        if (!root) return false;
 
-      // Check if root has visible content
-      const rect = root.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return false;
+        // Check if root has visible content
+        const rect = root.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return false;
 
-      // Check for visible child elements
-      const children = root.querySelectorAll('*');
-      for (const child of children) {
-        const childRect = child.getBoundingClientRect();
-        const style = window.getComputedStyle(child as HTMLElement);
+        // Check for visible child elements (limit check to first 50 for performance)
+        const children = Array.from(root.querySelectorAll('*')).slice(0, 50);
+        for (const child of children) {
+          const childRect = child.getBoundingClientRect();
+          const style = window.getComputedStyle(child as HTMLElement);
 
-        if (
-          childRect.width > 0 &&
-          childRect.height > 0 &&
-          style.visibility !== 'hidden' &&
-          style.display !== 'none' &&
-          style.opacity !== '0'
-        ) {
-          return true;
+          if (
+            childRect.width > 0 &&
+            childRect.height > 0 &&
+            style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            style.opacity !== '0'
+          ) {
+            return true;
+          }
         }
-      }
 
-      return false;
-    },
-    { timeout: 10000 },
-  );
+        return false;
+      },
+      { timeout: 5000 }, // Reduced from 10s to 5s
+    );
+  } catch {
+    // If content visibility check times out, proceed anyway
+    // The story might be ready but our heuristic failed
+  }
 
   // Add a small delay to ensure content is fully loaded and rendered (configurable)
-  const finalSettleMs = parseInt(process.env.SVR_FINAL_SETTLE_MS || '500', 10);
+  const finalSettleMs = runtimeOptions.finalSettle;
   if (finalSettleMs > 0) {
     await page.waitForTimeout(finalSettleMs);
   }
@@ -226,23 +245,6 @@ async function waitForLoadingSpinners(page: Page): Promise<void> {
   }
 }
 
-function _parseJsonEnv<T>(key: string, fallback: T): T {
-  const value = process.env[key];
-  if (!value) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(value) as T;
-  } catch (error) {
-    console.warn(
-      `⚠️  Unable to parse environment variable ${key}:`,
-      error instanceof Error ? error.message : String(error),
-    );
-    return fallback;
-  }
-}
-
 type IndexEntries = Record<
   string,
   { type?: string; importPath?: string; title?: string; name?: string }
@@ -261,11 +263,13 @@ function arraysFromIndex(index: unknown): {
   storyIds: string[];
   storyImportPaths: Record<string, string>;
   storyDisplayNames: Record<string, string>;
+  storySnapshotPaths: Record<string, string>;
 } {
   const entries: IndexEntries = isIndexWithEntries(index) ? index.entries : {};
   const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
   const storyImportPaths: Record<string, string> = {};
   const storyDisplayNames: Record<string, string> = {};
+  const storySnapshotPaths: Record<string, string> = {};
   for (const id of storyIds) {
     const entry = entries[id];
     if (entry && typeof entry.importPath === 'string') storyImportPaths[id] = entry.importPath;
@@ -274,14 +278,28 @@ function arraysFromIndex(index: unknown): {
         ? `${entry.title ?? ''}${entry.title && entry.name ? ' › ' : ''}${entry.name ?? ''}`
         : id;
     storyDisplayNames[id] = human || id;
+
+    // Create hierarchical snapshot path from title and name
+    if (entry && entry.title && entry.name) {
+      // Convert title "Screens / Colleague / SSC Cash" to "Screens/Colleague/SSC Cash"
+      const folderPath = entry.title.split(' / ').join('/');
+      // Sanitize the story name for filename
+      const fileName = entry.name.replace(/[<>:"|?*]/g, '-');
+      storySnapshotPaths[id] = `${folderPath}/${fileName}.png`;
+    } else {
+      // Fallback to sanitized ID if title or name is missing
+      const sanitized = id.replace(/[^a-zA-Z0-9]/g, '-');
+      storySnapshotPaths[id] = `${sanitized}.png`;
+    }
   }
-  return { storyIds, storyImportPaths, storyDisplayNames };
+  return { storyIds, storyImportPaths, storyDisplayNames, storySnapshotPaths };
 }
 
 async function discoverStories(): Promise<{
   storyIds: string[];
   storyImportPaths: Record<string, string>;
   storyDisplayNames: Record<string, string>;
+  storySnapshotPaths: Record<string, string>;
 }> {
   // Try server first (webServer should already be ready)
   const base = storybookUrl.replace(/\/$/, '');
@@ -297,20 +315,22 @@ async function discoverStories(): Promise<{
       const json = JSON.parse(raw);
       return arraysFromIndex(json);
     } catch {
-      return { storyIds: [], storyImportPaths: {}, storyDisplayNames: {} };
+      return { storyIds: [], storyImportPaths: {}, storyDisplayNames: {}, storySnapshotPaths: {} };
     }
   }
 }
 
-const { storyIds, storyImportPaths, storyDisplayNames } = await discoverStories();
+const { storyIds, storyImportPaths, storyDisplayNames, storySnapshotPaths } =
+  await discoverStories();
 
 // Optionally limit to only stories missing a baseline snapshot when update runs with --missing-only
 function filterMissingBaselines(stories: string[]): string[] {
-  if (process.env.SVR_MISSING_ONLY !== 'true') return stories;
-  const snapshotsDir = join(projectRoot, 'visual-regression', 'snapshots');
+  if (!runtimeOptions.missingOnly) return stories;
+  const snapshotsDir = runtimeOptions.visualRegression.snapshotPath;
   return stories.filter((id) => {
-    const sanitized = id.replace(/[^a-zA-Z0-9]/g, '-');
-    const filePath = join(snapshotsDir, `${sanitized}.png`);
+    const snapshotPath = storySnapshotPaths[id];
+    if (!snapshotPath) return true; // Include if no path generated
+    const filePath = join(snapshotsDir, snapshotPath);
     return !existsSync(filePath);
   });
 }
@@ -320,11 +340,7 @@ function filterStories(stories: string[]): string[] {
   let filtered = [...stories];
 
   // Apply include patterns
-  if (process.env.STORYBOOK_INCLUDE) {
-    const includePatterns = process.env.STORYBOOK_INCLUDE.split(',')
-      .map((p) => p.trim())
-      .filter(Boolean);
-
+  if (includePatterns.length > 0) {
     filtered = filtered.filter((storyId) => {
       const displayName = storyDisplayNames[storyId] || '';
       // Check if any pattern matches storyId or displayName (case-insensitive)
@@ -373,10 +389,7 @@ function filterStories(stories: string[]): string[] {
   }
 
   // Apply exclude patterns
-  if (process.env.STORYBOOK_EXCLUDE) {
-    const excludePatterns = process.env.STORYBOOK_EXCLUDE.split(',')
-      .map((p) => p.trim())
-      .filter(Boolean);
+  if (excludePatterns.length > 0) {
     filtered = filtered.filter((storyId) => {
       const displayName = storyDisplayNames[storyId] || '';
       // Check if any pattern matches storyId or displayName (case-insensitive)
@@ -403,12 +416,12 @@ function filterStories(stories: string[]): string[] {
   }
 
   // Apply grep pattern (regex)
-  if (process.env.STORYBOOK_GREP) {
+  if (grepPattern) {
     try {
-      const regex = new RegExp(process.env.STORYBOOK_GREP, 'i');
+      const regex = new RegExp(grepPattern, 'i');
       filtered = filtered.filter((storyId) => regex.test(storyId));
     } catch {
-      console.warn(`Invalid regex pattern: ${process.env.STORYBOOK_GREP}`);
+      console.warn(`Invalid regex pattern: ${grepPattern}`);
     }
   }
 
@@ -431,7 +444,7 @@ test.describe('Visual Regression', () => {
 
   for (const storyId of filteredStoryIds) {
     const humanTitle = `${storyDisplayNames[storyId] || storyId} [${storyId}]`;
-    test(humanTitle, async ({ page }) => {
+    test(humanTitle, async ({ page }, _testInfo) => {
       let viewportKey = defaultViewportKey;
       const importPath = storyImportPaths[storyId];
 
@@ -464,28 +477,81 @@ test.describe('Visual Regression', () => {
         `${base}/iframe.html?path=/story/${storyId}`,
       ];
       let storyUrl = candidateUrls[0];
-      if (process.env.SVR_DEBUG === 'true') {
+      if (debugEnabled) {
         console.log(`SVR: story id: ${storyId}`);
         console.log(`SVR: url: ${storyUrl}`);
       }
 
       try {
-        const navTimeout = parseInt(process.env.SVR_NAV_TIMEOUT || '10000', 10);
-        const waitTimeout = parseInt(process.env.SVR_WAIT_TIMEOUT || '30000', 10);
-        const overlayTimeout = parseInt(process.env.SVR_OVERLAY_TIMEOUT || '5000', 10);
-        const stabilizeInterval = parseInt(process.env.SVR_STABILIZE_INTERVAL || '150', 10);
-        const stabilizeAttempts = parseInt(process.env.SVR_STABILIZE_ATTEMPTS || '20', 10);
+        const navTimeout = runtimeOptions.navTimeout;
+        const waitTimeout = runtimeOptions.waitTimeout;
+        const overlayTimeout = runtimeOptions.overlayTimeout;
+        const stabilizeInterval = runtimeOptions.stabilizeInterval;
+        const stabilizeAttempts = runtimeOptions.stabilizeAttempts;
+        const waitUntilOption = runtimeOptions.waitUntil;
 
-        const waitUntilEnv = (process.env.SVR_WAIT_UNTIL || 'networkidle').toLowerCase();
-        const allowedWaitUntil = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
-        const waitUntilOption = (
-          allowedWaitUntil.has(waitUntilEnv) ? waitUntilEnv : 'networkidle'
-        ) as 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
+        const operationStartTime = Date.now();
+        if (debugEnabled) {
+          console.log(`[${storyId}] Starting navigation at ${operationStartTime}`);
+        }
 
-        let resp = await page.goto(storyUrl, {
-          waitUntil: waitUntilOption,
-          timeout: navTimeout,
-        });
+        // Navigate to the story
+        // If using 'load', fall back to 'networkidle' on timeout to avoid hanging on stuck resources
+        let resp;
+        try {
+          resp = await page.goto(storyUrl, {
+            waitUntil: waitUntilOption,
+            timeout: navTimeout,
+          });
+          if (debugEnabled) {
+            console.log(
+              `[${storyId}] Navigation with '${waitUntilOption}' completed in ${Date.now() - operationStartTime}ms`,
+            );
+          }
+        } catch (navError) {
+          const isTimeout =
+            navError instanceof Error && navError.message.toLowerCase().includes('timeout');
+          if (isTimeout && waitUntilOption === 'load') {
+            // 'load' timed out - try 'networkidle' instead to avoid hanging on stuck resources
+            if (debugEnabled) {
+              console.log(
+                `[${storyId}] Navigation with 'load' timed out after ${Date.now() - operationStartTime}ms, retrying with 'networkidle'`,
+              );
+            }
+            resp = await page.goto(storyUrl, {
+              waitUntil: 'networkidle',
+              timeout: navTimeout,
+            });
+            if (debugEnabled) {
+              console.log(
+                `[${storyId}] Navigation with 'networkidle' completed in ${Date.now() - operationStartTime}ms`,
+              );
+            }
+          } else {
+            throw navError;
+          }
+        }
+
+        // Wait for fonts to load explicitly (with timeout to avoid hanging)
+        // This ensures consistent screenshots even if 'load' event didn't wait for fonts
+        const fontWaitStart = Date.now();
+        try {
+          await page.evaluate(
+            () => document.fonts.ready,
+            // Short timeout since fonts should already be loading/loaded
+            { timeout: 10000 },
+          );
+          if (debugEnabled) {
+            console.log(`[${storyId}] Fonts ready in ${Date.now() - fontWaitStart}ms`);
+          }
+        } catch {
+          // Fonts didn't load in time, but continue anyway
+          if (debugEnabled) {
+            console.log(
+              `[${storyId}] Font wait timed out after ${Date.now() - fontWaitStart}ms, proceeding`,
+            );
+          }
+        }
 
         // Fail fast on bad HTTP responses
         if (!resp || !resp.ok()) {
@@ -494,7 +560,7 @@ test.describe('Visual Regression', () => {
           if (storyUrl !== altUrl) {
             storyUrl = altUrl;
             resp = await page.goto(storyUrl, { waitUntil: waitUntilOption, timeout: navTimeout });
-            if (process.env.SVR_DEBUG === 'true') {
+            if (debugEnabled) {
               console.log(`SVR: url (retry): ${storyUrl}`);
             }
           }
@@ -507,8 +573,23 @@ test.describe('Visual Regression', () => {
         // Avoid redundant global networkidle wait; readiness checks below guard stability
 
         // Wait for Storybook to finish preparing the story and for the canvas to exist
+        const beforeRootWait = Date.now();
+        if (debugEnabled) {
+          console.log(`[${storyId}] Waiting for #storybook-root...`);
+        }
         await page.waitForSelector('#storybook-root', { state: 'attached', timeout: waitTimeout });
+        if (debugEnabled) {
+          console.log(`[${storyId}] Found #storybook-root in ${Date.now() - beforeRootWait}ms`);
+        }
+
+        const beforeReadyWait = Date.now();
+        if (debugEnabled) {
+          console.log(`[${storyId}] Waiting for story to be ready...`);
+        }
         await waitForStoryReady(page, { overlayTimeout, stabilizeInterval, stabilizeAttempts });
+        if (debugEnabled) {
+          console.log(`[${storyId}] Story ready in ${Date.now() - beforeReadyWait}ms`);
+        }
 
         // Additional checks to ensure we're not on an error page
         const isErrorPage = await page.evaluate(() => {
@@ -524,8 +605,8 @@ test.describe('Visual Regression', () => {
         }
 
         // Optional heuristic: detect host 'Not Found' responses (off by default)
-        if (process.env.SVR_NOT_FOUND_CHECK === 'true') {
-          const retryDelay = parseInt(process.env.SVR_NOT_FOUND_RETRY_DELAY || '200', 10);
+        if (runtimeOptions.notFoundCheck) {
+          const retryDelay = runtimeOptions.notFoundRetryDelay;
           // try twice separated by small delay in case canvas hasn't rendered yet
           for (let attempt = 0; attempt < 2; attempt++) {
             const bodyText = (await page.textContent('body')) || '';
@@ -572,10 +653,10 @@ test.describe('Visual Regression', () => {
             },
             { timeout: 5000 }, // Reduced from waitTimeout to 5s since this is a sanity check
           );
-        } catch (timeoutError) {
+        } catch {
           // If this check times out, log a warning but continue
           // The page has already loaded successfully and passed other checks
-          if (process.env.SVR_DEBUG === 'true') {
+          if (debugEnabled) {
             console.warn(
               `Visible content check timed out for ${storyId}, proceeding anyway (page loaded successfully)`,
             );
@@ -589,23 +670,48 @@ test.describe('Visual Regression', () => {
           if (body) body.style.overflow = 'hidden';
         });
 
-        const sanitizedStoryId = storyId.replace(/[^a-zA-Z0-9]/g, '-');
-        const expectedPath = join(
-          projectRoot,
-          'visual-regression',
-          'snapshots',
-          `${sanitizedStoryId}.png`,
-        );
+        // Get the hierarchical snapshot path and split it into parts for Playwright
+        const snapshotPathStr =
+          storySnapshotPaths[storyId] || `${storyId.replace(/[^a-zA-Z0-9]/g, '-')}.png`;
+
+        // Split the path into an array to preserve folder structure
+        // e.g., "Screens/Colleague/Dashboard.png" -> ["Screens", "Colleague", "Dashboard.png"]
+        const snapshotPathParts = snapshotPathStr.split('/');
+
+        // Construct the full snapshot path for validation
+        const snapshotPath = join(snapshotsDirectory, snapshotPathStr);
+        if (debugEnabled) {
+          console.log(`SVR: snapshot path resolved to ${snapshotPath}`);
+        }
 
         console.log(
-          `About to take screenshot for ${sanitizedStoryId}, SVR_UPDATE_MODE: ${process.env.SVR_UPDATE_MODE}`,
+          `About to take screenshot for ${storyId}, update mode: ${runtimeOptions.updateSnapshots}`,
         );
         try {
-          await expect(page).toHaveScreenshot(`${sanitizedStoryId}.png`);
+          // Verify page is still valid before attempting screenshot
+          if (page.isClosed()) {
+            throw new Error('Page was closed before screenshot could be taken');
+          }
+
+          await expect(page).toHaveScreenshot(snapshotPathParts);
         } catch (assertionError) {
+          // Check if this is a TypeError from buffer operations (usually after timeout)
+          const errorMessage =
+            assertionError instanceof Error ? assertionError.message : String(assertionError);
+          const isBufferError =
+            errorMessage.includes('The "data" argument must be of type string') ||
+            errorMessage.includes('Received undefined');
+
+          if (isBufferError) {
+            // This typically happens when the page times out or is in an invalid state
+            throw new Error(
+              `Failed to capture screenshot (page may have timed out or is in an invalid state): ${errorMessage}`,
+            );
+          }
+
           // Check if we're in update mode - if so, let Playwright handle snapshot creation
-          const isUpdateMode = process.env.SVR_UPDATE_MODE === 'true';
-          console.log(`Screenshot failed for ${sanitizedStoryId}, isUpdateMode: ${isUpdateMode}`);
+          const isUpdateMode = runtimeOptions.updateSnapshots;
+          console.log(`Screenshot failed for ${storyId}, isUpdateMode: ${isUpdateMode}`);
 
           if (isUpdateMode) {
             // In update mode, re-throw the original assertion error to let Playwright create the snapshot
@@ -615,7 +721,7 @@ test.describe('Visual Regression', () => {
           // Check if the snapshot file exists
           const snapshotExists = await import('fs').then((fs) =>
             fs.promises
-              .access(expectedPath)
+              .access(snapshotPath)
               .then(() => true)
               .catch(() => false),
           );
@@ -627,7 +733,7 @@ test.describe('Visual Regression', () => {
             console.error('\n' + chalk.yellow('──────── Missing Snapshot ────────'));
             console.error(chalk.yellow(`${label('Story')}${storyId}`));
             console.error(chalk.yellow(`${label('URL')}${storyUrl}`));
-            console.error(chalk.yellow(`${label('Missing')}${expectedPath}`));
+            console.error(chalk.yellow(`${label('Missing')}${snapshotPath}`));
             console.error(chalk.yellow('──────────────────────────────────────'));
             console.error(chalk.cyan('💡 To create the missing snapshot, run:'));
             console.error(
@@ -641,20 +747,29 @@ test.describe('Visual Regression', () => {
             console.error('\n' + chalk.red('──────── Screenshot Mismatch ────────'));
             console.error(chalk.red(`${label('Story')}${storyId}`));
             console.error(chalk.red(`${label('URL')}${storyUrl}`));
-            console.error(
-              chalk.red(
-                `${label('Reason')}${assertionError instanceof Error ? assertionError.message : String(assertionError)}`,
-              ),
-            );
+            console.error(chalk.red(`${label('Reason')}${errorMessage}`));
             // Helpful paths
-            const resultsRoot = process.env.PLAYWRIGHT_OUTPUT_DIR
-              ? `${process.env.PLAYWRIGHT_OUTPUT_DIR}/results`
-              : join(projectRoot, 'visual-regression', 'results');
-            console.error(chalk.red(`${label('Expected')}${expectedPath}`));
+            const resultsRoot = resultsDirectory;
+            console.error(chalk.red(`${label('Expected')}${snapshotPath}`));
             console.error(chalk.red(`${label('Results')}${resultsRoot}`));
             console.error(chalk.red('──────────────────────────────────────\n'));
             throw new Error(
-              `Screenshot mismatch for story '${storyId}'. Snapshot: ${sanitizedStoryId}.png`,
+              `Screenshot mismatch for story '${storyId}'. Snapshot: ${snapshotPathStr}`,
+            );
+          }
+        }
+
+        if (runtimeOptions.updateSnapshots) {
+          const snapshotExists = await import('fs').then((fs) =>
+            fs.promises
+              .access(snapshotPath)
+              .then(() => true)
+              .catch(() => false),
+          );
+
+          if (!snapshotExists) {
+            throw new Error(
+              `Playwright reported success but no snapshot was written for '${storyId}' at ${snapshotPath}.`,
             );
           }
         }
