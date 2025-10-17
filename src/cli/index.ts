@@ -850,10 +850,17 @@ program
   .option('--not-found-check', 'Enable Not Found content heuristic with retry')
   .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries', '200')
   .option('--missing-only', 'Only create snapshots for stories without existing baselines')
-  .option('--clean', 'Delete existing snapshots before updating (respects include/exclude filters)')
+  .option(
+    '--no-clean',
+    'Skip deleting existing snapshots before updating (by default, snapshots are cleaned)',
+  )
   .action(async (options) => {
     // Mark option so we can pass update mode to tests
     (options as CliOptions).updateSnapshots = true;
+    // Set clean to true by default for update command (unless --no-clean is passed)
+    if (options.clean === undefined) {
+      (options as CliOptions).clean = true;
+    }
     // missingOnly behavior handled inside tests via file presence
     await runTests(options as CliOptions);
   });
