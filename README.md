@@ -270,7 +270,7 @@ npx storybook-visual-regression test \
 
 - Screenshots: `<output>/snapshots/<storyId>.png`
 - Results: `<output>/results/` (reserved for integrations/exports)
-- Console summary with total, passed, failed, and per‑story timings
+- Console summary with total, passed, failed, total elapsed time, and per‑story timings
 
 ### Results cleanup (when using quiet reporter)
 

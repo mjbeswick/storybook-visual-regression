@@ -718,7 +718,7 @@ program
   .option(
     '--final-settle <ms>',
     'Final delay after all readiness checks pass before taking screenshot. Increase for late animations.',
-    '500',
+    '100',
   )
   .option(
     '--resource-settle <ms>',
@@ -849,20 +849,24 @@ program
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable detection and retry for "Not Found" / 404 pages')
   .option('--not-found-retry-delay <ms>', 'Delay between "Not Found" retries', '200')
-  .option('--missing-only', 'Only create snapshots that do not already exist (skip existing baselines)')
+  .option(
+    '--missing-only',
+    'Only create snapshots that do not already exist (skip existing baselines)',
+  )
   .option(
     '--no-clean',
     'Keep existing snapshots instead of deleting them before update (default: clean before update)',
   )
   .action(async (options) => {
+    const cliOptions = options as CliOptions;
     // Mark option so we can pass update mode to tests
-    (options as CliOptions).updateSnapshots = true;
+    cliOptions.updateSnapshots = true;
     // Set clean to true by default for update command (unless --no-clean is passed)
-    if (options.clean === undefined) {
-      (options as CliOptions).clean = true;
+    if (cliOptions.clean === undefined) {
+      cliOptions.clean = true;
     }
     // missingOnly behavior handled inside tests via file presence
-    await runTests(options as CliOptions);
+    await runTests(cliOptions);
   });
 
 program.parse();
