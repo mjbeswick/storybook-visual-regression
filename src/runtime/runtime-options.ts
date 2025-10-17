@@ -17,6 +17,7 @@ export type RuntimeOptions = {
   stabilizeInterval: number;
   stabilizeAttempts: number;
   finalSettle: number;
+  resourceSettle: number;
   waitUntil: 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
   missingOnly: boolean;
   clean: boolean;

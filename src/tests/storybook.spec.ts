@@ -495,57 +495,55 @@ test.describe('Visual Regression', () => {
           console.log(`[${storyId}] Starting navigation at ${operationStartTime}`);
         }
 
-        // Navigate to the story
-        // If using 'load', fall back to 'networkidle' on timeout to avoid hanging on stuck resources
-        let resp;
+        // Navigate to the story with a simple domcontentloaded wait
+        let resp = await page.goto(storyUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: navTimeout,
+        });
+
+        if (debugEnabled) {
+          console.log(`[${storyId}] Navigation completed in ${Date.now() - operationStartTime}ms`);
+        }
+
+        // Wait for all resources to finish loading using Performance API
+        // This is simpler and more reliable than waitUntil: 'load'
+        const resourceWaitStart = Date.now();
+        const resourceSettleMs = runtimeOptions.resourceSettle;
         try {
-          resp = await page.goto(storyUrl, {
-            waitUntil: waitUntilOption,
-            timeout: navTimeout,
-          });
+          await page.waitForFunction(
+            (settleTime) => {
+              // Check if all resources have finished loading
+              const resources = performance.getEntriesByType(
+                'resource',
+              ) as PerformanceResourceTiming[];
+              const pendingResources = resources.filter(
+                (r) => !r.responseEnd || Date.now() - r.responseEnd < (settleTime as number),
+              );
+              return pendingResources.length === 0;
+            },
+            resourceSettleMs,
+            { timeout: waitTimeout },
+          );
+          if (debugEnabled) {
+            console.log(`[${storyId}] All resources loaded in ${Date.now() - resourceWaitStart}ms`);
+          }
+        } catch {
+          // Resources didn't all finish, but the page is likely ready anyway
           if (debugEnabled) {
             console.log(
-              `[${storyId}] Navigation with '${waitUntilOption}' completed in ${Date.now() - operationStartTime}ms`,
+              `[${storyId}] Resource wait timed out after ${Date.now() - resourceWaitStart}ms, proceeding`,
             );
-          }
-        } catch (navError) {
-          const isTimeout =
-            navError instanceof Error && navError.message.toLowerCase().includes('timeout');
-          if (isTimeout && waitUntilOption === 'load') {
-            // 'load' timed out - try 'networkidle' instead to avoid hanging on stuck resources
-            if (debugEnabled) {
-              console.log(
-                `[${storyId}] Navigation with 'load' timed out after ${Date.now() - operationStartTime}ms, retrying with 'networkidle'`,
-              );
-            }
-            resp = await page.goto(storyUrl, {
-              waitUntil: 'networkidle',
-              timeout: navTimeout,
-            });
-            if (debugEnabled) {
-              console.log(
-                `[${storyId}] Navigation with 'networkidle' completed in ${Date.now() - operationStartTime}ms`,
-              );
-            }
-          } else {
-            throw navError;
           }
         }
 
-        // Wait for fonts to load explicitly (with timeout to avoid hanging)
-        // This ensures consistent screenshots even if 'load' event didn't wait for fonts
+        // Wait for fonts specifically - critical for visual consistency
         const fontWaitStart = Date.now();
         try {
-          await page.evaluate(
-            () => document.fonts.ready,
-            // Short timeout since fonts should already be loading/loaded
-            { timeout: 10000 },
-          );
+          await page.evaluate(() => document.fonts.ready);
           if (debugEnabled) {
             console.log(`[${storyId}] Fonts ready in ${Date.now() - fontWaitStart}ms`);
           }
         } catch {
-          // Fonts didn't load in time, but continue anyway
           if (debugEnabled) {
             console.log(
               `[${storyId}] Font wait timed out after ${Date.now() - fontWaitStart}ms, proceeding`,

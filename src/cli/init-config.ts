@@ -34,6 +34,7 @@ export default {
   stabilizeInterval: 150,   // Interval between stability checks (ms)
   stabilizeAttempts: 20,    // Number of stability checks
   finalSettle: 500,         // Final settle delay after readiness (ms)
+  resourceSettle: 100,      // Time to wait after resource loads before considering all resources settled (ms)
   
   // Wait strategy: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
   // 'domcontentloaded' is faster, 'networkidle' is more stable
@@ -78,6 +79,7 @@ const jsonConfigTemplate = `{
   "stabilizeInterval": 150,
   "stabilizeAttempts": 20,
   "finalSettle": 500,
+  "resourceSettle": 100,
   "waitUntil": "networkidle",
   "quiet": false,
   "debug": false,

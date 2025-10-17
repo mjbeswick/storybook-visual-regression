@@ -293,6 +293,11 @@ storybook-visual-regression update \
   --nav-timeout 10000 \
   --stabilize-attempts 30 \
   -c "npm run dev:ui"
+
+# Adjust resource settle time for faster/slower resource loading
+storybook-visual-regression test \
+  --resource-settle 200 \
+  -c "npm run dev:ui"
 ```
 
 ### 11. Development Workflow

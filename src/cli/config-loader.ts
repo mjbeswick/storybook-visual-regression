@@ -27,6 +27,7 @@ export type UserConfig = {
   stabilizeInterval?: number;
   stabilizeAttempts?: number;
   finalSettle?: number;
+  resourceSettle?: number;
   notFoundRetryDelay?: number;
 
   // Wait strategy

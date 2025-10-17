@@ -46,6 +46,7 @@ type CliOptions = {
   stabilizeInterval?: string; // ms
   stabilizeAttempts?: string; // count
   finalSettle?: string; // ms
+  resourceSettle?: string; // ms
   waitUntil?: string; // 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
   // Not found check configuration
   notFoundCheck?: boolean;
@@ -298,6 +299,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const stabilizeInterval = parseNumber(options.stabilizeInterval, 150);
   const stabilizeAttempts = parseNumber(options.stabilizeAttempts, 20);
   const finalSettle = parseNumber(options.finalSettle, 500);
+  const resourceSettle = parseNumber(options.resourceSettle, 100);
   const waitUntilCandidates = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
   const waitUntilInput = (options.waitUntil || '').toLowerCase();
   const waitUntilValue = waitUntilCandidates.has(waitUntilInput)
@@ -463,6 +465,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     stabilizeInterval,
     stabilizeAttempts,
     finalSettle,
+    resourceSettle,
     waitUntil: waitUntilValue,
     missingOnly,
     clean,
@@ -718,6 +721,11 @@ program
     '500',
   )
   .option(
+    '--resource-settle <ms>',
+    'Time to wait (ms) after a resource finishes loading before considering all resources settled.',
+    '100',
+  )
+  .option(
     '--wait-until <state>',
     "Navigation completion strategy: 'domcontentloaded' (fast), 'load' (full load), 'networkidle' (most stable, can hang on polling), 'commit' (earliest).",
     'networkidle',
@@ -819,6 +827,11 @@ program
     '--final-settle <ms>',
     'A small additional wait after readiness to allow last paints/animations to settle.',
     '500',
+  )
+  .option(
+    '--resource-settle <ms>',
+    'Time to wait (ms) after a resource finishes loading before considering all resources settled.',
+    '100',
   )
   .option(
     '--wait-until <state>',
