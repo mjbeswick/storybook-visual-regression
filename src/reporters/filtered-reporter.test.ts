@@ -187,7 +187,9 @@ describe('FilteredReporter', () => {
 
       reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n2 passed, 0 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^\n2 passed, 0 failed \(.+\)$/),
+      );
     });
 
     it('should show failure message when some tests failed', () => {
@@ -208,7 +210,9 @@ describe('FilteredReporter', () => {
 
       reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 1 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^\n1 passed, 1 failed \(.+\)$/),
+      );
       expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
 
@@ -235,7 +239,9 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        '\n1 passed, 1 failed, 1 skipped, 1 timed out, 1 interrupted',
+        expect.stringMatching(
+          /^\n1 passed, 1 failed, 1 skipped, 1 timed out, 1 interrupted \(.+\)$/,
+        ),
       );
       expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
@@ -249,7 +255,9 @@ describe('FilteredReporter', () => {
 
       reporter.onEnd(result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n0 passed, 0 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^\n0 passed, 0 failed \(.+\)$/),
+      );
     });
   });
 
@@ -467,7 +475,9 @@ describe('FilteredReporter', () => {
       expect(consoleLogSpy).toHaveBeenCalledWith('Running 2 tests using 2 workers\n');
       expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 100ms');
       expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 2 100ms');
-      expect(consoleLogSpy).toHaveBeenCalledWith('\n1 passed, 1 failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^\n1 passed, 1 failed \(.+\)$/),
+      );
       expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
     });
 

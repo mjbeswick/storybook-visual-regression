@@ -451,11 +451,15 @@ class FilteredReporter implements Reporter {
       this.spinner = null;
     }
 
+    // Calculate total elapsed time
+    const totalDuration = Date.now() - this.startedAtMs;
+    const formattedDuration = this.formatDuration(totalDuration);
+
     // Summary line expected by tests, prefixed with a newline
     const totalExecuted =
       this.passed + this.failed + this.skipped + this.timedOut + this.interrupted;
     console.log(
-      `\n${this.passed} passed, ${this.failed} failed${this.skipped > 0 ? `, ${this.skipped} skipped` : ''}${this.timedOut > 0 ? `, ${this.timedOut} timed out` : ''}${this.interrupted > 0 ? `, ${this.interrupted} interrupted` : ''}`,
+      `\n${this.passed} passed, ${this.failed} failed${this.skipped > 0 ? `, ${this.skipped} skipped` : ''}${this.timedOut > 0 ? `, ${this.timedOut} timed out` : ''}${this.interrupted > 0 ? `, ${this.interrupted} interrupted` : ''} ${chalk.gray(`(${formattedDuration})`)}`,
     );
 
     // Show discrepancy if total executed doesn't match total tests

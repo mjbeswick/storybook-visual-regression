@@ -102,10 +102,16 @@ npx storybook-visual-regression test \
   --port 9009
 ```
 
-Update snapshots after intentional UI changes:
+Update snapshots after intentional UI changes (cleans old snapshots by default):
 
 ```bash
 npx storybook-visual-regression update
+```
+
+Skip cleaning if you want to keep existing snapshots:
+
+```bash
+npx storybook-visual-regression update --no-clean
 ```
 
 Filter stories by id/title substring or glob (comma-separated):
@@ -124,6 +130,9 @@ npx storybook-visual-regression test --grep "button.*primary"
 
 - Discovers stories from `GET <url>:<port>/index.json` or falls back to `storybook-static/index.json`
 - Launches the chosen Playwright browser and opens each story `iframe.html?id=<storyId>`
+- Waits for the page to load using `domcontentloaded`, then checks that all resources have finished loading using the Performance API
+- Explicitly waits for fonts to load to ensure consistent screenshots
+- Force-hides Storybook's "preparing" overlays to prevent false timeouts
 - Applies deterministic settings (optional frozen time/locale/timezone, disables animations if enabled)
 - Captures screenshots and writes them to the configured snapshot folder
 - Prints a concise pass/fail line per story and a summary; exits non‑zero if failures occur
@@ -166,14 +175,16 @@ Common options (defaults shown):
 - `--stabilize-interval <ms>`: interval between canvas stability checks in ms (default `200` for test, `150` for update)
 - `--stabilize-attempts <n>`: number of canvas stability checks (default `20`)
 - `--final-settle <ms>`: final settle delay after readiness checks (default `500`)
+- `--resource-settle <ms>`: time to wait after a resource finishes loading before considering all resources settled (default `100`)
 - `--wait-until <state>`: navigation waitUntil strategy: `load`|`domcontentloaded`|`networkidle`|`commit` (default `networkidle`)
 
-**Story Filtering:**
+**Story Filtering & Update Options:**
 
 - `--include <patterns>`: include stories matching patterns (comma-separated, supports globs)
 - `--exclude <patterns>`: exclude stories matching patterns (comma-separated, supports globs)
 - `--grep <pattern>`: filter stories by regex pattern
 - `--missing-only`: (update command only) only create snapshots for stories without existing baselines
+- `--no-clean`: (update command only) skip deleting existing snapshots before updating (by default, update cleans snapshots)
 
 **CI Options:**
 
@@ -202,10 +213,17 @@ npx storybook-visual-regression update \
   --url http://localhost:9009
 ```
 
-**Update snapshots after UI changes:**
+**Update snapshots after UI changes (cleans old snapshots):**
 
 ```bash
+# Update all snapshots
+npx storybook-visual-regression update
+
+# Update specific component (cleans only matching snapshots)
 npx storybook-visual-regression update --include "MyComponent"
+
+# Update without cleaning (keeps all existing snapshots)
+npx storybook-visual-regression update --no-clean --include "MyComponent"
 ```
 
 **Only create missing snapshots:**
@@ -231,16 +249,21 @@ npx storybook-visual-regression test --grep "MyComponent.*primary"
 # Fast test run (for quick feedback)
 npx storybook-visual-regression test \
   -w 16 \
-  --wait-until domcontentloaded \
   --final-settle 200 \
+  --resource-settle 50 \
   --nav-timeout 8000
 
 # Stable update run (for creating baselines)
 npx storybook-visual-regression update \
   -w 8 \
-  --wait-until networkidle \
   --wait-timeout 60000 \
-  --final-settle 1000
+  --final-settle 1000 \
+  --resource-settle 200
+
+# For stories with slow-loading resources
+npx storybook-visual-regression test \
+  --nav-timeout 30000 \
+  --resource-settle 300
 ```
 
 ### Outputs
@@ -297,13 +320,17 @@ jobs:
 
 ### Troubleshooting
 
-- "Unable to discover stories" → Ensure Storybook is running on `--url/--port` or build static files to `storybook-static/`.
-- Playwright not installed → Add `@playwright/test` and run `npx storybook-visual-regression install-browsers`.
-- Browser installation fails → The tool will exit with an error code. Ensure you have sufficient permissions and network access.
-- Flaky screenshots → Use `--disable-animations`, `--wait-network-idle`, increase `--timeout`, or set `--frozen-time` and a fixed `--timezone`/`--locale`.
-- Exiting early → Increase or disable `--max-failures` (set `<= 0`).
-- Storybook server stops during tests → Use `--max-failures 0` to prevent early termination, or check for port conflicts.
-- Verbose failure output → Use `--quiet` flag to suppress detailed error messages and see only test progress.
+- **"Unable to discover stories"** → Ensure Storybook is running on `--url/--port` or build static files to `storybook-static/`.
+- **Playwright not installed** → Add `@playwright/test` and run `npx storybook-visual-regression install-browsers`.
+- **Browser installation fails** → The tool will exit with an error code. Ensure you have sufficient permissions and network access.
+- **Flaky screenshots** → Use `--disable-animations`, increase `--final-settle`, or set `--frozen-time` and a fixed `--timezone`/`--locale`.
+- **Test timeouts** → The tool auto-calculates test timeout based on all wait operations. If stories still timeout, increase `--nav-timeout` and `--wait-timeout`.
+- **Stories load instantly in browser but timeout in tests** → The tool automatically handles this by using resource-based loading detection. If needed, increase `--resource-settle` to give resources more time to finish.
+- **Fonts not loading properly** → Increase `--nav-timeout` or `--resource-settle` to give fonts more time. The tool explicitly waits for fonts using `document.fonts.ready`.
+- **Exiting early** → Increase or disable `--max-failures` (set `<= 0`).
+- **Storybook server stops during tests** → Use `--max-failures 0` to prevent early termination, or check for port conflicts.
+- **Verbose failure output** → Use `--quiet` flag to suppress detailed error messages and see only test progress.
+- **Old snapshots not deleted on update** → By default, `update` command cleans snapshots. Use `--no-clean` to preserve existing snapshots.
 
 ### License
 

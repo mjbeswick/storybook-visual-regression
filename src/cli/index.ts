@@ -692,42 +692,42 @@ program
   // Timing and stability options (ms / counts)
   .option(
     '--nav-timeout <ms>',
-    'Max time to wait for page.goto() (story load) before failing. Lower for speed; raise for slow hosts.',
+    'Maximum time to wait for page navigation (page.goto). Increase for slow-loading stories or networks.',
     '10000',
   )
   .option(
     '--wait-timeout <ms>',
-    'Max time waits can block (selectors/readiness checks). Not per-test timeout; use to accommodate heavy stories.',
+    'Maximum time for wait operations (selectors, resource loading). Increase for stories with many resources.',
     '10000',
   )
   .option(
     '--overlay-timeout <ms>',
-    "Time to wait for Storybook's preparing overlays to hide before we force-hide them.",
+    "Maximum time to wait for Storybook's 'preparing' overlays to hide before force-hiding them.",
     '5000',
   )
   .option(
     '--stabilize-interval <ms>',
-    'Interval between visual stability checks (DOM/layout). Lower is stricter, higher is faster.',
+    'Interval between visual stability checks to ensure content has stopped changing.',
     '200',
   )
   .option(
     '--stabilize-attempts <n>',
-    'Number of stability checks before we proceed. Increase for flakiness; decrease for speed.',
+    'Number of stability checks to perform. Increase for animated/dynamic stories.',
     '20',
   )
   .option(
     '--final-settle <ms>',
-    'A small additional wait after readiness to allow last paints/animations to settle.',
+    'Final delay after all readiness checks pass before taking screenshot. Increase for late animations.',
     '500',
   )
   .option(
     '--resource-settle <ms>',
-    'Time to wait (ms) after a resource finishes loading before considering all resources settled.',
+    'Time after a resource finishes loading before considering all resources settled. Increase for slow networks.',
     '100',
   )
   .option(
     '--wait-until <state>',
-    "Navigation completion strategy: 'domcontentloaded' (fast), 'load' (full load), 'networkidle' (most stable, can hang on polling), 'commit' (earliest).",
+    "Navigation strategy: 'domcontentloaded' (fastest), 'networkidle' (default, stable), 'load' (wait for all resources), 'commit' (earliest).",
     'networkidle',
   )
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
@@ -739,8 +739,8 @@ program
     'chromium',
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
-  .option('--not-found-check', 'Enable Not Found content heuristic with retry')
-  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries', '200')
+  .option('--not-found-check', 'Enable detection and retry for "Not Found" / 404 pages')
+  .option('--not-found-retry-delay <ms>', 'Delay between "Not Found" retries', '200')
   .action(async (options) => runTests(options as CliOptions));
 
 program
@@ -800,7 +800,7 @@ program
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option(
     '--nav-timeout <ms>',
-    'Max time to wait for page.goto() (story load) before failing. Lower for speed; raise for slow hosts.',
+    'Maximum time to wait for page navigation (page.goto). Increase for slow-loading stories or networks.',
     '10000',
   )
   .option(
@@ -810,7 +810,7 @@ program
   )
   .option(
     '--overlay-timeout <ms>',
-    "Time to wait for Storybook's preparing overlays to hide before we force-hide them.",
+    "Maximum time to wait for Storybook's 'preparing' overlays to hide before force-hiding them.",
     '5000',
   )
   .option(
@@ -820,22 +820,22 @@ program
   )
   .option(
     '--stabilize-attempts <n>',
-    'Number of stability checks before we proceed. Increase for flakiness; decrease for speed.',
+    'Number of stability checks to perform. Increase for animated/dynamic stories.',
     '20',
   )
   .option(
     '--final-settle <ms>',
-    'A small additional wait after readiness to allow last paints/animations to settle.',
+    'Final delay after all readiness checks pass before taking screenshot. Increase for late animations.',
     '500',
   )
   .option(
     '--resource-settle <ms>',
-    'Time to wait (ms) after a resource finishes loading before considering all resources settled.',
+    'Time after a resource finishes loading before considering all resources settled. Increase for slow networks.',
     '100',
   )
   .option(
     '--wait-until <state>',
-    "Navigation completion strategy: 'domcontentloaded' (fast), 'load' (full load), 'networkidle' (most stable, can hang on polling), 'commit' (earliest).",
+    "Navigation strategy: 'domcontentloaded' (fastest), 'networkidle' (default, stable), 'load' (wait for all resources), 'commit' (earliest).",
     'networkidle',
   )
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
@@ -847,12 +847,12 @@ program
     'chromium',
   )
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
-  .option('--not-found-check', 'Enable Not Found content heuristic with retry')
-  .option('--not-found-retry-delay <ms>', 'Delay between Not Found retries', '200')
-  .option('--missing-only', 'Only create snapshots for stories without existing baselines')
+  .option('--not-found-check', 'Enable detection and retry for "Not Found" / 404 pages')
+  .option('--not-found-retry-delay <ms>', 'Delay between "Not Found" retries', '200')
+  .option('--missing-only', 'Only create snapshots that do not already exist (skip existing baselines)')
   .option(
     '--no-clean',
-    'Skip deleting existing snapshots before updating (by default, snapshots are cleaned)',
+    'Keep existing snapshots instead of deleting them before update (default: clean before update)',
   )
   .action(async (options) => {
     // Mark option so we can pass update mode to tests
