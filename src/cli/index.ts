@@ -28,6 +28,7 @@ type CliOptions = {
   locale?: string;
   maxFailures?: string;
   reporter?: string;
+  json?: boolean;
   quiet?: boolean;
   include?: string;
   exclude?: string;
@@ -549,6 +550,14 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     let reporterArg: string | undefined;
     if (useSilentReporter) {
       reporterArg = resolvedSilentReporter;
+    } else if ((options as CliOptions).json) {
+      // Use our custom JSON reporter when --json flag is set
+      const jsonReporterCandidates = [
+        join(projectRoot, 'dist', 'reporters', 'json-reporter.js'),
+        join(projectRoot, 'src', 'reporters', 'json-reporter.ts'),
+      ];
+      const resolvedJsonReporter = jsonReporterCandidates.find((p) => existsSync(p));
+      reporterArg = resolvedJsonReporter || 'json'; // Fallback to Playwright's default JSON reporter
     } else if ((options as CliOptions).reporter) {
       reporterArg = String((options as CliOptions).reporter);
     } else if (debugEnabled) {
@@ -566,7 +575,15 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       stdin: 'inherit',
       stdout: 'inherit',
       stderr: 'inherit',
-      env: process.env,
+      env: {
+        ...process.env,
+        // Suppress npm warnings
+        npm_config_loglevel: 'error',
+        npm_config_silent: 'true',
+        npm_config_progress: 'false',
+        npm_config_audit: 'false',
+        npm_config_fund: 'false',
+      },
     });
 
     // stdio inherited; no manual piping required
@@ -574,7 +591,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     await child;
 
     console.log('');
-    console.log(chalk.green('🎉 Visual regression tests completed successfully'));
+    if (options.updateSnapshots) {
+      console.log(chalk.green('🎉 Visual regression tests updated successfully'));
+    } else {
+      console.log(chalk.green('🎉 Visual regression tests completed successfully'));
+    }
 
     if (options.updateSnapshots) {
       const resultsDir = runtimeConfig.resultsPath;
@@ -685,6 +706,7 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--json', 'Output results as JSON (for programmatic consumption)')
   .option('--print-urls', 'Show story URLs inline with test results')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
@@ -794,6 +816,7 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
+  .option('--json', 'Output results as JSON (for programmatic consumption)')
   .option('--print-urls', 'Show story URLs inline with test results')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
@@ -853,15 +876,11 @@ program
     '--missing-only',
     'Only create snapshots that do not already exist (skip existing baselines)',
   )
-  .option(
-    '--no-clean',
-    'Keep existing snapshots instead of deleting them before update (default: clean before update)',
-  )
   .action(async (options) => {
     const cliOptions = options as CliOptions;
     // Mark option so we can pass update mode to tests
     cliOptions.updateSnapshots = true;
-    // Set clean to true by default for update command (unless --no-clean is passed)
+    // Set clean to true by default for update command
     if (cliOptions.clean === undefined) {
       cliOptions.clean = true;
     }

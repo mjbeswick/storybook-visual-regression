@@ -1,6 +1,6 @@
 import chalk from 'chalk';
-import { existsSync, readFileSync, rmSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, rmSync, readdirSync } from 'fs';
+import { join, dirname, relative } from 'path';
 import type { FullConfig } from '@playwright/test';
 import { loadRuntimeOptions } from '../runtime/runtime-options.js';
 
@@ -83,12 +83,12 @@ function extractStoryMetadata(data: StorybookIndex): {
   return { storyIds, importPaths };
 }
 
-async function cleanMatchingSnapshots(
+async function cleanOrphanedSnapshots(
   indexData: StorybookIndex,
   runtimeOptions: ReturnType<typeof loadRuntimeOptions>,
 ): Promise<void> {
   console.log('');
-  console.log(chalk.bold('🗑️  Cleaning existing snapshots'));
+  console.log(chalk.bold('🗑️  Cleaning orphaned snapshots'));
 
   const entries = indexData.entries || {};
   const stories = Object.keys(entries)
@@ -102,98 +102,57 @@ async function cleanMatchingSnapshots(
         typeof entry.name === 'string',
     );
 
-  // Apply filtering (same logic as in storybook.spec.ts)
-  let filteredStories = [...stories];
-
-  const includePatterns = runtimeOptions.include;
-  const excludePatterns = runtimeOptions.exclude;
-  const grepPattern = runtimeOptions.grep;
-
-  // Apply include patterns
-  if (includePatterns.length > 0) {
-    filteredStories = filteredStories.filter((story: any) => {
-      const displayName = `${story.title} › ${story.name}`;
-      return includePatterns.some((pattern) => {
-        const lowerPattern = pattern.toLowerCase();
-        const lowerStoryId = story.id.toLowerCase();
-        const lowerDisplayName = displayName.toLowerCase();
-
-        const hasGlobChars = /[*?[\]{}]/.test(pattern);
-        if (hasGlobChars) {
-          try {
-            const regexPattern = lowerPattern
-              .replace(/\*/g, '.*')
-              .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-              .replace(/\\\.\*/g, '.*');
-            const regex = new RegExp(regexPattern, 'i');
-            return regex.test(lowerStoryId) || regex.test(lowerDisplayName);
-          } catch {
-            return lowerStoryId.includes(lowerPattern) || lowerDisplayName.includes(lowerPattern);
-          }
-        } else {
-          return lowerStoryId.includes(lowerPattern) || lowerDisplayName.includes(lowerPattern);
-        }
-      });
-    });
+  // Create a set of all existing story snapshot paths
+  const existingStoryPaths = new Set<string>();
+  for (const story of stories) {
+    if (!story.id) continue;
+    const fullSnapshotPath = join(runtimeOptions.visualRegression.snapshotPath, `${story.id}.png`);
+    existingStoryPaths.add(fullSnapshotPath);
   }
 
-  // Apply exclude patterns
-  if (excludePatterns.length > 0) {
-    filteredStories = filteredStories.filter((story: any) => {
-      const displayName = `${story.title} › ${story.name}`;
-      return !excludePatterns.some((pattern) => {
-        const lowerPattern = pattern.toLowerCase();
-        const lowerStoryId = story.id.toLowerCase();
-        const lowerDisplayName = displayName.toLowerCase();
-
-        try {
-          const regexPattern = lowerPattern
-            .replace(/\*/g, '.*')
-            .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-            .replace(/\\\.\*/g, '.*');
-          const regex = new RegExp(regexPattern, 'i');
-          return regex.test(lowerStoryId) || regex.test(lowerDisplayName);
-        } catch {
-          return lowerStoryId.includes(lowerPattern) || lowerDisplayName.includes(lowerPattern);
-        }
-      });
-    });
-  }
-
-  // Apply grep pattern
-  if (grepPattern) {
-    try {
-      const regex = new RegExp(grepPattern, 'i');
-      filteredStories = filteredStories.filter((story: any) => regex.test(story.id));
-    } catch {
-      console.log(`  ${chalk.yellow('⚠')} Invalid regex pattern: ${grepPattern}`);
-    }
-  }
-
-  if (filteredStories.length === 0) {
-    console.log(`  ${chalk.dim('•')} No stories match the filters - nothing to clean`);
+  // Find all snapshot files in the snapshot directory
+  const snapshotPath = runtimeOptions.visualRegression.snapshotPath;
+  if (!existsSync(snapshotPath)) {
+    console.log(`  ${chalk.dim('•')} No snapshot directory found - nothing to clean`);
     return;
   }
 
-  // Delete snapshots for filtered stories
   let deletedCount = 0;
   let skippedCount = 0;
-  const snapshotPath = runtimeOptions.visualRegression.snapshotPath;
 
-  for (const story of filteredStories) {
-    // Build snapshot path (same logic as in storybook.spec.ts)
-    if (!story.title || !story.name) continue;
-    const folderPath = story.title.split(' / ').join('/');
-    const fileName = story.name.replace(/[<>:"|?*]/g, '-');
-    const fullSnapshotPath = join(snapshotPath, folderPath, `${fileName}.png`);
+  // Recursively find all PNG files in the snapshot directory
+  function findSnapshotFiles(dir: string): string[] {
+    const files: string[] = [];
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...findSnapshotFiles(fullPath));
+        } else if (entry.isFile() && entry.name.endsWith('.png')) {
+          files.push(fullPath);
+        }
+      }
+    } catch (error) {
+      // Ignore errors reading directories
+    }
+    return files;
+  }
 
-    if (existsSync(fullSnapshotPath)) {
+  const allSnapshotFiles = findSnapshotFiles(snapshotPath);
+
+  // Delete snapshots that don't match any existing story
+  for (const snapshotFile of allSnapshotFiles) {
+    if (!existingStoryPaths.has(snapshotFile)) {
       try {
-        rmSync(fullSnapshotPath, { force: true });
+        rmSync(snapshotFile, { force: true });
         deletedCount++;
+        console.log(
+          `  ${chalk.dim('•')} Deleted orphaned snapshot: ${relative(snapshotPath, snapshotFile)}`,
+        );
       } catch (deleteError) {
         console.log(
-          `  ${chalk.yellow('⚠')} Failed to delete ${fullSnapshotPath}: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`,
+          `  ${chalk.yellow('⚠')} Failed to delete ${snapshotFile}: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`,
         );
       }
     } else {
@@ -201,33 +160,48 @@ async function cleanMatchingSnapshots(
     }
   }
 
-  // Clean up empty directories
-  const uniqueFolders = new Set<string>();
-  for (const story of filteredStories) {
-    if (!story.title) continue;
-    const folderPath = story.title.split(' / ').join('/');
-    const parts = folderPath.split('/');
-    // Build all parent paths
-    for (let i = parts.length; i > 0; i--) {
-      uniqueFolders.add(join(snapshotPath, ...parts.slice(0, i)));
-    }
-  }
-
-  // Try to remove empty directories (from deepest to shallowest)
-  const sortedFolders = Array.from(uniqueFolders).sort((a, b) => b.length - a.length);
-  for (const folder of sortedFolders) {
+  // Clean up empty directories (simplified since we only have flat structure)
+  function removeEmptyDirectories(dir: string): void {
     try {
-      if (existsSync(folder)) {
-        rmSync(folder, { recursive: false }); // Only remove if empty
+      const entries = readdirSync(dir, { withFileTypes: true });
+      if (entries.length === 0) {
+        rmSync(dir, { recursive: true, force: true });
+        console.log(`  ${chalk.dim('•')} Removed empty directory: ${relative(snapshotPath, dir)}`);
+        // Try to remove parent directory too
+        const parentDir = dirname(dir);
+        if (parentDir !== snapshotPath) {
+          removeEmptyDirectories(parentDir);
+        }
       }
-    } catch {
-      // Ignore errors - directory might not be empty
+    } catch (error) {
+      // Ignore errors
     }
   }
 
-  console.log(
-    `  ${chalk.green('✓')} Cleaned ${chalk.bold(deletedCount)} snapshot${deletedCount !== 1 ? 's' : ''}${skippedCount > 0 ? chalk.dim(` (${skippedCount} didn't exist)`) : ''}`,
-  );
+  // Remove empty directories (from deepest to shallowest)
+  const allDirs = new Set<string>();
+  function collectDirectories(dir: string): void {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const fullPath = join(dir, entry.name);
+          allDirs.add(fullPath);
+          collectDirectories(fullPath);
+        }
+      }
+    } catch (error) {
+      // Ignore errors
+    }
+  }
+
+  collectDirectories(snapshotPath);
+  const sortedDirs = Array.from(allDirs).sort((a, b) => b.length - a.length);
+  for (const dir of sortedDirs) {
+    removeEmptyDirectories(dir);
+  }
+
+  console.log(`  ✓ Cleaned ${deletedCount} orphaned snapshots (${skippedCount} kept)`);
 }
 
 async function globalSetup(_config: FullConfig): Promise<void> {
@@ -290,7 +264,7 @@ async function globalSetup(_config: FullConfig): Promise<void> {
 
   // Delete existing snapshots if --clean flag is set
   if (runtimeOptions.clean && runtimeOptions.updateSnapshots) {
-    await cleanMatchingSnapshots(indexData, runtimeOptions);
+    await cleanOrphanedSnapshots(indexData, runtimeOptions);
   }
 
   console.log('');

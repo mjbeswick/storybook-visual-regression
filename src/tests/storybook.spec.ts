@@ -279,18 +279,8 @@ function arraysFromIndex(index: unknown): {
         : id;
     storyDisplayNames[id] = human || id;
 
-    // Create hierarchical snapshot path from title and name
-    if (entry && entry.title && entry.name) {
-      // Convert title "Screens / Colleague / SSC Cash" to "Screens/Colleague/SSC Cash"
-      const folderPath = entry.title.split(' / ').join('/');
-      // Sanitize the story name for filename
-      const fileName = entry.name.replace(/[<>:"|?*]/g, '-');
-      storySnapshotPaths[id] = `${folderPath}/${fileName}.png`;
-    } else {
-      // Fallback to sanitized ID if title or name is missing
-      const sanitized = id.replace(/[^a-zA-Z0-9]/g, '-');
-      storySnapshotPaths[id] = `${sanitized}.png`;
-    }
+    // Use story ID directly as snapshot filename
+    storySnapshotPaths[id] = `${id}.png`;
   }
   return { storyIds, storyImportPaths, storyDisplayNames, storySnapshotPaths };
 }
@@ -434,11 +424,26 @@ test.describe('Visual Regression', () => {
   test.describe.configure({ mode: 'parallel' });
 
   if (filteredStoryIds.length === 0) {
-    test('No stories discovered', () => {
-      throw new Error(
-        'No stories were discovered in Storybook. Ensure Storybook is running or build storybook-static first.',
-      );
-    });
+    // Check if this is due to filtering or actual discovery failure
+    if (storyIds.length === 0) {
+      test('No stories discovered', () => {
+        throw new Error(
+          'No stories were discovered in Storybook. Ensure Storybook is running or build storybook-static first.',
+        );
+      });
+    } else {
+      // Stories were discovered but filtered out
+      if (runtimeOptions.missingOnly) {
+        console.log(
+          '✅ All stories already have snapshots. Nothing to update with --missing-only.',
+        );
+      } else {
+        console.log(
+          'ℹ️  No stories match the current filters. Adjust your include/exclude/grep patterns.',
+        );
+      }
+      // Don't create any tests - just log the message and exit
+    }
     return;
   }
 
@@ -668,16 +673,14 @@ test.describe('Visual Regression', () => {
           if (body) body.style.overflow = 'hidden';
         });
 
-        // Get the hierarchical snapshot path and split it into parts for Playwright
-        const snapshotPathStr =
-          storySnapshotPaths[storyId] || `${storyId.replace(/[^a-zA-Z0-9]/g, '-')}.png`;
+        // Get the snapshot filename using story ID
+        const snapshotFileName = storySnapshotPaths[storyId] || `${storyId}.png`;
 
-        // Split the path into an array to preserve folder structure
-        // e.g., "Screens/Colleague/Dashboard.png" -> ["Screens", "Colleague", "Dashboard.png"]
-        const snapshotPathParts = snapshotPathStr.split('/');
+        // Use the filename directly (no folder structure)
+        const snapshotPathParts = [snapshotFileName];
 
         // Construct the full snapshot path for validation
-        const snapshotPath = join(snapshotsDirectory, snapshotPathStr);
+        const snapshotPath = join(snapshotsDirectory, snapshotFileName);
         if (debugEnabled) {
           console.log(`SVR: snapshot path resolved to ${snapshotPath}`);
         }
@@ -752,7 +755,7 @@ test.describe('Visual Regression', () => {
             console.error(chalk.red(`${label('Results')}${resultsRoot}`));
             console.error(chalk.red('──────────────────────────────────────\n'));
             throw new Error(
-              `Screenshot mismatch for story '${storyId}'. Snapshot: ${snapshotPathStr}`,
+              `Screenshot mismatch for story '${storyId}'. Snapshot: ${snapshotFileName}`,
             );
           }
         }

@@ -2,6 +2,11 @@
 
 A comprehensive visual regression testing tool for any Storybook project using Playwright. Automatically discovers stories from a running Storybook dev server or a built `storybook-static` folder, captures deterministic screenshots, and reports pass/fail with a simple list-style output. Includes fast parallel execution, retries, fail-fast, and optional Playwright reporter integration.
 
+**Two ways to use:**
+
+- **CLI Tool** - Command-line interface for CI/CD and automated testing
+- **Storybook Addon** - Beautiful UI integrated directly into Storybook for interactive testing
+
 The tool automatically detects your Storybook configuration including:
 
 - Port from package.json scripts
@@ -46,6 +51,24 @@ npm install --save-dev storybook-visual-regression @playwright/test
 # Optional: install all browsers
 npx storybook-visual-regression install-browsers --browser all
 ```
+
+### Storybook Addon
+
+For a more integrated experience, you can also install the **Storybook addon** that provides a beautiful UI directly within Storybook:
+
+```bash
+npm install --save-dev @storybook-visual-regression/addon
+```
+
+The addon includes:
+
+- 🎯 **Run tests directly from Storybook** - Click toolbar button to test current story
+- 🔄 **Test all stories** - Run visual regression on your entire Storybook
+- 📊 **Real-time results** - See test status update live in the panel
+- ✅ **Update baselines** - One-click baseline updates when changes are intentional
+- ⚡ **Built-in API server** - No separate backend needed!
+
+See the [addon installation guide](addon/INSTALL.md) for detailed setup instructions.
 
 ### Quick Start
 

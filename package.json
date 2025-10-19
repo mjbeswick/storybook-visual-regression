@@ -15,14 +15,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
+    "build:all": "npm run build && cd addon && npm run build && cd ..",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
-    "prepublishOnly": "npm run build && npm run test",
-    "prepare": "npm run build",
+    "prepublishOnly": "npm run build && cd addon && npm run build && cd .. && npm run test",
+    "prepare": "npm run build && cd addon && npm run build && cd ..",
     "postinstall": "playwright install chromium",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

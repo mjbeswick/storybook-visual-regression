@@ -1,0 +1,48 @@
+{
+  "name": "@storybook-visual-regression/addon",
+  "version": "0.2.0",
+  "description": "Fully functional Storybook addon for visual regression testing with built-in API server",
+  "main": "dist/preset.js",
+  "types": "dist/preset.d.ts",
+  "keywords": [
+    "storybook",
+    "addon",
+    "visual-regression",
+    "testing",
+    "playwright"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "peerDependencies": {
+    "@storybook/blocks": "^7.0.0 || ^8.0.0",
+    "@storybook/components": "^7.0.0 || ^8.0.0",
+    "@storybook/icons": "^1.0.0",
+    "@storybook/manager-api": "^7.0.0 || ^8.0.0",
+    "@storybook/preview-api": "^7.0.0 || ^8.0.0",
+    "@storybook/theming": "^7.0.0 || ^8.0.0",
+    "@storybook/types": "^7.0.0 || ^8.0.0",
+    "react": "^16.8.0 || ^17.0.0 || ^18.0.0",
+    "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0"
+  },
+  "devDependencies": {
+    "@storybook/blocks": "^8.0.0",
+    "@storybook/components": "^8.0.0",
+    "@storybook/icons": "^1.2.0",
+    "@storybook/manager-api": "^8.0.0",
+    "@storybook/preview-api": "^8.0.0",
+    "@storybook/theming": "^8.0.0",
+    "@storybook/types": "^8.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}
+

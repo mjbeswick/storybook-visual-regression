@@ -56,6 +56,7 @@ export function createPlaywrightConfig(
     projects: [
       {
         name: userConfig.browser,
+        outputDir: userConfig.resultsPath,
         use: {
           ...(userConfig.browser === 'chromium' && { channel: 'chromium' }),
           ...(userConfig.browser === 'firefox' && { channel: 'firefox' }),
@@ -73,6 +74,7 @@ export function createPlaywrightConfig(
       toHaveScreenshot: {
         threshold: userConfig.threshold,
         animations: userConfig.disableAnimations ? 'disabled' : 'allow',
+        maxDiffPixels: 0,
       },
     },
     webServer: wrappedCommand
@@ -88,6 +90,12 @@ export function createPlaywrightConfig(
             ...process.env,
             NODE_ENV: 'development',
             NODE_NO_WARNINGS: '1',
+            // Suppress npm warnings
+            npm_config_loglevel: 'error',
+            npm_config_silent: 'true',
+            npm_config_progress: 'false',
+            npm_config_audit: 'false',
+            npm_config_fund: 'false',
           },
           ignoreHTTPSErrors: true,
         }
