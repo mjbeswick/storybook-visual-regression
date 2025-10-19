@@ -33,6 +33,7 @@ export type VisualRegressionConfig = {
 
   // Screenshot configuration
   threshold: number;
+  maxDiffPixels?: number;
   snapshotPath: string;
   resultsPath: string;
 

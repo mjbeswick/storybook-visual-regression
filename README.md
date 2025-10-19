@@ -183,6 +183,8 @@ Common options (defaults shown):
 - `--retries <n>`: retries on failure (default `0`)
 - `--max-failures <n>`: stop early after N failures (default `10`, <=0 disables)
 - `--browser <browser>`: Browser to use (chromium|firefox|webkit) (default `chromium`)
+- `--threshold <number>`: Screenshot comparison threshold (0.0-1.0) (default `0.2`)
+- `--max-diff-pixels <number>`: Maximum number of pixels that can differ (default `0`)
 - `--timezone <tz>`: e.g. `Europe/London` (default `Europe/London`)
 - `--locale <bcp47>`: e.g. `en-GB` (default `en-GB`)
 - `--reporter <reporter>`: Playwright reporter (list|line|dot|json|junit) (default `list`)
@@ -316,29 +318,116 @@ By default the tool fetches `index.json` from the running dev server at `<url>:<
 
 ### CI usage
 
-GitHub Actions example:
+#### Cross-Platform Font Rendering
+
+**Important**: If you create snapshots on macOS but run tests on Linux (GitHub Actions), you may encounter font rendering differences. Use these configurations:
+
+**Option 1: Use CI-specific config file**
+
+Create `svr.ci.config.js`:
+
+```javascript
+export default {
+  // Allow more pixel differences for font rendering
+  threshold: 0.5,
+  maxDiffPixels: 200,
+
+  // Use deterministic settings
+  frozenTime: '2024-01-15T10:30:00.000Z',
+  timezone: 'UTC',
+  locale: 'en-US',
+
+  // Ensure consistent rendering
+  disableAnimations: true,
+  waitForNetworkIdle: true,
+  contentStabilizationTime: 1000,
+
+  // CI optimizations
+  workers: 4,
+  timeout: 60000,
+  serverTimeout: 180000,
+  maxFailures: 0,
+};
+```
+
+**Option 2: Use font-tolerant config**
+
+Create `svr.font-tolerant.config.js`:
+
+```javascript
+export default {
+  // More precise font rendering tolerance
+  threshold: 0.1,
+  maxDiffPixels: 100, // Allow up to 100 pixels difference
+
+  // Font-specific settings
+  frozenTime: '2024-01-15T10:30:00.000Z',
+  timezone: 'UTC',
+  locale: 'en-US',
+  disableAnimations: true,
+  waitForNetworkIdle: true,
+  contentStabilizationTime: 1000,
+};
+```
+
+#### GitHub Actions Example
 
 ```yaml
 name: Visual Regression
 on: [pull_request]
 jobs:
-  test:
+  visual-regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
+          cache: 'npm'
       - run: npm ci
-      - run: npx storybook-visual-regression install-browsers --browser chromium
+      - run: npx playwright install chromium --with-deps
+      - run: npm run build-storybook
       - run: |
           npx storybook-visual-regression test \
             --command "npm run storybook" \
             --url http://localhost \
             --port 9009 \
             --workers 4 \
-            --max-failures 1 \
-            --install-browsers chromium
+            --threshold 0.5 \
+            --max-diff-pixels 200 \
+            --timezone UTC \
+            --locale en-US \
+            --disable-animations \
+            --wait-until networkidle \
+            --final-settle 1000 \
+            --resource-settle 300 \
+            --max-failures 0
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: visual-regression-results
+          path: visual-regression/results/
+          retention-days: 7
+```
+
+#### Command Line Options for Font Rendering
+
+You can also configure font rendering tolerance directly via CLI options:
+
+```bash
+# High tolerance for CI environments
+npx storybook-visual-regression test \
+  --threshold 0.5 \
+  --max-diff-pixels 200 \
+  --timezone UTC \
+  --locale en-US
+
+# More precise tolerance for font differences
+npx storybook-visual-regression test \
+  --threshold 0.1 \
+  --max-diff-pixels 100 \
+  --timezone UTC \
+  --locale en-US
 ```
 
 ### Troubleshooting
@@ -350,6 +439,7 @@ jobs:
 - **Test timeouts** → The tool auto-calculates test timeout based on all wait operations. If stories still timeout, increase `--nav-timeout` and `--wait-timeout`.
 - **Stories load instantly in browser but timeout in tests** → The tool automatically handles this by using resource-based loading detection. If needed, increase `--resource-settle` to give resources more time to finish.
 - **Fonts not loading properly** → Increase `--nav-timeout` or `--resource-settle` to give fonts more time. The tool explicitly waits for fonts using `document.fonts.ready`.
+- **Font rendering differences between macOS and Linux** → Use `--threshold 0.5` and `--max-diff-pixels 200` for CI environments. Create snapshots on the same OS as your CI, or use the provided CI config files.
 - **Exiting early** → Increase or disable `--max-failures` (set `<= 0`).
 - **Storybook server stops during tests** → Use `--max-failures 0` to prevent early termination, or check for port conflicts.
 - **Verbose failure output** → Use `--quiet` flag to suppress detailed error messages and see only test progress.

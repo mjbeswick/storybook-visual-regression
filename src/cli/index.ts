@@ -40,6 +40,9 @@ type CliOptions = {
   updateSnapshots?: boolean;
   browser?: string;
   printUrls?: boolean;
+  // Screenshot configuration
+  threshold?: string;
+  maxDiffPixels?: string;
   // Timeouts and stability tuning
   navTimeout?: string; // ms
   waitTimeout?: string; // ms
@@ -147,6 +150,10 @@ async function createConfigFromOptions(
     }
   }
 
+  // Parse threshold and maxDiffPixels options
+  const thresholdOpt = options.threshold ? parseFloat(options.threshold) : undefined;
+  const maxDiffPixelsOpt = parseNumberOption(options.maxDiffPixels);
+
   return {
     ...detectedConfig,
     storybookUrl,
@@ -161,6 +168,8 @@ async function createConfigFromOptions(
     timezone: options.timezone || detectedConfig.timezone,
     locale: options.locale || detectedConfig.locale,
     browser,
+    threshold: thresholdOpt ?? detectedConfig.threshold,
+    maxDiffPixels: maxDiffPixelsOpt ?? detectedConfig.maxDiffPixels,
     snapshotPath: snapshotsDir,
     resultsPath: resultsDir,
   };
@@ -711,6 +720,8 @@ program
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
+  .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
+  .option('--max-diff-pixels <number>', 'Maximum number of pixels that can differ', '0')
   // Timing and stability options (ms / counts)
   .option(
     '--nav-timeout <ms>',
@@ -821,6 +832,8 @@ program
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
+  .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
+  .option('--max-diff-pixels <number>', 'Maximum number of pixels that can differ', '0')
   .option(
     '--nav-timeout <ms>',
     'Maximum time to wait for page navigation (page.goto). Increase for slow-loading stories or networks.',

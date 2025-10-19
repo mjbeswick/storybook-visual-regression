@@ -18,6 +18,7 @@ export function createDefaultConfig(): VisualRegressionConfig {
 
     // Screenshot configuration
     threshold: 0.2,
+    maxDiffPixels: 0, // Strict by default, can be overridden for CI
     snapshotPath: './visual-regression/snapshots',
     resultsPath: './visual-regression/results',
 

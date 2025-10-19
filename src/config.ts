@@ -74,7 +74,7 @@ export function createPlaywrightConfig(
       toHaveScreenshot: {
         threshold: userConfig.threshold,
         animations: userConfig.disableAnimations ? 'disabled' : 'allow',
-        maxDiffPixels: 0,
+        maxDiffPixels: userConfig.maxDiffPixels ?? 0,
       },
     },
     webServer: wrappedCommand
