@@ -1,0 +1,25 @@
+:global(.failed-story-item > a > div > svg) {
+  color: #ff3636 !important;
+}
+
+:global(.failed-story-item:hover) {
+  background-color: #fbc1c1 !important;
+}
+
+:global(.failed-story-item.selected) {
+  background-color: #ff3636 !important;
+  color: #ffffff !important;
+}
+
+:global(.failed-story-item.selected > a > div > svg) {
+  color: #ffffff !important;
+}
+
+:global(.failed-parent-item > div > svg) {
+  color: #ff3636 !important;
+}
+
+:global(.failed-parent-item:hover) {
+  background-color: #fbc1c1 !important;
+}
+

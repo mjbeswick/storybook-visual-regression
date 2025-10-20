@@ -308,7 +308,213 @@ storybook-visual-regression test \
 4. Commit changes with descriptive messages
 5. Version bump and publish
 
-### 12. Dependencies
+### 12. Code Quality and ESLint Practices
+
+**CRITICAL**: Maintain strict TypeScript typing and ESLint compliance throughout the codebase.
+
+#### 12.1. Regex Pattern Escaping
+
+- ✓ **Correct**: Properly escape regex patterns in template literals:
+  ```typescript
+  // In template literals, escape backslashes
+  new RegExp(`(\\s|^)${flag}(\\s|=)`)
+  /(\\s|^)(-p|--port)(\\s|=)/
+  ```
+- ✘ **Wrong**: Unescaped patterns that trigger `no-useless-escape` warnings:
+  ```typescript
+  // This triggers ESLint error
+  new RegExp(`(\s|^)${flag}(\s|=)`)
+  /(\s|^)(-p|--port)(\s|=)/
+  ```
+
+**Why**: Template literals require double escaping (`\\s`) while regex literals require single escaping (`\s`).
+
+#### 12.2. Type Safety Practices
+
+- ✓ **Correct**: Use proper type assertions with specific interfaces:
+  ```typescript
+  saveUserConfig(cwd, config as VisualRegressionConfig);
+  ```
+- ✘ **Wrong**: Unsafe `any` type usage:
+  ```typescript
+  saveUserConfig(cwd, config as any);
+  saveUserConfig(cwd, config as unknown as any);
+  ```
+
+**Why**:
+
+- Prevents runtime type errors
+- Enables better IDE support and autocomplete
+- Makes refactoring safer
+- Follows TypeScript best practices
+
+#### 12.3. ESLint Rule Compliance
+
+**Critical Rules to Follow**:
+
+- `@typescript-eslint/no-explicit-any`: Never use `any` type
+- `@typescript-eslint/no-unsafe-argument`: Don't pass `any` to typed parameters
+- `no-useless-escape`: Properly escape regex patterns
+- `@typescript-eslint/prefer-types`: Use `type` over `interface` when possible
+
+**Common Patterns**:
+
+```typescript
+// ✅ Good: Proper type assertion
+const config: VisualRegressionConfig = userConfig as VisualRegressionConfig;
+
+// ✅ Good: Proper regex escaping in template literals
+const pattern = new RegExp(`(\\s|^)${flag}(\\s|=)`);
+
+// ✅ Good: Using type instead of interface
+type CliOptions = {
+  config?: string;
+  port?: string;
+  // ...
+};
+
+// ❌ Bad: Unsafe any usage
+const config = userConfig as any;
+
+// ❌ Bad: Unescaped regex in template literal
+const pattern = new RegExp(`(\s|^)${flag}(\s|=)`);
+```
+
+#### 12.4. Code Quality Workflow
+
+1. **Before committing**: Run `npm run lint` to check for ESLint errors
+2. **Fix all errors**: Never commit code with ESLint violations
+3. **Type safety**: Ensure all type assertions use proper interfaces
+4. **Regex patterns**: Double-check escaping in template literals
+5. **Test locally**: Verify changes work before committing
+
+### 13. Addon Architecture
+
+The project includes a Storybook addon (`addon/`) that provides a UI for running visual regression tests directly from Storybook.
+
+#### 13.1. Addon Components
+
+- **Manager (`addon/src/manager.tsx`)**: Main addon registration and provider setup
+- **Panel (`addon/src/Panel.tsx`)**: Main UI component for running tests and viewing results
+- **Tool (`addon/src/Tool.tsx`)**: Toolbar buttons for showing diff images in the preview iframe
+- **Preview (`addon/src/preview.ts`)**: Browser-side code that communicates with the API server
+- **Server (`addon/src/server.ts`)**: Node.js API server that spawns CLI processes
+- **Types (`addon/src/types.ts`)**: TypeScript type definitions for the addon
+
+#### 13.2. Addon Communication Flow
+
+1. **Manager → Preview**: Uses Storybook's channel system to emit events
+2. **Preview → Server**: Makes HTTP requests to localhost:6007 API server
+3. **Server → CLI**: Spawns `storybook-visual-regression` CLI processes
+4. **CLI → Server**: Streams JSON output via stdout
+5. **Server → Preview**: Streams results via Server-Sent Events (SSE)
+6. **Preview → Manager**: Emits test results back through Storybook channel
+
+#### 13.3. Addon TypeScript Best Practices
+
+**CRITICAL**: Follow these patterns for proper TypeScript usage in the addon:
+
+- ✓ **Correct**: Define explicit types for all data structures
+- ✓ **Correct**: Use proper channel typing with explicit interfaces
+- ✓ **Correct**: Handle undefined values with proper fallbacks
+- ✓ **Correct**: Remove unused variables and imports
+- ✓ **Correct**: Use empty catch blocks with comments when errors should be ignored
+- ✘ **Wrong**: Use `any` type - always define proper types
+- ✘ **Wrong**: Leave unused variables or imports
+- ✘ **Wrong**: Use empty catch blocks without comments
+
+**Channel Typing Pattern**:
+
+```typescript
+type Channel = {
+  emit: (event: string, data?: unknown) => void;
+  on: (event: string, callback: (data?: unknown) => void) => void;
+  off: (event: string, callback: (data?: unknown) => void) => void;
+};
+
+const getChannel = (): Channel | null => {
+  if (
+    typeof window !== 'undefined' &&
+    (window as unknown as { __STORYBOOK_ADDONS_CHANNEL__?: Channel }).__STORYBOOK_ADDONS_CHANNEL__
+  ) {
+    return (window as unknown as { __STORYBOOK_ADDONS_CHANNEL__: Channel })
+      .__STORYBOOK_ADDONS_CHANNEL__;
+  }
+  return null;
+};
+```
+
+**Error Handling Pattern**:
+
+```typescript
+// For non-fatal errors that should be ignored
+} catch {
+  // ignore malformed messages
+}
+
+// For operations that might fail but shouldn't break the flow
+try {
+  watcher.close();
+} catch {
+  // ignore close errors
+}
+```
+
+**Undefined Value Handling**:
+
+```typescript
+// Always provide fallbacks for potentially undefined values
+const storyName = title || sid || 'Unknown Story';
+```
+
+#### 13.4. Addon File Structure
+
+```
+addon/
+├── src/
+│   ├── manager.tsx          # Addon registration and provider
+│   ├── Panel.tsx           # Main UI panel component
+│   ├── Panel.module.css    # Panel-specific styles
+│   ├── Tool.tsx            # Toolbar buttons component
+│   ├── Tool.module.css     # Tool-specific styles
+│   ├── StoryHighlighter.tsx # Story highlighting component
+│   ├── StoryHighlighter.module.css # Highlighting styles
+│   ├── TestResultsContext.tsx # React context for test results
+│   ├── preview.ts          # Browser-side preview code
+│   ├── server.ts           # Node.js API server
+│   ├── constants.ts        # Event constants
+│   ├── types.ts           # TypeScript type definitions
+│   └── types/
+│       └── css.d.ts       # CSS module type declarations
+├── dist/                   # Compiled addon output
+├── package.json           # Addon package configuration
+└── README.md             # Addon documentation
+```
+
+#### 13.5. Addon Development Workflow
+
+1. Make changes to TypeScript files in `addon/src/`
+2. Run `npm run build` in the addon directory to compile
+3. Test the addon in a Storybook instance
+4. The addon automatically reloads when files change
+5. Use `npm link` to test the addon in other projects
+
+#### 13.6. Addon ESLint Configuration
+
+The addon uses strict ESLint rules:
+
+- `@typescript-eslint/no-explicit-any`: Prevents use of `any` type
+- `@typescript-eslint/no-unused-vars`: Prevents unused variables
+- `no-empty`: Prevents empty block statements without comments
+
+**Common ESLint Fixes**:
+
+- Replace `any` with proper type definitions
+- Remove unused variables and imports
+- Add comments to empty catch blocks
+- Use proper fallbacks for undefined values
+
+### 14. Dependencies
 
 - **Core**: `@playwright/test`, `commander`, `chalk`, `ora`
 - **Dev**: `typescript`, `eslint`, `prettier`, `vitest`
@@ -322,5 +528,224 @@ storybook-visual-regression test \
 - **Cleanup**: Always clean up processes and temp files
 - **Playwright reporter**: Prefer the Playwright reporter path over direct CLI
 - **Direct configuration**: Pass all options through configuration objects, not environment variables
+- **Type safety**: Never use `any` type - always use proper TypeScript interfaces
+- **Regex escaping**: Double-escape backslashes in template literals (`\\s` not `\s`)
+- **ESLint compliance**: Fix all linting errors before committing code
 - **Git hygiene**: Always update .gitignore when adding new generated files or directories
 - **Documentation**: Update README.md when making significant changes to functionality or usage
+
+## Recent Learnings and Updates
+
+### Configuration Management System
+
+**CRITICAL**: The CLI now uses a sophisticated configuration management system that prioritizes user convenience and persistence.
+
+#### Configuration File Discovery
+
+The CLI searches for configuration files in this order:
+
+1. `visual-regression/config.json` (default, preferred)
+2. `svr.config.js`
+3. `svr.config.ts`
+4. `svr.config.mjs`
+5. `svr.config.cjs`
+6. `.svrrc.json`
+7. `.svrrc.js`
+8. `.svrrc`
+
+#### Configuration Merging Logic
+
+**Priority Order** (highest to lowest):
+
+1. CLI command-line options
+2. User configuration file (`visual-regression/config.json`)
+3. Detected Storybook configuration
+4. Default configuration
+
+#### Configuration Persistence
+
+- ✓ **Correct**: CLI options override config file values
+- ✓ **Correct**: Overridden values are persisted back to `config.json`
+- ✓ **Correct**: Only non-default values are written to config file (prevents bloat)
+- ✓ **Correct**: Config file is created automatically if it doesn't exist
+- ✘ **Wrong**: Override config without persisting changes
+- ✘ **Wrong**: Write default values to config file
+
+#### New Configuration Options
+
+```typescript
+type UserConfig = {
+  // ... existing options ...
+  fullPage?: boolean; // New option for full-page screenshots
+  // ... other options ...
+};
+```
+
+### Storybook Addon Development Patterns
+
+#### Channel Type Safety
+
+**CRITICAL**: Always properly type Storybook addon channels to avoid TypeScript errors:
+
+```typescript
+type Channel = {
+  emit: (event: string, data?: unknown) => void;
+  on: (event: string, callback: (data?: unknown) => void) => void;
+  off: (event: string, callback: (data?: unknown) => void) => void;
+};
+
+const getChannel = () => {
+  if (
+    typeof window !== 'undefined' &&
+    (window as unknown as { __STORYBOOK_ADDONS_CHANNEL__?: Channel }).__STORYBOOK_ADDONS_CHANNEL__
+  ) {
+    return (window as unknown as { __STORYBOOK_ADDONS_CHANNEL__: Channel })
+      .__STORYBOOK_ADDONS_CHANNEL__;
+  }
+  return null;
+};
+```
+
+#### Event Handler Pattern
+
+Always cast `unknown` data to specific types in event handlers:
+
+```typescript
+channel.on(EVENTS.RUN_TEST, async (data: unknown) => {
+  const eventData = data as { storyId?: string };
+  const storyId = eventData.storyId;
+  // ... rest of handler
+});
+```
+
+#### Performance Optimization
+
+**Log Rendering**: Use refs for incremental DOM updates to improve performance:
+
+```typescript
+const logRef = useRef<HTMLDivElement>(null);
+const lastLogLength = useRef(0);
+
+useEffect(() => {
+  const el = logRef.current;
+  if (!el) return;
+
+  // Append only new lines to avoid re-rendering entire log
+  for (let i = lastLogLength.current; i < logs.length; i++) {
+    const line = logs[i];
+    // Parse and render line...
+    const p = document.createElement('p');
+    p.textContent = renderedLine;
+    el.appendChild(p);
+  }
+  lastLogLength.current = logs.length;
+  el.scrollTop = el.scrollHeight;
+}, [logs]);
+```
+
+#### UI Component Patterns
+
+**Button Icons**: Use Storybook's icon library consistently:
+
+```typescript
+import { PlayIcon, SyncIcon, DownloadIcon, EyeIcon, PhotoIcon } from '@storybook/icons';
+
+<Button title="Run visual regression test for the current story">
+  <PlayIcon className={styles.buttonIcon} />
+  Test Current
+</Button>
+```
+
+**Active State Styling**: Apply active states for interactive elements:
+
+```css
+.diffButtonActive {
+  background-color: rgba(115, 130, 140, 0.1);
+}
+```
+
+#### Error Handling in Addons
+
+- Always provide fallbacks for undefined values: `title || sid || 'Unknown Story'`
+- Handle missing story data gracefully
+- Provide clear error messages in console logs
+- Use try-catch blocks around critical operations
+
+### CLI Command Structure Updates
+
+#### New Command Options
+
+**Screenshot Options**:
+
+- `--full-page`: Take full-page screenshots instead of viewport screenshots
+- `--threshold`: Pixel difference threshold for comparisons
+- `--max-diff-pixels`: Maximum number of different pixels allowed
+
+**Timeout Options**:
+
+- `--nav-timeout`: Navigation timeout in milliseconds
+- `--wait-timeout`: Element wait timeout in milliseconds
+- `--overlay-timeout`: Overlay hide timeout in milliseconds
+- `--stabilize-interval`: Stabilization check interval
+- `--stabilize-attempts`: Number of stabilization attempts
+- `--final-settle`: Final settle time before screenshot
+- `--resource-settle`: Resource loading settle time
+
+#### Configuration Override Examples
+
+```bash
+# Override config with CLI options
+storybook-visual-regression test --full-page --threshold 0.1
+
+# Use custom config file
+storybook-visual-regression test --config custom-config.json
+
+# Override output directory
+storybook-visual-regression test --output "test/visual-regression"
+```
+
+### Development Best Practices Updates
+
+#### Code Quality
+
+- **ESLint**: Always fix ESLint errors before committing
+- **TypeScript**: Use proper typing, avoid `any` types
+- **Unused Imports**: Remove unused imports and variables
+- **Empty Blocks**: Avoid empty catch blocks or provide meaningful error handling
+
+#### Build Process
+
+- Always run `npm run build` after making changes
+- Test locally before committing
+- Use `npm run build` in both main project and addon directory
+- Copy CSS modules to dist directory in postbuild step
+
+#### File Organization
+
+- Keep CSS modules with their components
+- Use TypeScript interfaces for all data structures
+- Separate concerns between CLI, addon, and core logic
+- Maintain consistent naming conventions
+
+### Updated Dependencies
+
+- **Core**: `@playwright/test`, `commander`, `chalk`, `ora`
+- **Dev**: `typescript`, `eslint`, `prettier`, `vitest`
+- **Addon**: `@storybook/manager-api`, `@storybook/components`, `@storybook/icons`
+- **Peer**: `@playwright/test` (user must install)
+
+## Updated Remember List
+
+- **WebServer first**: Always use Playwright's webServer for server management
+- **Port detection**: Extract ports from commands when possible
+- **Error context**: Provide helpful troubleshooting steps
+- **Cleanup**: Always clean up processes and temp files
+- **Playwright reporter**: Prefer the Playwright reporter path over direct CLI
+- **Direct configuration**: Pass all options through configuration objects, not environment variables
+- **Config persistence**: Always persist CLI overrides back to config file
+- **Type safety**: Properly type all Storybook addon channels and event handlers
+- **Performance**: Use refs for incremental DOM updates in React components
+- **UI consistency**: Use Storybook's icon library and component system
+- **Git hygiene**: Always update .gitignore when adding new generated files or directories
+- **Documentation**: Update README.md when making significant changes to functionality or usage
+- **Build verification**: Always test builds locally before committing changes

@@ -1,5 +1,6 @@
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { createDefaultConfig } from '../config/defaultConfig.js';
 import { pathToFileURL } from 'url';
 
 export type UserConfig = {
@@ -49,6 +50,8 @@ export type UserConfig = {
 
   // Reporter
   reporter?: string;
+  // Screenshot
+  fullPage?: boolean;
 };
 
 /**
@@ -61,6 +64,10 @@ export type UserConfig = {
  * 5. .svrrc
  */
 export async function discoverConfigFile(cwd: string): Promise<string | null> {
+  // Prefer the default JSON config inside visual-regression
+  const preferred = join(cwd, 'visual-regression', 'config.json');
+  if (existsSync(preferred)) return preferred;
+
   const candidates = [
     'svr.config.js',
     'svr.config.ts',
@@ -96,15 +103,15 @@ export async function loadConfigFile(configPath: string): Promise<UserConfig> {
     // Handle JS/TS files (ESM)
     const fileUrl = pathToFileURL(configPath).href;
     const module = await import(fileUrl);
-    
+
     // Support both default export and named export
     const config = module.default || module.config || module;
-    
+
     // If it's a function, call it
     if (typeof config === 'function') {
       return (await config()) as UserConfig;
     }
-    
+
     return config as UserConfig;
   } catch (error) {
     throw new Error(
@@ -116,10 +123,7 @@ export async function loadConfigFile(configPath: string): Promise<UserConfig> {
 /**
  * Load user config from file or return empty config
  */
-export async function loadUserConfig(
-  cwd: string,
-  explicitPath?: string,
-): Promise<UserConfig> {
+export async function loadUserConfig(cwd: string, explicitPath?: string): Promise<UserConfig> {
   // If explicit path provided, use it
   if (explicitPath) {
     const resolvedPath = join(cwd, explicitPath);
@@ -129,7 +133,7 @@ export async function loadUserConfig(
     return loadConfigFile(resolvedPath);
   }
 
-  // Try to discover config file
+  // Try to discover config file; prefers visual-regression/config.json
   const discoveredPath = await discoverConfigFile(cwd);
   if (discoveredPath) {
     console.log(`📝 Using config file: ${discoveredPath}`);
@@ -140,3 +144,57 @@ export async function loadUserConfig(
   return {};
 }
 
+export function getDefaultConfigPath(cwd: string): string {
+  return join(cwd, 'visual-regression', 'config.json');
+}
+
+function computeUserDefaults(): Partial<UserConfig> {
+  const d = createDefaultConfig();
+  // Map tool defaults → user config keys
+  const mapped: Partial<UserConfig> = {
+    url: 'http://localhost',
+    port: d.storybookPort,
+    command: d.storybookCommand,
+    workers: d.workers,
+    retries: d.retries,
+    maxFailures: d.maxFailures,
+    output: 'visual-regression',
+    browser: d.browser,
+    timezone: d.timezone,
+    locale: d.locale,
+    threshold: d.threshold,
+    maxDiffPixels: d.maxDiffPixels,
+    // Leave others undefined so they are not filtered unless explicitly known
+  } as Partial<UserConfig & { threshold: number; maxDiffPixels?: number }>;
+  return mapped;
+}
+
+function pruneDefaults(config: UserConfig): UserConfig {
+  const defaults = computeUserDefaults();
+  const prunedEntries = Object.entries(config)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .filter(([k, v]) => {
+      // Remove empty arrays
+      if (Array.isArray(v) && v.length === 0) return false;
+      // If we have a known default and it matches, drop it
+      if (Object.prototype.hasOwnProperty.call(defaults, k)) {
+        // @ts-expect-error index access
+        const dv = defaults[k];
+        return dv !== v;
+      }
+      return true;
+    });
+  return Object.fromEntries(prunedEntries) as UserConfig;
+}
+
+export function saveUserConfig(cwd: string, config: UserConfig): void {
+  const toSave = pruneDefaults(config);
+  const filePath = getDefaultConfigPath(cwd);
+  const dir = join(cwd, 'visual-regression');
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  const json = JSON.stringify(toSave, null, 2);
+  writeFileSync(filePath, json, 'utf8');
+  console.log(`📝 Saved config: ${filePath}`);
+}

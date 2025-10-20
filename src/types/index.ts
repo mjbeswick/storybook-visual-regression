@@ -36,6 +36,8 @@ export type VisualRegressionConfig = {
   maxDiffPixels?: number;
   snapshotPath: string;
   resultsPath: string;
+  // Capture full page screenshots
+  fullPage?: boolean;
 
   // Browser configuration
   browser: 'chromium' | 'firefox' | 'webkit';

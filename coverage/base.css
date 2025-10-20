@@ -117,7 +117,6 @@ table.coverage td span.cline-any {
   border-collapse: collapse;
   width: 100%;
 }
-.coverage-summary tr { border-bottom: 1px solid #bbb; }
 .keyline-all { border: 1px solid #ddd; }
 .coverage-summary td, .coverage-summary th { padding: 10px; }
 .coverage-summary tbody { border: 1px solid #bbb; }
@@ -129,14 +128,12 @@ table.coverage td span.cline-any {
   white-space: nowrap;
 }
 .coverage-summary th.file { border-right: none !important; }
-.coverage-summary th.pct { }
 .coverage-summary th.pic,
 .coverage-summary th.abs,
 .coverage-summary td.pct,
 .coverage-summary td.abs { text-align: right; }
 .coverage-summary td.file { white-space: nowrap;  }
 .coverage-summary td.pic { min-width: 120px !important;  }
-.coverage-summary tfoot td { }
 
 .coverage-summary .sorter {
     height: 10px;

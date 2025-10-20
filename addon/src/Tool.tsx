@@ -1,73 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { useChannel, useStorybookApi } from '@storybook/manager-api';
+import { useStorybookApi } from '@storybook/manager-api';
 import { IconButton } from '@storybook/components';
-import { PlayIcon, SyncIcon } from '@storybook/icons';
-import { styled } from '@storybook/theming';
-import { EVENTS } from './constants';
+import { EyeIcon, PhotoIcon } from '@storybook/icons';
+import styles from './Tool.module.css';
 import { useTestResults } from './TestResultsContext';
 import type { TestResult } from './types';
 
-const Spinner = styled.div({
-  width: '16px',
-  height: '16px',
-  border: '2px solid #e5e7eb',
-  borderTop: '2px solid #0ea5e9',
-  borderRadius: '50%',
-  animation: 'spin 1s linear infinite',
-  '@keyframes spin': {
-    '0%': { transform: 'rotate(0deg)' },
-    '100%': { transform: 'rotate(360deg)' },
-  },
-});
-
-const DiffButton = styled(IconButton)({
-  fontSize: '12px',
-  fontWeight: 'bold',
-  minWidth: '32px',
-  height: '32px',
-});
-
 export const Tool: React.FC = () => {
-  const emit = useChannel({});
   const api = useStorybookApi();
   const { results } = useTestResults();
-  const [isTestRunning, setIsTestRunning] = useState(false);
-  const [isTestAllRunning, setIsTestAllRunning] = useState(false);
   const [currentResult, setCurrentResult] = useState<TestResult | null>(null);
   const [showingDiff, setShowingDiff] = useState<{
     type: 'diff' | 'actual' | 'expected' | null;
     result: TestResult | null;
   }>({ type: null, result: null });
-
-  // Listen for test events to update loading state
-  useEffect(() => {
-    const handleTestStart = (data: { storyId: string }) => {
-      if (data.storyId) {
-        setIsTestRunning(true);
-      } else {
-        setIsTestAllRunning(true);
-      }
-    };
-
-    const handleTestComplete = () => {
-      setIsTestRunning(false);
-      setIsTestAllRunning(false);
-    };
-
-    // Listen for test events from the preview
-    const channel = api.getChannel();
-    if (channel) {
-      channel.on(EVENTS.RUN_TEST, handleTestStart);
-      channel.on(EVENTS.RUN_ALL_TESTS, handleTestStart);
-      channel.on(EVENTS.TEST_COMPLETE, handleTestComplete);
-
-      return () => {
-        channel.off(EVENTS.RUN_TEST, handleTestStart);
-        channel.off(EVENTS.RUN_ALL_TESTS, handleTestStart);
-        channel.off(EVENTS.TEST_COMPLETE, handleTestComplete);
-      };
-    }
-  }, [api]);
 
   // Update current result when story changes or results change
   useEffect(() => {
@@ -131,18 +77,7 @@ export const Tool: React.FC = () => {
     }
   }, [api, results]);
 
-  const handleRunTest = () => {
-    const currentStory = api.getCurrentStoryData();
-    if (currentStory) {
-      emit(EVENTS.RUN_TEST, { storyId: currentStory.id });
-    } else {
-      console.error('[Visual Regression] No story selected');
-    }
-  };
-
-  const handleRunAllTests = () => {
-    emit(EVENTS.RUN_ALL_TESTS);
-  };
+  // Removed unused test handlers - tests are now run from the Panel component
 
   // Function to toggle diff image in Storybook iframe
   const toggleDiffInIframe = (result: TestResult, imageType: 'diff' | 'actual' | 'expected') => {
@@ -214,21 +149,6 @@ export const Tool: React.FC = () => {
               align-items: center;
               min-height: 100vh;
             }
-            .image-container {
-              background: white;
-              border-radius: 0;
-              box-shadow: none;
-              padding: 0;
-              max-width: 100%;
-              max-height: 100vh;
-              text-align: center;
-            }
-            .diff-image {
-              max-width: 100%;
-              max-height: 100vh;
-              object-fit: contain;
-              border-radius: 0;
-            }
             .error-message {
               color: #dc2626;
               margin-top: 10px;
@@ -237,15 +157,13 @@ export const Tool: React.FC = () => {
           </style>
         </head>
         <body>
-          <div class="image-container">
-            <img 
-              class="diff-image" 
-              src="${imageUrl}" 
-              alt="${imageType} image for ${result.storyName}"
-              onerror="document.querySelector('.error-message').textContent = 'Failed to load ${imageType} image from server'; document.querySelector('.error-message').style.display = 'block';"
-            />
-            <div class="error-message" style="display: none;"></div>
-          </div>
+          <img 
+            class="diff-image" 
+            src="${imageUrl}" 
+            alt="${imageType} image for ${result.storyName}"
+            onerror="document.querySelector('.error-message').textContent = 'Failed to load ${imageType} image from server'; document.querySelector('.error-message').style.display = 'block';"
+          />
+          <div class="error-message" style="display: none;"></div>
         </body>
         </html>
       `;
@@ -288,34 +206,9 @@ export const Tool: React.FC = () => {
     };
   }, []);
 
-  const isLoading = isTestRunning || isTestAllRunning;
-
   return (
     <>
-      <IconButton
-        key="visual-regression-test"
-        title={
-          isTestRunning
-            ? 'Running visual regression test...'
-            : 'Run visual regression test for current story'
-        }
-        onClick={handleRunTest}
-        disabled={isLoading}
-      >
-        {isTestRunning ? <Spinner /> : <PlayIcon />}
-      </IconButton>
-      <IconButton
-        key="visual-regression-test-all"
-        title={
-          isTestAllRunning
-            ? 'Running all visual regression tests...'
-            : 'Run all visual regression tests'
-        }
-        onClick={handleRunAllTests}
-        disabled={isLoading}
-      >
-        {isTestAllRunning ? <Spinner /> : <SyncIcon />}
-      </IconButton>
+      {/* Test buttons removed */}
 
       {/* Diff buttons for failed tests */}
       {(() => {
@@ -332,22 +225,36 @@ export const Tool: React.FC = () => {
       })() && (
         <>
           {currentResult!.diffPath && (
-            <DiffButton
+            <IconButton
+              className={`${styles.diffButton} ${
+                showingDiff.type === 'diff' &&
+                showingDiff.result?.storyId === currentResult?.storyId
+                  ? styles.diffButtonActive
+                  : ''
+              }`}
               key="visual-regression-diff"
               title="Show visual diff"
               onClick={() => toggleDiffInIframe(currentResult!, 'diff')}
             >
-              D
-            </DiffButton>
+              <EyeIcon style={{ width: 16, height: 16 }} />
+              Difference
+            </IconButton>
           )}
           {currentResult!.expectedPath && (
-            <DiffButton
+            <IconButton
+              className={`${styles.diffButton} ${
+                showingDiff.type === 'expected' &&
+                showingDiff.result?.storyId === currentResult?.storyId
+                  ? styles.diffButtonActive
+                  : ''
+              }`}
               key="visual-regression-expected"
               title="Show expected screenshot"
               onClick={() => toggleDiffInIframe(currentResult!, 'expected')}
             >
-              E
-            </DiffButton>
+              <PhotoIcon style={{ width: 16, height: 16 }} />
+              Expected
+            </IconButton>
           )}
         </>
       )}

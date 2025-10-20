@@ -11,8 +11,10 @@ export const EVENTS = {
   TEST_STARTED: `${ADDON_ID}/test-started`,
   TEST_COMPLETE: `${ADDON_ID}/test-complete`,
   TEST_RESULT: `${ADDON_ID}/test-result`,
+  LOG_OUTPUT: `${ADDON_ID}/log-output`,
   HIGHLIGHT_FAILED_STORIES: `${ADDON_ID}/highlight-failed-stories`,
   CLEAR_RESULTS: `${ADDON_ID}/clear-results`,
   SHOW_DIFF: `${ADDON_ID}/show-diff`,
   HIDE_DIFF: `${ADDON_ID}/hide-diff`,
+  DIFF_SHOWN: `${ADDON_ID}/diff-shown`,
 } as const;

@@ -21,9 +21,9 @@ addons.register(ADDON_ID, () => {
     type: types.PANEL,
     title: 'Visual Regression',
     match: ({ viewMode }) => viewMode === 'story',
-    render: () => (
+    render: ({ active }) => (
       <TestResultsProvider>
-        <Panel />
+        <Panel active={active} />
       </TestResultsProvider>
     ),
   });

@@ -72,7 +72,31 @@ See the [addon installation guide](addon/INSTALL.md) for detailed setup instruct
 
 ### Quick Start
 
-#### 1. Create a config file (recommended)
+#### 1. Configuration (Automatic)
+
+**The tool automatically creates and manages configuration for you!** When you run the `update` command with any options, the tool will:
+
+1. **Create a config file** at `visual-regression/config.json` with your specified options
+2. **Persist your settings** so future `test` commands use the same configuration
+3. **Merge CLI options** with existing config, updating only the options you specify
+
+This means you can start testing immediately without creating config files manually:
+
+```bash
+# First time - creates config with your options
+npx storybook-visual-regression update \
+  --command "npm run storybook" \
+  --url http://localhost:9009 \
+  --workers 16 \
+  --threshold 0.3
+
+# Later runs - automatically uses saved config
+npx storybook-visual-regression test
+```
+
+**Manual config creation (optional):**
+
+If you prefer to create a config file manually, you can still use the traditional approach:
 
 ```bash
 npx storybook-visual-regression init
@@ -98,13 +122,14 @@ export default {
 };
 ```
 
-Config files are discovered automatically in this order:
+**Config file discovery order:**
 
-1. `svr.config.js`
-2. `svr.config.ts`
-3. `svr.config.mjs`
-4. `.svrrc.json`
-5. `.svrrc`
+1. `visual-regression/config.json` (preferred - auto-created)
+2. `svr.config.js`
+3. `svr.config.ts`
+4. `svr.config.mjs`
+5. `.svrrc.json`
+6. `.svrrc`
 
 You can specify a custom config path with `--config <path>`.
 
@@ -228,21 +253,32 @@ Common options (defaults shown):
 **Create snapshots for first time:**
 
 ```bash
-# Using config file (recommended)
-npx storybook-visual-regression init
-npx storybook-visual-regression update
-
-# Or with CLI options
+# Using automatic config creation (recommended)
 npx storybook-visual-regression update \
   --command "npm run storybook" \
-  --url http://localhost:9009
+  --url http://localhost:9009 \
+  --workers 16 \
+  --threshold 0.3
+
+# The tool creates visual-regression/config.json with your settings
+# Future test runs automatically use these settings:
+npx storybook-visual-regression test
+
+# Or with manual config file
+npx storybook-visual-regression init
+npx storybook-visual-regression update
 ```
 
 **Update snapshots after UI changes (cleans old snapshots):**
 
 ```bash
-# Update all snapshots
+# Update all snapshots (uses saved config)
 npx storybook-visual-regression update
+
+# Update with new settings (updates config file)
+npx storybook-visual-regression update \
+  --workers 8 \
+  --threshold 0.2
 
 # Update specific component (cleans only matching snapshots)
 npx storybook-visual-regression update --include "MyComponent"
@@ -260,8 +296,11 @@ npx storybook-visual-regression update --missing-only
 **Run tests:**
 
 ```bash
-# All stories
+# All stories (uses saved config)
 npx storybook-visual-regression test
+
+# Override specific settings for this run
+npx storybook-visual-regression test --workers 4 --threshold 0.1
 
 # Filtered stories
 npx storybook-visual-regression test --include "button*,card*" --exclude "**/wip"

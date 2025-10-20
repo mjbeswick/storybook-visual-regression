@@ -694,7 +694,9 @@ test.describe('Visual Regression', () => {
             throw new Error('Page was closed before screenshot could be taken');
           }
 
-          await expect(page).toHaveScreenshot(snapshotPathParts);
+          await expect(page).toHaveScreenshot(snapshotPathParts, {
+            fullPage: Boolean(runtimeOptions.fullPage),
+          });
         } catch (assertionError) {
           // Check if this is a TypeError from buffer operations (usually after timeout)
           const errorMessage =

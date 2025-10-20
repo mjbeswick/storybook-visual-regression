@@ -2,6 +2,7 @@ import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
 import { spawn } from 'child_process';
 import { parse as parseUrl } from 'url';
 import { readdir, stat, readFile } from 'fs/promises';
+import { watch as watchFs } from 'fs';
 import { join } from 'path';
 
 type TestRequest = {
@@ -145,6 +146,81 @@ export function startApiServer(port = 6007): Server {
         }),
       );
       return;
+    }
+
+    // Watch failed results directory and stream updates (SSE)
+    if (pathname === '/watch-failed' && req.method === 'GET') {
+      try {
+        const resultsDir = join(process.cwd(), 'visual-regression', 'results');
+
+        // Establish SSE connection
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+
+        // Only emit when data actually changes; debounce watcher noise
+        let lastSignature = '';
+        let scheduled = false;
+
+        const buildSignature = (items: FailedResult[]): string => {
+          const core = items
+            .map((r) => ({
+              id: r.storyId,
+              d: r.diffImagePath,
+              a: r.actualImagePath,
+              e: r.expectedImagePath,
+            }))
+            .sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+          return JSON.stringify(core);
+        };
+
+        const sendSnapshotIfChanged = async () => {
+          try {
+            const failedResults = await scanFailedResults(resultsDir);
+            const sig = buildSignature(failedResults);
+            if (sig !== lastSignature) {
+              lastSignature = sig;
+              res.write(
+                `data: ${JSON.stringify({ type: 'failed-results', results: failedResults })}\n\n`,
+              );
+            }
+          } catch {
+            // Non-fatal; client stays connected
+          }
+        };
+
+        // Send initial state
+        await sendSnapshotIfChanged();
+
+        // Start watcher
+        const watcher = watchFs(resultsDir, { recursive: true }, () => {
+          if (scheduled) return;
+          scheduled = true;
+          setTimeout(async () => {
+            scheduled = false;
+            await sendSnapshotIfChanged();
+          }, 200);
+        });
+
+        // Cleanup on client disconnect
+        req.on('close', () => {
+          try {
+            watcher.close();
+          } catch {
+            // ignore close errors
+          }
+        });
+
+        return; // Keep connection open
+      } catch (error) {
+        console.error('[Visual Regression] Error starting failed results watcher:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to start watcher' }));
+        return;
+      }
     }
 
     // Run test endpoint

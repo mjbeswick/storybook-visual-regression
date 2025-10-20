@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useStorybookApi } from '@storybook/manager-api';
+import './StoryHighlighter.module.css';
 
 type StoryHighlighterProps = {
   failedStories: string[];
@@ -11,30 +12,7 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
   console.log('[Visual Regression] StoryHighlighter received failedStories:', failedStories);
 
   useEffect(() => {
-    // Add CSS class to failed story items (only once)
-    const style = document.createElement('style');
-    style.textContent = `
-      .failed-story-item > a > div > svg {
-        color: #ff3636 !important;
-      }
-      .failed-story-item:hover {
-        background-color: #fbc1c1 !important;
-      }
-      .failed-story-item.selected {
-        background-color: #ff3636 !important;
-        color: #ffffff !important;
-      }
-      .failed-story-item.selected > a > div > svg {
-        color: #ffffff !important;
-      }
-      .failed-parent-item > div > svg {
-        color: #ff3636 !important;
-      }
-      .failed-parent-item:hover {
-        background-color: #fbc1c1 !important;
-      }
-    `;
-    document.head.appendChild(style);
+    // Importing the CSS module applies global styles via :global selectors
 
     // Function to clear all existing highlighting
     const clearAllHighlighting = () => {
@@ -221,13 +199,13 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
         channel.off('storyChanged', handleStoryChanged);
         channel.off('storyRendered', handleStoryRendered);
         clearAllHighlighting();
-        document.head.removeChild(style);
+        // styles are module-based; nothing to remove
       };
     }
 
     return () => {
       clearAllHighlighting();
-      document.head.removeChild(style);
+      // styles are module-based; nothing to remove
     };
   }, [failedStories, api]);
 

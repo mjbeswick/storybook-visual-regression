@@ -13,7 +13,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "watch": "tsc --watch"
+    "build:watch": "tsc --watch",
+    "postbuild": "cp src/*.module.css dist/"
   },
   "peerDependencies": {
     "@storybook/blocks": "^7.0.0 || ^8.0.0",

@@ -7,12 +7,14 @@ type TestResultsContextType = {
   results: TestResult[];
   failedStories: string[];
   isRunning: boolean;
+  logs: string[];
 };
 
 const TestResultsContext = createContext<TestResultsContextType>({
   results: [],
   failedStories: [],
   isRunning: false,
+  logs: [],
 });
 
 export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -21,6 +23,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     results: [] as TestResult[],
     failedStories: [] as string[],
     isRunning: false,
+    logs: [] as string[],
   });
 
   // Listen for test events
@@ -29,7 +32,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (!channel) return;
 
     const handleTestStarted = () => {
-      setState((prev) => ({ ...prev, isRunning: true, results: [] }));
+      setState((prev) => ({ ...prev, isRunning: true, results: [], logs: [] }));
     };
 
     const handleTestComplete = () => {
@@ -57,6 +60,10 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
       });
     };
 
+    const handleLogOutput = (line: string) => {
+      setState((prev) => ({ ...prev, logs: [...prev.logs, line] }));
+    };
+
     const handleHighlightFailedStories = (storyIds: string[]) => {
       console.log('[Visual Regression] Provider received HIGHLIGHT_FAILED_STORIES:', storyIds);
       setState((prev) => ({ ...prev, failedStories: storyIds }));
@@ -66,12 +73,14 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     channel.on(EVENTS.TEST_COMPLETE, handleTestComplete);
     channel.on(EVENTS.TEST_RESULT, handleTestResult);
     channel.on(EVENTS.HIGHLIGHT_FAILED_STORIES, handleHighlightFailedStories);
+    channel.on(EVENTS.LOG_OUTPUT, handleLogOutput);
 
     return () => {
       channel.off(EVENTS.TEST_STARTED, handleTestStarted);
       channel.off(EVENTS.TEST_COMPLETE, handleTestComplete);
       channel.off(EVENTS.TEST_RESULT, handleTestResult);
       channel.off(EVENTS.HIGHLIGHT_FAILED_STORIES, handleHighlightFailedStories);
+      channel.off(EVENTS.LOG_OUTPUT, handleLogOutput);
     };
   }, [api]);
 

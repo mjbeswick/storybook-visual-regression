@@ -1,0 +1,25 @@
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e5e7eb;
+  border-top: 2px solid #0ea5e9;
+  border-radius: 50%;
+  animation: tool-spin 1s linear infinite;
+}
+
+@keyframes tool-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.diffButton {
+  font-size: 12px;
+  font-weight: bold;
+  min-width: 32px;
+  height: 32px;
+}
+
+.diffButtonActive {
+  background-color: rgba(115, 130, 140, 0.1);
+}
+

@@ -16,3 +16,11 @@ export type TestResult = {
   actualPath?: string;
   expectedPath?: string;
 };
+
+export type FailedResult = {
+  storyId: string;
+  storyName: string;
+  diffImagePath?: string;
+  actualImagePath?: string;
+  expectedImagePath?: string;
+};

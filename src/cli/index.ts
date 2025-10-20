@@ -10,8 +10,7 @@ import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
 import { execa } from 'execa';
 import { fileURLToPath } from 'url';
 import path, { dirname, join } from 'path';
-import { loadUserConfig } from './config-loader.js';
-import { initConfig, type ConfigFormat } from './init-config.js';
+import { loadUserConfig, saveUserConfig, getDefaultConfigPath } from './config-loader.js';
 import type { RuntimeOptions } from '../runtime/runtime-options.js';
 
 const program = new Command();
@@ -43,6 +42,7 @@ type CliOptions = {
   // Screenshot configuration
   threshold?: string;
   maxDiffPixels?: string;
+  fullPage?: boolean;
   // Timeouts and stability tuning
   navTimeout?: string; // ms
   waitTimeout?: string; // ms
@@ -69,6 +69,123 @@ async function createConfigFromOptions(
 ): Promise<VisualRegressionConfig> {
   // Load user config file (if exists)
   const userConfig = await loadUserConfig(cwd, options.config);
+  // Persist overrides back to visual-regression/config.json when flags are explicitly provided
+  const argvJoined = process.argv.slice(2).join(' ');
+  const hasArg = (...flags: string[]) =>
+    flags.some((f) => new RegExp(`(\\s|^)${f}(\\s|=)`).test(argvJoined));
+  const updatedUserConfig = { ...userConfig } as Record<string, unknown>;
+  let didUpdate = false;
+
+  const setIf = (present: boolean, key: string, value: unknown) => {
+    if (!present) return;
+    if (updatedUserConfig[key] !== value) {
+      updatedUserConfig[key] = value;
+      didUpdate = true;
+    }
+  };
+
+  // Basic/string options
+  setIf(hasArg('--url', '-u'), 'url', options.url);
+  setIf(hasArg('--command', '-c'), 'command', options.command);
+  setIf(hasArg('--reporter'), 'reporter', options.reporter);
+  setIf(hasArg('--browser'), 'browser', options.browser);
+  setIf(hasArg('--timezone'), 'timezone', options.timezone);
+  setIf(hasArg('--locale'), 'locale', options.locale);
+  setIf(hasArg('--grep'), 'grep', options.grep);
+  setIf(hasArg('--output', '-o'), 'output', options.output);
+  setIf(hasArg('--wait-until'), 'waitUntil', options.waitUntil);
+
+  // Numeric options
+  const num = (v?: string) => (typeof v === 'string' ? parseInt(v, 10) : undefined);
+  const floatNum = (v?: string) => (typeof v === 'string' ? parseFloat(v) : undefined);
+  setIf(hasArg('--port', '-p'), 'port', num(options.port));
+  setIf(hasArg('--workers', '-w'), 'workers', num(options.workers));
+  setIf(hasArg('--retries'), 'retries', num(options.retries));
+  setIf(hasArg('--max-failures'), 'maxFailures', num(options.maxFailures));
+  setIf(hasArg('--nav-timeout'), 'navTimeout', num(options.navTimeout));
+  setIf(hasArg('--wait-timeout'), 'waitTimeout', num(options.waitTimeout));
+  setIf(hasArg('--overlay-timeout'), 'overlayTimeout', num(options.overlayTimeout));
+  setIf(hasArg('--webserver-timeout'), 'webserverTimeout', num(options.webserverTimeout));
+  setIf(hasArg('--stabilize-interval'), 'stabilizeInterval', num(options.stabilizeInterval));
+  setIf(hasArg('--stabilize-attempts'), 'stabilizeAttempts', num(options.stabilizeAttempts));
+  setIf(hasArg('--final-settle'), 'finalSettle', num(options.finalSettle));
+  setIf(hasArg('--resource-settle'), 'resourceSettle', num(options.resourceSettle));
+  setIf(hasArg('--threshold'), 'threshold', floatNum(options.threshold));
+  setIf(hasArg('--max-diff-pixels'), 'maxDiffPixels', num(options.maxDiffPixels));
+
+  // Boolean flags
+  const bool = (v: unknown) => Boolean(v);
+  setIf(hasArg('--quiet'), 'quiet', bool(options.quiet));
+  setIf(hasArg('--debug'), 'debug', bool(options.debug));
+  setIf(hasArg('--print-urls'), 'printUrls', bool(options.printUrls));
+  setIf(hasArg('--hide-time-estimates'), 'hideTimeEstimates', bool(options.hideTimeEstimates));
+  setIf(hasArg('--hide-spinners'), 'hideSpinners', bool(options.hideSpinners));
+  setIf(hasArg('--not-found-check'), 'notFoundCheck', bool(options.notFoundCheck));
+  setIf(hasArg('--missing-only'), 'missingOnly', bool(options.missingOnly));
+  setIf(hasArg('--full-page'), 'fullPage', bool(options.fullPage));
+
+  // Array options
+  const parseList = (s?: string) =>
+    s
+      ? s
+          .split(',')
+          .map((p) => p.trim())
+          .filter(Boolean)
+      : undefined;
+  setIf(hasArg('--include'), 'include', parseList(options.include));
+  setIf(hasArg('--exclude'), 'exclude', parseList(options.exclude));
+
+  const defaultConfigPath = getDefaultConfigPath(cwd);
+  if (didUpdate) {
+    saveUserConfig(cwd, updatedUserConfig as VisualRegressionConfig);
+  } else if (!existsSync(defaultConfigPath)) {
+    // No config file exists and no explicit overrides were provided: seed a config.json
+    const seed: Record<string, unknown> = {};
+    // Populate with discovered/detected reasonable defaults
+    seed.url = options.url ?? 'http://localhost';
+    seed.port = options.port ? parseInt(options.port, 10) : undefined;
+    seed.command = options.command;
+    seed.workers = options.workers ? parseInt(options.workers, 10) : undefined;
+    seed.retries = options.retries ? parseInt(options.retries, 10) : undefined;
+    seed.maxFailures = options.maxFailures ? parseInt(options.maxFailures, 10) : undefined;
+    seed.output = options.output ?? 'visual-regression';
+    seed.browser = options.browser;
+    seed.timezone = options.timezone;
+    seed.locale = options.locale;
+    seed.navTimeout = options.navTimeout ? parseInt(options.navTimeout, 10) : undefined;
+    seed.waitTimeout = options.waitTimeout ? parseInt(options.waitTimeout, 10) : undefined;
+    seed.overlayTimeout = options.overlayTimeout ? parseInt(options.overlayTimeout, 10) : undefined;
+    seed.webserverTimeout = options.webserverTimeout
+      ? parseInt(options.webserverTimeout, 10)
+      : undefined;
+    seed.stabilizeInterval = options.stabilizeInterval
+      ? parseInt(options.stabilizeInterval, 10)
+      : undefined;
+    seed.stabilizeAttempts = options.stabilizeAttempts
+      ? parseInt(options.stabilizeAttempts, 10)
+      : undefined;
+    seed.finalSettle = options.finalSettle ? parseInt(options.finalSettle, 10) : undefined;
+    seed.resourceSettle = options.resourceSettle ? parseInt(options.resourceSettle, 10) : undefined;
+    seed.waitUntil = options.waitUntil;
+    seed.threshold = options.threshold ? parseFloat(options.threshold) : undefined;
+    seed.maxDiffPixels = options.maxDiffPixels ? parseInt(options.maxDiffPixels, 10) : undefined;
+    seed.fullPage = typeof options.fullPage === 'boolean' ? options.fullPage : undefined;
+    seed.include = options.include
+      ? options.include
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+    seed.exclude = options.exclude
+      ? options.exclude
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+    // Remove undefineds before saving
+    const cleaned = Object.fromEntries(Object.entries(seed).filter(([, v]) => v !== undefined));
+    saveUserConfig(cwd, cleaned as VisualRegressionConfig);
+  }
 
   const defaultConfig = createDefaultConfig();
   const detector = new StorybookConfigDetector(cwd);
@@ -76,8 +193,8 @@ async function createConfigFromOptions(
   // Detect Storybook configuration from the project
   const detectedConfig = await detector.detectAndMergeConfig(defaultConfig);
 
-  // If no explicit command is provided, don't use the detected command
-  if (!options.command) {
+  // Only drop auto-detected command if neither CLI nor user config specify it
+  if (!options.command && !userConfig.command) {
     detectedConfig.storybookCommand = undefined;
   }
 
@@ -85,11 +202,11 @@ async function createConfigFromOptions(
   // 1) Prefer explicit --port option
   // 2) Otherwise, if --url contains an explicit port, infer it
   // 3) Fallback to detectedConfig.storybookPort
-  const urlFromOptions: string | undefined = options.url;
+  const urlFromOptions: string | undefined = options.url ?? userConfig.url;
   // Detect if user explicitly provided -p/--port on the CLI (vs. Commander default)
   const userSpecifiedPortFlag = (() => {
     const argvJoined = process.argv.slice(2).join(' ');
-    return /(\s|^)(-p|--port)(\s|=)/.test(argvJoined);
+    return /(\\s|^)(-p|--port)(\\s|=)/.test(argvJoined);
   })();
   const inferredPortFromUrl = (() => {
     if (!urlFromOptions) return undefined;
@@ -106,7 +223,7 @@ async function createConfigFromOptions(
   const port =
     userSpecifiedPortFlag && Number.isInteger(parseInt(options.port || ''))
       ? parseInt(options.port || '')
-      : (inferredPortFromUrl ?? detectedConfig.storybookPort);
+      : (inferredPortFromUrl ?? userConfig.port ?? detectedConfig.storybookPort);
 
   const baseUrl = urlFromOptions || 'http://localhost';
   const storybookUrl = (() => {
@@ -136,10 +253,11 @@ async function createConfigFromOptions(
       ? (browserOpt as 'chromium' | 'firefox' | 'webkit')
       : detectedConfig.browser;
 
-  const outputRoot = options.output
-    ? path.isAbsolute(options.output)
-      ? options.output
-      : join(cwd, options.output)
+  const outputOpt = options.output ?? userConfig.output;
+  const outputRoot = outputOpt
+    ? path.isAbsolute(outputOpt)
+      ? outputOpt
+      : join(cwd, outputOpt)
     : join(cwd, 'visual-regression');
   const snapshotsDir = join(outputRoot, 'snapshots');
   const resultsDir = join(outputRoot, 'results');
@@ -153,12 +271,13 @@ async function createConfigFromOptions(
   // Parse threshold and maxDiffPixels options
   const thresholdOpt = options.threshold ? parseFloat(options.threshold) : undefined;
   const maxDiffPixelsOpt = parseNumberOption(options.maxDiffPixels);
+  const fullPageOpt = typeof userConfig.fullPage === 'boolean' ? userConfig.fullPage : undefined;
 
   return {
     ...detectedConfig,
     storybookUrl,
     storybookPort: port,
-    storybookCommand: options.command || undefined,
+    storybookCommand: options.command ?? userConfig.command ?? detectedConfig.storybookCommand,
     workers: workersOpt ?? detectedConfig.workers,
     retries: retriesOpt ?? detectedConfig.retries,
     timeout: detectedConfig.timeout,
@@ -170,6 +289,10 @@ async function createConfigFromOptions(
     browser,
     threshold: thresholdOpt ?? detectedConfig.threshold,
     maxDiffPixels: maxDiffPixelsOpt ?? detectedConfig.maxDiffPixels,
+    fullPage:
+      typeof options.fullPage === 'boolean'
+        ? options.fullPage
+        : (fullPageOpt ?? detectedConfig.fullPage),
     snapshotPath: snapshotsDir,
     resultsPath: resultsDir,
   };
@@ -235,19 +358,7 @@ program
   .version('1.0.0');
 
 // Init command - create default config file
-program
-  .command('init')
-  .description('Create a default config file')
-  .option('-f, --format <format>', 'Config format (js|ts|json)', 'js')
-  .option('--force', 'Overwrite existing config file')
-  .action((options: { format?: string; force?: boolean }) => {
-    const format = (options.format || 'js') as ConfigFormat;
-    if (!['js', 'ts', 'json'].includes(format)) {
-      console.error(chalk.red(`Invalid format: ${format}. Use js, ts, or json`));
-      process.exit(1);
-    }
-    initConfig(process.cwd(), format, options.force || false);
-  });
+// init command removed
 
 // Shared runner used by multiple commands
 async function runTests(options: CliOptions): Promise<void> {
@@ -256,9 +367,11 @@ async function runTests(options: CliOptions): Promise<void> {
   try {
     // Always use Playwright reporter path for proper webServer handling
     await runWithPlaywrightReporter(options);
-  } catch (error) {
+  } catch (unknownError: unknown) {
     console.log(chalk.red('Test execution failed'));
-    console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
+    console.error(
+      chalk.red(unknownError instanceof Error ? unknownError.message : 'Unknown error'),
+    );
     process.exit(1);
   }
 }
@@ -385,11 +498,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   // - Ensuring --ci is present if not already
   // - Appending --port only when not already specified in the provided command
   function buildStorybookLaunchCommand(baseCommand: string, targetPort: number): string {
-    const hasPortFlagInCommand = /(\s|^)(-p|--port)(\s|=)/.test(baseCommand);
+    const hasPortFlagInCommand = /(\\s|^)(-p|--port)(\\s|=)/.test(baseCommand);
     // Only append --port when the user explicitly provided -p/--port on the CLI
     const userSpecifiedPortFlag = (() => {
       const argvJoined = process.argv.slice(2).join(' ');
-      return /(\s|^)(-p|--port)(\s|=)/.test(argvJoined);
+      return /(\\s|^)(-p|--port)(\\s|=)/.test(argvJoined);
     })();
 
     const extraArgs: string[] = [];
@@ -401,7 +514,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
     // If using npm/yarn/pnpm run, inject separator " -- " before args (unless already present)
     const isRunnerScript = /\b(npm|pnpm|yarn)\b.*\brun\b/.test(baseCommand);
-    const hasSeparator = /\s--\s/.test(baseCommand);
+    const hasSeparator = /\\s--\\s/.test(baseCommand);
 
     if (isRunnerScript && !hasSeparator) {
       return `${baseCommand} -- ${extraArgs.join(' ')}`;
@@ -488,6 +601,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     printUrls,
     isCI: isCIEnvironment,
     testTimeout,
+    fullPage: runtimeConfig.fullPage,
   };
 
   const runtimeOptionsPath = join(projectRoot, 'dist', 'runtime-options.json');
@@ -620,12 +734,13 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         }
       }
     }
-  } catch (error) {
+  } catch (unknownError: unknown) {
     console.log('');
     // Only show error message if it's not an aborted execution
     // Exit code 130 typically indicates SIGINT (Ctrl+C) - user interruption
-    const exitCode = (error as { exitCode?: number })?.exitCode;
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const exitCode = (unknownError as { exitCode?: number })?.exitCode;
+    const errorMessage =
+      unknownError instanceof Error ? unknownError.message : String(unknownError);
 
     // Check if this is just a warning or non-critical issue
     const isNonCriticalError =
@@ -639,7 +754,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       // Debug: Log the actual error message to help identify patterns (only in debug mode)
       if (debugEnabled) {
         console.error(chalk.gray(`Debug - Error message: "${errorMessage}"`));
-        console.error(chalk.gray(`Debug - Error object:`, error));
+        console.error(chalk.gray(`Debug - Error object:`), unknownError);
       }
 
       // Check for specific error types and show appropriate messages
@@ -722,6 +837,7 @@ program
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
   .option('--max-diff-pixels <number>', 'Maximum number of pixels that can differ', '0')
+  .option('--full-page', 'Capture full-page screenshots (boolean)')
   // Timing and stability options (ms / counts)
   .option(
     '--nav-timeout <ms>',
@@ -834,6 +950,7 @@ program
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
   .option('--max-diff-pixels <number>', 'Maximum number of pixels that can differ', '0')
+  .option('--full-page', 'Capture full-page screenshots (boolean)')
   .option(
     '--nav-timeout <ms>',
     'Maximum time to wait for page navigation (page.goto). Increase for slow-loading stories or networks.',

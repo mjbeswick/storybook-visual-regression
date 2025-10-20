@@ -1,15 +1,114 @@
 import React from 'react';
 import { useChannel, useStorybookApi } from '@storybook/manager-api';
-import { ScrollArea } from '@storybook/components';
+import { ScrollArea, Button } from '@storybook/components';
+import { PlayIcon, SyncIcon, DownloadIcon } from '@storybook/icons';
 import { EVENTS } from './constants';
-import { StoryHighlighter } from './StoryHighlighter';
+import styles from './Panel.module.css';
 import { useTestResults } from './TestResultsContext';
-import type { VisualRegressionConfig } from './types';
 
-export const Panel: React.FC = () => {
+type PanelProps = {
+  active?: boolean;
+};
+
+export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const api = useStorybookApi();
   const emit = useChannel({});
-  const { results, failedStories, isRunning } = useTestResults();
+  const { results, isRunning, logs } = useTestResults();
+
+  const logRef = React.useRef<HTMLDivElement | null>(null);
+  const lastRenderedIndexRef = React.useRef<number>(0);
+
+  React.useEffect(() => {
+    if (!isRunning) {
+      // Reset counters when leaving running state
+      lastRenderedIndexRef.current = 0;
+      return;
+    }
+    const el = logRef.current;
+    if (!el) return;
+
+    el.style.height = '100%'; // ensure the log container takes up the full height of the panel
+
+    if (logs.length === 0) {
+      el.textContent = 'Running…';
+      lastRenderedIndexRef.current = 0;
+      return;
+    }
+
+    // On first render with logs, clear placeholder
+    if (lastRenderedIndexRef.current === 0) {
+      el.textContent = '';
+    }
+
+    const start = lastRenderedIndexRef.current;
+    if (start >= logs.length) return;
+
+    const frag = document.createDocumentFragment();
+    for (let i = start; i < logs.length; i++) {
+      const line = logs[i];
+      const appendLine = (text: string) => {
+        frag.append(document.createTextNode(text));
+        // Ensure each appended chunk ends with a newline for readability
+        if (!/\n$/.test(text)) frag.append(document.createTextNode('\n'));
+      };
+
+      const parseJsonFromLine = (raw: string): unknown => {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          // Try parsing Server-Sent Events style: `data: {...}`
+          const match = /^data:\s*(\{[\s\S]*\})\s*$/.exec(raw);
+          if (match) {
+            try {
+              return JSON.parse(match[1]);
+            } catch {
+              return null;
+            }
+          }
+          return null;
+        }
+      };
+
+      const obj = parseJsonFromLine(line) as {
+        type?: string;
+        data?: unknown;
+        error?: unknown;
+        test?: { name?: string; status?: string; duration?: number };
+      } | null;
+
+      if (obj) {
+        if (obj.type === 'stdout' && typeof obj.data === 'string') {
+          appendLine(obj.data);
+          continue;
+        }
+        if (obj.type === 'error' && obj.error) {
+          appendLine(String(obj.error));
+          continue;
+        }
+        if (obj.type === 'test-result' && obj.test) {
+          const status = (obj.test.status || '').toLowerCase();
+          const isPass = status === 'passed' || status === 'ok' || status === 'success';
+          const symbol = isPass ? '✓' : '✗';
+          const name = obj.test.name || 'Unnamed test';
+          const duration = typeof obj.test.duration === 'number' ? `${obj.test.duration}ms` : '';
+          appendLine(`${symbol} ${name}${duration ? ` (${duration})` : ''}`);
+          continue;
+        }
+        // ignore 'start' and 'complete' payloads silently
+      } else {
+        // Not JSON; render as-is
+        appendLine(line);
+      }
+    }
+    el.appendChild(frag);
+    // Auto-scroll to bottom to keep latest output visible
+    el.scrollTop = el.scrollHeight;
+    lastRenderedIndexRef.current = logs.length;
+  }, [logs, isRunning]);
+
+  const totalTests = results.length;
+  const passedTests = results.filter((r) => r.status === 'passed').length;
+  const failedTests = results.filter((r) => r.status === 'failed').length;
 
   const handleRunTest = () => {
     const currentStory = api.getCurrentStoryData();
@@ -29,142 +128,111 @@ export const Panel: React.FC = () => {
     }
   };
 
-  const handleClearResults = () => {
-    emit(EVENTS.CLEAR_RESULTS);
-  };
+  // Removed summary counters and spinner for simplified failure list
 
-  const totalTests = results.length;
-  const passedTests = results.filter((r) => r.status === 'passed').length;
-  const failedTests = results.filter((r) => r.status === 'failed').length;
+  // Using Storybook's built-in Button styles via @storybook/components
+
+  const showDiffInIframe = (result: { storyId: string; storyName?: string; diffPath?: string }) => {
+    if (!result.diffPath) return;
+    const iframe = document.getElementById('storybook-preview-iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    // Build URL the addon server serves
+    let relativePath = result.diffPath;
+    const visualRegressionIndex = result.diffPath.indexOf('/visual-regression/');
+    if (visualRegressionIndex !== -1) {
+      relativePath = result.diffPath.substring(
+        visualRegressionIndex + '/visual-regression/'.length,
+      );
+    }
+    const imageUrl = `http://localhost:6007/image/${encodeURIComponent(relativePath)}`;
+
+    const htmlContent = `<!DOCTYPE html><html><head><style>
+      body{margin:0;padding:0;background:#0b1020;display:flex;justify-content:center;align-items:center;min-height:100vh}
+      img{max-width:100%;max-height:100vh;object-fit:contain}
+    </style></head><body>
+      <img src="${imageUrl}" alt="diff image for ${result.storyName || result.storyId}"/>
+    </body></html>`;
+
+    iframe.srcdoc = htmlContent;
+
+    // Emit event to notify Tool component that diff is being shown
+    emit(EVENTS.DIFF_SHOWN, { storyId: result.storyId, type: 'diff' });
+  };
 
   return (
     <>
-      <StoryHighlighter failedStories={failedStories} />
-      <ScrollArea vertical>
-        <div style={{ padding: '16px' }}>
-          <div style={{ marginBottom: '24px' }}>
-            <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', fontWeight: 'bold' }}>
-              Visual Regression
-            </h3>
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <span style={{ fontSize: '14px' }}>Total: {totalTests}</span>
-              <span style={{ fontSize: '14px', color: '#4ade80' }}>Passed: {passedTests}</span>
-              <span style={{ fontSize: '14px', color: '#f87171' }}>Failed: {failedTests}</span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
-            <button
-              onClick={handleRunTest}
-              disabled={isRunning}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: isRunning ? '#6b7280' : '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: isRunning ? 'not-allowed' : 'pointer',
-                fontSize: '12px',
-              }}
-            >
-              {isRunning ? '⏳ Running...' : 'Test Current Story'}
-            </button>
-            <button
-              onClick={handleRunAllTests}
-              disabled={isRunning}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: isRunning ? '#6b7280' : '#8b5cf6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: isRunning ? 'not-allowed' : 'pointer',
-                fontSize: '12px',
-              }}
-            >
-              {isRunning ? '⏳ Running...' : 'Test All Stories'}
-            </button>
-            <button
-              onClick={handleUpdateBaseline}
-              disabled={isRunning}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: isRunning ? '#6b7280' : '#f59e0b',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: isRunning ? 'not-allowed' : 'pointer',
-                fontSize: '12px',
-              }}
-            >
-              {isRunning ? '⏳ Running...' : 'Update Baseline'}
-            </button>
-            <button
-              onClick={handleClearResults}
-              disabled={isRunning}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: isRunning ? '#6b7280' : '#6b7280',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: isRunning ? 'not-allowed' : 'pointer',
-                fontSize: '12px',
-              }}
-            >
-              Clear Results
-            </button>
-          </div>
-
-          {results.length > 0 && (
-            <div>
-              <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>Test Results</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {results.map((result) => (
-                  <div
-                    key={result.storyId}
-                    style={{
-                      padding: '12px',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '4px',
-                      backgroundColor: result.status === 'failed' ? '#fef2f2' : '#f0fdf4',
-                    }}
+      {!active && null}
+      {active && (
+        <>
+          {isRunning && <div className={styles.log} ref={logRef} />}
+          {!isRunning && (
+            <ScrollArea vertical>
+              <div className={styles.section}>
+                <div className={styles.buttonsRow}>
+                  <Button
+                    onClick={handleRunTest}
+                    disabled={isRunning}
+                    title="Run visual regression test for the current story"
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '8px',
-                      }}
-                    >
-                      <div style={{ fontSize: '14px', fontWeight: '500' }}>{result.storyName}</div>
-                      <span
-                        style={{
-                          padding: '2px 8px',
-                          borderRadius: '12px',
-                          fontSize: '12px',
-                          fontWeight: '500',
-                          backgroundColor: result.status === 'failed' ? '#fecaca' : '#bbf7d0',
-                          color: result.status === 'failed' ? '#dc2626' : '#16a34a',
-                        }}
-                      >
-                        {result.status}
+                    <PlayIcon className={styles.buttonIcon} />
+                    Test Current
+                  </Button>
+                  <Button
+                    onClick={handleUpdateBaseline}
+                    disabled={isRunning}
+                    title="Update baseline snapshot for the current story"
+                  >
+                    <DownloadIcon className={styles.buttonIcon} />
+                    Update Snapshot
+                  </Button>
+                  <Button
+                    onClick={handleRunAllTests}
+                    disabled={isRunning}
+                    title="Run visual regression tests for all stories"
+                  >
+                    <SyncIcon className={styles.buttonIcon} />
+                    Test All
+                  </Button>
+                </div>
+
+                {/* spinner keyframes moved to Panel.module.css */}
+
+                {results.some((r) => r.status === 'failed') && (
+                  <div>
+                    <div className={styles.counts}>
+                      <span className={styles.count}>Total: {totalTests}</span>
+                      <span className={`${styles.count} ${styles.countPassed}`}>
+                        Passed: {passedTests}
+                      </span>
+                      <span className={`${styles.count} ${styles.countFailed}`}>
+                        Failed: {failedTests}
                       </span>
                     </div>
-
-                    {result.error && (
-                      <div style={{ fontSize: '12px', color: '#dc2626', marginTop: '8px' }}>
-                        {result.error}
-                      </div>
-                    )}
+                    <ul className={styles.failuresList}>
+                      {results
+                        .filter((r) => r.status === 'failed')
+                        .map((result) => (
+                          <li key={result.storyId} className={styles.failureItem}>
+                            <button
+                              onClick={() => {
+                                api.selectStory(result.storyId);
+                                setTimeout(() => showDiffInIframe(result), 300);
+                              }}
+                              className={styles.linkButton}
+                            >
+                              {result.storyName}
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
                   </div>
-                ))}
+                )}
               </div>
-            </div>
+            </ScrollArea>
           )}
-        </div>
-      </ScrollArea>
+        </>
+      )}
     </>
   );
 };

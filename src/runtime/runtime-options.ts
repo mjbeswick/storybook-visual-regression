@@ -30,6 +30,7 @@ export type RuntimeOptions = {
   printUrls: boolean;
   isCI: boolean;
   testTimeout: number;
+  fullPage?: boolean;
 };
 
 const __filename = fileURLToPath(import.meta.url);

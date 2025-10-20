@@ -6,20 +6,40 @@
  */
 
 import { EVENTS } from './constants';
+import type { FailedResult } from './types';
 
 const API_BASE_URL = 'http://localhost:6007';
 
 // Try to get the addons channel from the global window object
 // This is how Storybook addons communicate between manager and preview
-const getChannel = () => {
-  if (typeof window !== 'undefined' && (window as any).__STORYBOOK_ADDONS_CHANNEL__) {
-    return (window as any).__STORYBOOK_ADDONS_CHANNEL__;
+type Channel = {
+  emit: (event: string, data?: unknown) => void;
+  on: (event: string, callback: (data?: unknown) => void) => void;
+  off: (event: string, callback: (data?: unknown) => void) => void;
+};
+
+const getChannel = (): Channel | null => {
+  if (
+    typeof window !== 'undefined' &&
+    (window as unknown as { __STORYBOOK_ADDONS_CHANNEL__?: Channel }).__STORYBOOK_ADDONS_CHANNEL__
+  ) {
+    return (window as unknown as { __STORYBOOK_ADDONS_CHANNEL__: Channel })
+      .__STORYBOOK_ADDONS_CHANNEL__;
   }
   return null;
 };
 
 // Track failed stories and their diff information
-const failedStories: Map<string, any> = new Map();
+type FailedStoryData = {
+  storyId: string;
+  storyName: string;
+  status: string;
+  diffImagePath?: string;
+  actualImagePath?: string;
+  expectedImagePath?: string;
+  error?: string;
+};
+const failedStories: Map<string, FailedStoryData> = new Map();
 
 // Initialize the addon by setting up event listeners
 const initializeAddon = async () => {
@@ -32,7 +52,7 @@ const initializeAddon = async () => {
 
   console.log('[Visual Regression Addon] Initialized - API Server running on port 6007');
 
-  // Load existing failed test results on initialization
+  // Load existing failed test results on initialization (no sidebar highlighting)
   try {
     const response = await fetch(`${API_BASE_URL}/get-failed-results`);
     if (response.ok) {
@@ -40,7 +60,7 @@ const initializeAddon = async () => {
       console.log('[Visual Regression] Loaded existing failed results:', failedResults);
 
       // Populate failedStories map with existing results
-      failedResults.forEach((result: any) => {
+      failedResults.forEach((result: FailedResult) => {
         failedStories.set(result.storyId, {
           storyId: result.storyId,
           storyName: result.storyName,
@@ -61,14 +81,103 @@ const initializeAddon = async () => {
         });
       });
 
-      // Emit failed stories for highlighting
-      const failedStoryIds = Array.from(failedStories.keys());
-      console.log('[Visual Regression] Emitting existing failed stories:', failedStoryIds);
-      channel.emit(EVENTS.HIGHLIGHT_FAILED_STORIES, failedStoryIds);
+      // No longer emitting highlight events
     }
   } catch (error) {
     console.warn('[Visual Regression] Could not load existing failed results:', error);
   }
+
+  // Live-watch the results directory via SSE and keep failures in sync
+  const startFailedResultsWatcher = () => {
+    try {
+      const es = new EventSource(`${API_BASE_URL}/watch-failed`);
+
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload && payload.type === 'failed-results' && Array.isArray(payload.results)) {
+            const incoming = payload.results as Array<{
+              storyId: string;
+              storyName: string;
+              diffImagePath?: string;
+              actualImagePath?: string;
+              expectedImagePath?: string;
+            }>;
+
+            // Deduplicate by storyId – keep the entry with the highest retry index
+            const getRetryIndex = (p?: string): number => {
+              if (!p) return 0;
+              const m = p.match(/-retry(\d+)/);
+              return m ? parseInt(m[1], 10) : 0;
+            };
+            const bestById = new Map<string, (typeof incoming)[number]>();
+            for (const r of incoming) {
+              const existing = bestById.get(r.storyId);
+              if (!existing) {
+                bestById.set(r.storyId, r);
+              } else {
+                if (getRetryIndex(r.diffImagePath) > getRetryIndex(existing.diffImagePath)) {
+                  bestById.set(r.storyId, r);
+                }
+              }
+            }
+
+            const incomingIds = new Set(Array.from(bestById.keys()));
+
+            // Emit passed for stories that are no longer failing
+            for (const existingId of Array.from(failedStories.keys())) {
+              if (!incomingIds.has(existingId)) {
+                failedStories.delete(existingId);
+                channel.emit(EVENTS.TEST_RESULT, {
+                  storyId: existingId,
+                  storyName: undefined,
+                  status: 'passed',
+                });
+              }
+            }
+
+            // Upsert current failures and emit events
+            for (const result of bestById.values()) {
+              failedStories.set(result.storyId, {
+                storyId: result.storyId,
+                storyName: result.storyName,
+                status: 'failed',
+                diffImagePath: result.diffImagePath,
+                actualImagePath: result.actualImagePath,
+                expectedImagePath: result.expectedImagePath,
+              });
+
+              channel.emit(EVENTS.TEST_RESULT, {
+                storyId: result.storyId,
+                storyName: result.storyName,
+                status: 'failed',
+                diffPath: result.diffImagePath,
+                actualPath: result.actualImagePath,
+                expectedPath: result.expectedImagePath,
+              });
+            }
+          }
+        } catch {
+          // ignore malformed messages
+        }
+      };
+
+      es.onerror = () => {
+        try {
+          es.close();
+        } catch {
+          // ignore close errors
+        }
+        // retry shortly
+        setTimeout(startFailedResultsWatcher, 2000);
+      };
+    } catch {
+      // Retry if EventSource cannot be started yet
+      setTimeout(startFailedResultsWatcher, 2000);
+    }
+  };
+
+  startFailedResultsWatcher();
 
   // Stop any running tests when the page is about to reload/unload
   const stopRunningTests = async () => {
@@ -78,7 +187,7 @@ const initializeAddon = async () => {
         headers: { 'Content-Type': 'application/json' },
       });
       console.log('[Visual Regression] Stopped running tests due to page reload');
-    } catch (error) {
+    } catch {
       // Silent fail - page is reloading anyway
     }
   };
@@ -88,7 +197,8 @@ const initializeAddon = async () => {
   window.addEventListener('unload', stopRunningTests);
 
   // Listen for story changes to show/hide diff overlay
-  channel.on('storyChanged', (storyId: string) => {
+  channel.on('storyChanged', (data: unknown) => {
+    const storyId = data as string;
     if (failedStories.has(storyId)) {
       const storyData = failedStories.get(storyId);
       if (storyData && storyData.diffImagePath) {
@@ -116,8 +226,9 @@ const initializeAddon = async () => {
   });
 
   // Listen for test requests from the manager
-  channel.on(EVENTS.RUN_TEST, async (data: { storyId?: string }) => {
-    const storyId = data.storyId;
+  channel.on(EVENTS.RUN_TEST, async (data: unknown) => {
+    const eventData = data as { storyId?: string };
+    const storyId = eventData.storyId;
     if (!storyId) {
       console.error('[Visual Regression] No story ID provided in event data');
       channel.emit(EVENTS.TEST_COMPLETE);
@@ -170,7 +281,10 @@ const initializeAddon = async () => {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
-                const eventData = JSON.parse(line.slice(6));
+                const payload = line.slice(6);
+                // Stream raw output to panel
+                channel.emit(EVENTS.LOG_OUTPUT, payload);
+                const eventData = JSON.parse(payload);
                 console.log('[Visual Regression] Received event:', eventData.type, eventData);
 
                 if (eventData.type === 'test-result') {
@@ -188,6 +302,8 @@ const initializeAddon = async () => {
                       storyName: eventData.title,
                       status: eventData.status,
                     });
+                    // Immediately refresh highlights so passed stories are un-highlighted
+                    channel.emit(EVENTS.HIGHLIGHT_FAILED_STORIES, Array.from(failedStories.keys()));
                   } else if (eventData.status === 'failed') {
                     console.error(`❌ Test Failed: ${eventData.title} [${eventData.storyId}]`);
                     console.log('[Visual Regression] Failed test data:', eventData);
@@ -217,13 +333,7 @@ const initializeAddon = async () => {
                       expectedImagePath: eventData.expectedImagePath,
                     });
 
-                    // Emit updated failed stories list for highlighting
-                    const failedStoryIds = Array.from(failedStories.keys());
-                    console.log(
-                      '[Visual Regression] Emitting HIGHLIGHT_FAILED_STORIES:',
-                      failedStoryIds,
-                    );
-                    channel.emit(EVENTS.HIGHLIGHT_FAILED_STORIES, failedStoryIds);
+                    // No sidebar highlight updates
                   } else if (eventData.status === 'timedOut') {
                     console.warn(`⚠️ Test Timed Out: ${eventData.title} [${eventData.storyId}]`);
 
@@ -245,16 +355,14 @@ const initializeAddon = async () => {
                     );
                   }
 
-                  // Emit failed stories to manager for highlighting
-                  const failedStoryIds = Array.from(failedStories.keys());
-                  channel.emit(EVENTS.HIGHLIGHT_FAILED_STORIES, failedStoryIds);
+                  // No sidebar highlight updates
 
                   channel.emit(EVENTS.TEST_COMPLETE);
                 } else if (eventData.type === 'error') {
                   console.error('[Visual Regression] Test error:', eventData.error);
                   channel.emit(EVENTS.TEST_COMPLETE);
                 }
-              } catch (parseError) {
+              } catch {
                 console.warn('[Visual Regression] Failed to parse event:', line);
               }
             }
@@ -310,22 +418,34 @@ const initializeAddon = async () => {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
-                const eventData = JSON.parse(line.slice(6));
+                const payload = line.slice(6);
+                // Stream raw output to panel
+                channel.emit(EVENTS.LOG_OUTPUT, payload);
+                const eventData = JSON.parse(payload);
                 console.log('[Visual Regression] Received event:', eventData.type, eventData);
 
                 if (eventData.type === 'test-result') {
                   console.log('[Visual Regression] Received test-result:', eventData);
                   // Handle individual test results
+                  const sid: string | undefined = eventData.storyId || eventData.id || undefined;
+                  const title: string | undefined = eventData.title || eventData.storyName;
+                  if (!sid) {
+                    console.warn(
+                      '[Visual Regression] Missing storyId on event, skipping:',
+                      eventData,
+                    );
+                    continue;
+                  }
                   if (eventData.status === 'passed') {
                     console.log(`✅ Test Passed: ${eventData.title} [${eventData.storyId}]`);
 
                     // Remove from failed stories if it was there
-                    failedStories.delete(eventData.storyId);
+                    failedStories.delete(sid);
 
                     // Emit test result to manager
                     channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
+                      storyId: sid,
+                      storyName: title || sid || 'Unknown Story',
                       status: eventData.status,
                     });
                   } else if (eventData.status === 'failed') {
@@ -336,9 +456,9 @@ const initializeAddon = async () => {
                     }
 
                     // Store failed story information
-                    failedStories.set(eventData.storyId, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
+                    failedStories.set(sid, {
+                      storyId: sid,
+                      storyName: title || sid,
                       status: eventData.status,
                       error: eventData.error,
                       diffImagePath: eventData.diffImagePath,
@@ -348,8 +468,8 @@ const initializeAddon = async () => {
 
                     // Emit test result to manager
                     channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
+                      storyId: sid,
+                      storyName: title || sid,
                       status: eventData.status,
                       error: eventData.error,
                       diffImagePath: eventData.diffImagePath,
@@ -369,8 +489,8 @@ const initializeAddon = async () => {
 
                     // Emit test result to manager
                     channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
+                      storyId: sid,
+                      storyName: title || sid,
                       status: eventData.status,
                       error: eventData.error,
                     });
@@ -394,7 +514,7 @@ const initializeAddon = async () => {
                   console.error('[Visual Regression] Test error:', eventData.error);
                   channel.emit(EVENTS.TEST_COMPLETE);
                 }
-              } catch (parseError) {
+              } catch {
                 console.warn('[Visual Regression] Failed to parse event:', line);
               }
             }
@@ -410,8 +530,9 @@ const initializeAddon = async () => {
   });
 
   // Listen for baseline update requests
-  channel.on(EVENTS.UPDATE_BASELINE, async (data: { storyId?: string }) => {
-    const storyId = data.storyId;
+  channel.on(EVENTS.UPDATE_BASELINE, async (data: unknown) => {
+    const eventData = data as { storyId?: string };
+    const storyId = eventData.storyId;
     if (!storyId) {
       console.error('[Visual Regression] No story ID provided for baseline update');
       channel.emit(EVENTS.TEST_COMPLETE);
@@ -476,6 +597,7 @@ const initializeAddon = async () => {
                       storyName: eventData.title,
                       status: eventData.status,
                     });
+                    // No sidebar highlight updates
                   } else if (eventData.status === 'failed') {
                     console.error(
                       `❌ Baseline Update Failed: ${eventData.title} [${eventData.storyId}]`,
@@ -523,7 +645,7 @@ const initializeAddon = async () => {
                   console.error('[Visual Regression] Test error:', eventData.error);
                   channel.emit(EVENTS.TEST_COMPLETE);
                 }
-              } catch (parseError) {
+              } catch {
                 console.warn('[Visual Regression] Failed to parse event:', line);
               }
             }
