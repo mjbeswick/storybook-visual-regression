@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  storybook-visual-regression:
+    build: .
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    network_mode: host
+    command: test --help

@@ -143,7 +143,7 @@ Use Storybook's builder plugin system to inject a custom endpoint:
 ```javascript
 // .storybook/main.js
 module.exports = {
-  addons: ['@storybook-visual-regression/addon'],
+  addons: ['storybook-visual-regression-addon'],
 
   async viteFinal(config) {
     config.plugins.push({

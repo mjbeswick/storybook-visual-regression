@@ -18,6 +18,6 @@ echo "If that doesn't work, recreate the npm link:"
 echo "   cd $(pwd)"
 echo "   npm link"
 echo "   cd <your-project>"
-echo "   npm unlink @storybook-visual-regression/addon"
-echo "   npm link @storybook-visual-regression/addon"
+echo "   npm unlink storybook-visual-regression-addon"
+echo "   npm link storybook-visual-regression-addon"
 

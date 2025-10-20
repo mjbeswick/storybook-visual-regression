@@ -1,5 +1,5 @@
 {
-  "name": "@storybook-visual-regression/addon",
+  "name": "storybook-visual-regression-addon",
   "version": "0.3.0",
   "description": "Fully functional Storybook addon for visual regression testing with built-in API server",
   "main": "dist/preset.js",

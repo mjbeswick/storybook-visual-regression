@@ -34,7 +34,7 @@ A fully functional Storybook addon that integrates visual regression testing dir
 ## Installation
 
 ```bash
-npm install --save-dev @storybook-visual-regression/addon
+npm install --save-dev storybook-visual-regression-addon
 ```
 
 ## Setup
@@ -47,7 +47,7 @@ Add the addon to your `.storybook/main.js` or `.storybook/main.ts`:
 module.exports = {
   addons: [
     // ... other addons
-    '@storybook-visual-regression/addon',
+    'storybook-visual-regression-addon',
   ],
 };
 ```

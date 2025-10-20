@@ -57,7 +57,7 @@ npx storybook-visual-regression install-browsers --browser all
 For a more integrated experience, you can also install the **Storybook addon** that provides a beautiful UI directly within Storybook:
 
 ```bash
-npm install --save-dev @storybook-visual-regression/addon
+npm install --save-dev storybook-visual-regression-addon
 ```
 
 The addon includes:

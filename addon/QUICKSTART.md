@@ -13,7 +13,7 @@ This guide will help you get the addon running in under 5 minutes.
 ### 1. Install the Addon
 
 ```bash
-npm install --save-dev @storybook-visual-regression/addon
+npm install --save-dev storybook-visual-regression-addon
 ```
 
 ### 2. Register in Storybook
@@ -26,7 +26,7 @@ module.exports = {
   addons: [
     '@storybook/addon-essentials',
     // Add this line:
-    '@storybook-visual-regression/addon',
+    'storybook-visual-regression-addon',
   ],
 };
 ```

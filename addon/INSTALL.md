@@ -15,7 +15,7 @@ npm link
 
 ```bash
 cd /path/to/your/storybook-project
-npm link @storybook-visual-regression/addon
+npm link storybook-visual-regression-addon
 ```
 
 ### Step 3: Register the Addon
@@ -27,7 +27,7 @@ module.exports = {
   stories: ['../src/**/*.stories.@(js|jsx|ts|tsx)'],
   addons: [
     '@storybook/addon-essentials',
-    '@storybook-visual-regression/addon', // Add this line
+    'storybook-visual-regression-addon', // Add this line
   ],
 };
 ```
@@ -60,7 +60,7 @@ You should now see the "Visual Regression" panel at the bottom!
 
 ```bash
 cd /path/to/your/storybook-project
-npm unlink @storybook-visual-regression/addon
+npm unlink storybook-visual-regression-addon
 
 cd /Users/uk45006208/Projects/storybook-visual-regression/addon
 npm unlink
@@ -83,7 +83,7 @@ npm run build
 
 ```bash
 cp -r /Users/uk45006208/Projects/storybook-visual-regression/addon \
-      /path/to/your/storybook-project/node_modules/@storybook-visual-regression/addon
+      /path/to/your/storybook-project/node_modules/storybook-visual-regression-addon
 ```
 
 ### Step 3: Register (Same as Option 1, Step 3)
@@ -135,7 +135,7 @@ npm publish --access public
 ### Step 4: Install in Projects
 
 ```bash
-npm install --save-dev @storybook-visual-regression/addon
+npm install --save-dev storybook-visual-regression-addon
 ```
 
 Then register in `.storybook/main.js` as shown above.
@@ -166,7 +166,7 @@ If using TypeScript, you may need to add type declarations:
 
 ```typescript
 // storybook.d.ts
-declare module '@storybook-visual-regression/addon';
+declare module 'storybook-visual-regression-addon';
 ```
 
 ### Icons not showing
