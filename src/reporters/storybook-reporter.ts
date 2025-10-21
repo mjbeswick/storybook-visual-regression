@@ -158,7 +158,7 @@ export default class StorybookReporter implements Reporter {
     // Calculate progress and time estimate
     const { etaMs, confidence } = this.calculateTimeEstimate();
     const remaining = this.totalTests - this.completedTests;
-    
+
     // Format test duration with color
     const rawDuration = result.duration;
     const testDuration = this.formatDuration(rawDuration);
@@ -179,7 +179,7 @@ export default class StorybookReporter implements Reporter {
     if (remaining > 0) {
       const etaFormatted = this.formatDuration(Math.round(etaMs));
       let confidenceIndicator = '';
-      
+
       switch (confidence) {
         case 'low':
           confidenceIndicator = chalk.yellow('~');
@@ -191,7 +191,7 @@ export default class StorybookReporter implements Reporter {
           confidenceIndicator = chalk.green('≈');
           break;
       }
-      
+
       progressLabel += ` ${chalk.gray(`${confidenceIndicator}${etaFormatted} remaining`)}`;
     }
 
@@ -208,9 +208,9 @@ export default class StorybookReporter implements Reporter {
       this.spinner.stop();
       this.spinner.clear();
     }
-    
+
     console.log(`  ${statusSymbol} ${outputCore}${durationText}`);
-    
+
     if (this.spinner && remaining > 0) {
       this.spinner.start(progressLabel);
     }

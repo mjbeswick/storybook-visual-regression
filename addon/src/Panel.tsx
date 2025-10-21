@@ -5,6 +5,7 @@ import { PlayIcon, SyncIcon, DownloadIcon } from '@storybook/icons';
 import { EVENTS } from './constants';
 import styles from './Panel.module.css';
 import { useTestResults } from './TestResultsContext';
+import { AnsiUp } from 'ansi_up';
 
 type PanelProps = {
   active?: boolean;
@@ -23,11 +24,12 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const lastRenderedIndexRef = React.useRef<number>(0);
   const cancelButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
-  // Simple function to strip ANSI codes
-  const stripAnsiCodes = (text: string): string => {
-    // Remove ANSI escape sequences
-    return text.replace(/\u001b\[[0-9;]*m/g, '');
-  };
+  // Initialize ANSI to HTML converter for terminal-like rendering
+  const ansiUp = React.useMemo(() => {
+    const converter = new AnsiUp();
+    converter.use_classes = true; // Use CSS classes instead of inline styles
+    return converter;
+  }, []);
 
   React.useEffect(() => {
     if (!isRunning) {
@@ -54,75 +56,24 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     const start = lastRenderedIndexRef.current;
     if (start >= logs.length) return;
 
-    const frag = document.createDocumentFragment();
-    for (let i = start; i < logs.length; i++) {
-      let line = logs[i];
-      const trimmedLine = line.trim();
-
-      // Handle empty lines - render as blank div
-      if (!trimmedLine) {
-        const emptyDiv = document.createElement('div');
-        emptyDiv.innerHTML = '&nbsp;'; // Non-breaking space to maintain height
-        frag.appendChild(emptyDiv);
-        continue;
-      }
-
-      // Check if this is JSON from the server (e.g., {"type":"stdout","data":"..."})
-      if (trimmedLine.startsWith('{')) {
-        try {
-          const obj = JSON.parse(trimmedLine) as { type?: string; data?: string };
-          if ((obj.type === 'stdout' || obj.type === 'stderr') && typeof obj.data === 'string') {
-            // Extract the actual text from the JSON wrapper (both stdout and stderr)
-            line = obj.data;
-          } else if (obj.type === 'start') {
-            // Skip start messages
-            continue;
-          } else {
-            // Unknown JSON type, skip it
-            continue;
-          }
-        } catch {
-          // Not valid JSON, skip it
-          continue;
-        }
-      }
-
-      // Split multi-line content into separate lines
-      const lines = line.split('\n');
-
-      // Check if the line ends with \n (which creates a trailing empty string after split)
-      const hasTrailingNewline = line.endsWith('\n');
-
-      for (let j = 0; j < lines.length; j++) {
-        const textLine = lines[j];
-
-        // Skip only the trailing empty line from split if the original line ended with \n
-        if (hasTrailingNewline && j === lines.length - 1 && textLine === '') {
-          continue;
-        }
-
-        const trimmed = textLine.trim();
-
-        // Handle empty lines within multi-line content (blank lines in the middle)
-        if (!trimmed) {
-          const emptyDiv = document.createElement('div');
-          emptyDiv.innerHTML = '&nbsp;';
-          frag.appendChild(emptyDiv);
-          continue;
-        }
-
-        // Strip ANSI codes and create text content
-        const cleanText = stripAnsiCodes(textLine);
-
-        // Create a container for this line
-        const lineDiv = document.createElement('div');
-        lineDiv.textContent = cleanText;
-
-        // Append the line container to the fragment
-        frag.appendChild(lineDiv);
+    // For raw terminal streams, we need to handle the content differently
+    // Accumulate all new log content and process it as a continuous stream
+    const newContent = logs.slice(start).join('');
+    
+    if (newContent) {
+      // Convert ANSI codes to HTML for terminal-like rendering
+      const htmlContent = ansiUp.ansi_to_html(newContent);
+      
+      // Create a temporary container to parse the HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = htmlContent;
+      
+      // Append all the converted content
+      while (tempDiv.firstChild) {
+        el.appendChild(tempDiv.firstChild);
       }
     }
-    el.appendChild(frag);
+    
     // Auto-scroll to bottom to keep latest output visible
     el.scrollTop = el.scrollHeight;
     lastRenderedIndexRef.current = logs.length;
@@ -288,7 +239,10 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                 {results.length === 0 && (
                   <div className={styles.noResults}>
                     <p>No test results yet.</p>
-                    <p>Click "Test Current" to test the current story, or "Test All" to run all visual regression tests.</p>
+                    <p>
+                      Click "Test Current" to test the current story, or "Test All" to run all
+                      visual regression tests.
+                    </p>
                   </div>
                 )}
 
@@ -304,7 +258,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                         Failed: {failedTests}
                       </span>
                     </div>
-                    
+
                     {failedTests === 0 && (
                       <div className={styles.allPassed}>
                         <p>✅ All tests passed!</p>

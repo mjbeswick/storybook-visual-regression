@@ -261,32 +261,35 @@ const initializeAddon = async () => {
         throw new Error(`API returned ${response.status}`);
       }
 
-      // Read the event stream
+      // Read the raw terminal stream
       const reader = response.body?.getReader();
       if (!reader) {
         throw new Error('No response body');
       }
 
       const decoder = new TextDecoder();
-      let buffer = '';
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
+          const chunk = decoder.decode(value, { stream: true });
+          
+          // Stream raw terminal output directly to panel
+          if (chunk) {
+            channel.emit(EVENTS.LOG_OUTPUT, chunk);
+          }
+          
+          // Try to parse any JSON test results that might be embedded
+          // (The filtered reporter might still output JSON for structured data)
+          const lines = chunk.split('\n');
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
+            const trimmedLine = line.trim();
+            if (trimmedLine.startsWith('{')) {
               try {
-                const payload = line.slice(6);
-                // Stream raw output to panel
-                channel.emit(EVENTS.LOG_OUTPUT, payload);
-                const eventData = JSON.parse(payload);
-                console.log('[Visual Regression] Received event:', eventData.type, eventData);
+                const eventData = JSON.parse(trimmedLine);
+                console.log('[Visual Regression] Received structured data:', eventData.type, eventData);
 
                 if (eventData.type === 'test-result') {
                   console.log('[Visual Regression] Received test-result:', eventData);

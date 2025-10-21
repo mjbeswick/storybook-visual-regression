@@ -155,3 +155,39 @@
   font-weight: 500;
 }
 
+/* ANSI color classes for terminal output */
+.log :global(.ansi-black-fg) { color: #000000; }
+.log :global(.ansi-red-fg) { color: #cd0000; }
+.log :global(.ansi-green-fg) { color: #00cd00; }
+.log :global(.ansi-yellow-fg) { color: #cdcd00; }
+.log :global(.ansi-blue-fg) { color: #0000ee; }
+.log :global(.ansi-magenta-fg) { color: #cd00cd; }
+.log :global(.ansi-cyan-fg) { color: #00cdcd; }
+.log :global(.ansi-white-fg) { color: #e5e5e5; }
+
+.log :global(.ansi-bright-black-fg) { color: #7f7f7f; }
+.log :global(.ansi-bright-red-fg) { color: #ff0000; }
+.log :global(.ansi-bright-green-fg) { color: #00ff00; }
+.log :global(.ansi-bright-yellow-fg) { color: #ffff00; }
+.log :global(.ansi-bright-blue-fg) { color: #5c5cff; }
+.log :global(.ansi-bright-magenta-fg) { color: #ff00ff; }
+.log :global(.ansi-bright-cyan-fg) { color: #00ffff; }
+.log :global(.ansi-bright-white-fg) { color: #ffffff; }
+
+/* Background colors */
+.log :global(.ansi-black-bg) { background-color: #000000; }
+.log :global(.ansi-red-bg) { background-color: #cd0000; }
+.log :global(.ansi-green-bg) { background-color: #00cd00; }
+.log :global(.ansi-yellow-bg) { background-color: #cdcd00; }
+.log :global(.ansi-blue-bg) { background-color: #0000ee; }
+.log :global(.ansi-magenta-bg) { background-color: #cd00cd; }
+.log :global(.ansi-cyan-bg) { background-color: #00cdcd; }
+.log :global(.ansi-white-bg) { background-color: #e5e5e5; }
+
+/* Text styles */
+.log :global(.ansi-bold) { font-weight: bold; }
+.log :global(.ansi-dim) { opacity: 0.5; }
+.log :global(.ansi-italic) { font-style: italic; }
+.log :global(.ansi-underline) { text-decoration: underline; }
+.log :global(.ansi-strikethrough) { text-decoration: line-through; }
+

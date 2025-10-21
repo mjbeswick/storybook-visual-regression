@@ -319,11 +319,12 @@ export function startApiServer(port = 6007): Server {
         try {
           const request: TestRequest = JSON.parse(body);
 
-          // Set up Server-Sent Events for streaming output
+          // Set up raw stream for terminal output
           res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
+            'Content-Type': 'text/plain; charset=utf-8',
             'Cache-Control': 'no-cache',
             Connection: 'keep-alive',
+            'Transfer-Encoding': 'chunked',
           });
 
           // Build command arguments
@@ -359,13 +360,19 @@ export function startApiServer(port = 6007): Server {
           // Generate unique process ID and track it
           const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-          // Spawn the CLI process with color support enabled
-          const child = spawn('storybook-visual-regression', args, {
+          // Use filtered reporter for rich terminal output
+          const enhancedArgs = [...args, '--reporter', 'filtered'];
+          
+          // Spawn the CLI process with full terminal support
+          const child = spawn('storybook-visual-regression', enhancedArgs, {
             stdio: 'pipe',
             cwd: process.cwd(),
             env: {
               ...process.env,
               FORCE_COLOR: '1', // Force chalk to output ANSI color codes
+              TERM: 'xterm-256color', // Enable full terminal features
+              COLUMNS: '120', // Set terminal width for proper formatting
+              LINES: '30', // Set terminal height
             },
             // Create a new process group to enable killing all child processes
             detached: true,
@@ -381,16 +388,15 @@ export function startApiServer(port = 6007): Server {
             const chunk = data.toString();
             stdout += chunk;
 
-            // Just send the chunk as-is, preserving exact formatting
-            if (chunk.trim()) {
-              res.write(`data: ${JSON.stringify({ type: 'stdout', data: chunk })}\n\n`);
-            }
+            // Stream raw terminal output directly (no JSON wrapping)
+            res.write(chunk);
           });
 
           child.stderr?.on('data', (data) => {
             const chunk = data.toString();
             stderr += chunk;
-            res.write(`data: ${JSON.stringify({ type: 'stderr', data: chunk })}\n\n`);
+            // Stream stderr directly as well
+            res.write(chunk);
           });
 
           child.on('error', (error) => {
