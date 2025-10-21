@@ -5,7 +5,9 @@ import { PlayIcon, SyncIcon, DownloadIcon } from '@storybook/icons';
 import { EVENTS } from './constants';
 import styles from './Panel.module.css';
 import { useTestResults } from './TestResultsContext';
-import { AnsiUp } from 'ansi_up';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 
 type PanelProps = {
   active?: boolean;
@@ -20,137 +22,200 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const channel = api.getChannel();
   const isChannelReady = !!channel;
 
-  const logRef = React.useRef<HTMLDivElement | null>(null);
+  const terminalRef = React.useRef<HTMLDivElement | null>(null);
+  const terminalInstance = React.useRef<Terminal | null>(null);
+  const fitAddon = React.useRef<FitAddon | null>(null);
   const lastRenderedIndexRef = React.useRef<number>(0);
-  const cancelButtonRef = React.useRef<HTMLButtonElement | null>(null);
-
-  // Initialize ANSI to HTML converter for terminal-like rendering
-  const ansiUp = React.useMemo(() => {
-    const converter = new AnsiUp();
-    converter.use_classes = true; // Use CSS classes instead of inline styles
-    return converter;
-  }, []);
-
-  // Terminal state for handling cursor movements and line overwrites
-  const terminalLines = React.useRef<string[]>([]);
-  const terminalBuffer = React.useRef<string>('');
-
+  // Initialize xterm.js terminal when the log container is shown
   React.useEffect(() => {
-    if (!isRunning) {
-      // Reset counters when leaving running state
-      lastRenderedIndexRef.current = 0;
-      terminalBuffer.current = '';
-      terminalLines.current = [];
-      return;
-    }
-    const el = logRef.current;
-    if (!el) return;
-
-    el.style.height = '100%'; // ensure the log container takes up the full height of the panel
-
-    if (logs.length === 0) {
-      el.textContent = 'Running…';
-      lastRenderedIndexRef.current = 0;
+    // Only initialize when we have logs or are running
+    if (!isRunning && logs.length === 0) {
       return;
     }
 
-    // On first render with logs, clear placeholder
-    if (lastRenderedIndexRef.current === 0) {
-      el.textContent = '';
-      terminalLines.current = [];
+    if (!terminalRef.current) {
+      return;
     }
 
-    const start = lastRenderedIndexRef.current;
-    if (start >= logs.length) return;
+    // Don't reinitialize if already exists
+    if (terminalInstance.current) {
+      return;
+    }
 
-    // Process new content chunk by chunk to handle terminal control sequences
-    const newContent = logs.slice(start).join('');
+    // Create terminal instance
+    const terminal = new Terminal({
+      theme: {
+        background: '#1e1e1e',
+        foreground: '#d4d4d4',
+        cursor: '#ffffff',
+        cursorAccent: '#000000',
+        selectionBackground: '#264f78',
+        black: '#000000',
+        red: '#cd3131',
+        green: '#0dbc79',
+        yellow: '#e5e510',
+        blue: '#2472c8',
+        magenta: '#bc3fbc',
+        cyan: '#11a8cd',
+        white: '#e5e5e5',
+        brightBlack: '#666666',
+        brightRed: '#f14c4c',
+        brightGreen: '#23d18b',
+        brightYellow: '#f5f543',
+        brightBlue: '#3b8eea',
+        brightMagenta: '#d670d6',
+        brightCyan: '#29b8db',
+        brightWhite: '#e5e5e5',
+      },
+      fontSize: 12,
+      fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+      cursorBlink: false,
+      disableStdin: true, // Read-only terminal
+      rows: 30,
+      cols: 120,
+      convertEol: false, // Handle line endings manually for better control
+      allowProposedApi: true, // Enable proposed APIs for better terminal features
+      rescaleOverlappingGlyphs: true,
+      // Enable proper ANSI escape sequence handling
+      allowTransparency: false,
+      macOptionIsMeta: true,
+      rightClickSelectsWord: false,
+      // Ensure cursor movement and other escape sequences work properly
+      cursorStyle: 'block',
+      cursorWidth: 1,
+    });
 
-    if (newContent) {
-      terminalBuffer.current += newContent;
+    // Create fit addon
+    const fit = new FitAddon();
+    terminal.loadAddon(fit);
 
-      // Process the buffer to simulate terminal behavior
-      const buffer = terminalBuffer.current;
+    try {
+      // Open terminal in the DOM element
+      terminal.open(terminalRef.current);
 
-      // Split by lines, but handle carriage returns within lines
-      const chunks = buffer.split(/(\r|\n)/);
-      let currentLine = terminalLines.current.length > 0 ? terminalLines.current.pop() || '' : '';
+      // Store references
+      terminalInstance.current = terminal;
+      fitAddon.current = fit;
 
-      for (const chunk of chunks) {
-        if (chunk === '\n') {
-          // New line - add current line and start a new one
-          terminalLines.current.push(currentLine);
-          currentLine = '';
-        } else if (chunk === '\r') {
-          // Carriage return - cursor goes to beginning of current line (overwrite)
-          currentLine = '';
-        } else if (chunk) {
-          // Regular content - append to current line
-          currentLine += chunk;
+      // Initialize terminal with proper modes for ANSI escape sequences
+      // Enable cursor key mode and other standard terminal features
+      terminal.write('\x1b[?1h'); // Enable cursor key mode
+      terminal.write('\x1b[?25h'); // Show cursor
+
+      // Fit terminal to container after a short delay
+      setTimeout(() => {
+        try {
+          fit.fit();
+        } catch {
+          // ignore fit errors
         }
+      }, 100);
+    } catch {
+      // ignore terminal opening errors
+    }
+
+    // Cleanup function
+    return () => {
+      if (terminalInstance.current) {
+        terminalInstance.current.dispose();
+        terminalInstance.current = null;
+        fitAddon.current = null;
+      }
+    };
+  }, [isRunning, logs.length > 0]);
+
+  // Handle terminal output
+  React.useEffect(() => {
+    const terminal = terminalInstance.current;
+    if (!terminal) {
+      return;
+    }
+
+    // If logs were cleared (user clicked Close), reset everything
+    if (logs.length === 0 && lastRenderedIndexRef.current > 0) {
+      terminal.clear();
+      lastRenderedIndexRef.current = 0;
+      return;
+    }
+
+    // If we're starting a new test run (isRunning=true, no logs yet)
+    if (isRunning && logs.length === 0) {
+      terminal.clear();
+      terminal.write('Running…');
+      lastRenderedIndexRef.current = 0;
+      return;
+    }
+
+    // If we have logs, render them
+    if (logs.length > 0) {
+      // Clear terminal on first logs of a new run
+      if (lastRenderedIndexRef.current === 0) {
+        terminal.clear();
       }
 
-      // Add the current line back (it might be incomplete)
-      terminalLines.current.push(currentLine);
+      const start = lastRenderedIndexRef.current;
+      if (start >= logs.length) {
+        return;
+      }
 
-      // Join all lines and clean up ANSI escape sequences
-      let processedContent = terminalLines.current.join('\n');
+      // Write new content to terminal - process each log chunk individually
+      const newLogs = logs.slice(start);
+      if (newLogs.length > 0) {
+        newLogs.forEach((log, index) => {
+          // Debug line endings and ANSI sequences
+          const hasLF = log.includes('\n');
+          const hasCR = log.includes('\r');
+          const hasAnsiEscapes = /\x1b\[[0-9;]*[a-zA-Z]/.test(log);
 
-      // Remove ANSI escape sequences that control cursor position but aren't handled by ansi_up
-      const ESC = String.fromCharCode(27); // ESC character
-      processedContent = processedContent
-        // Remove cursor movement sequences (ESC[nA, ESC[nB, ESC[nC, ESC[nD)
-        .replace(new RegExp(ESC + '\\[[0-9]*[ABCD]', 'g'), '')
-        // Remove cursor position sequences (ESC[n;mH, ESC[nG)
-        .replace(new RegExp(ESC + '\\[[0-9]*;?[0-9]*[HG]', 'g'), '')
-        // Remove clear sequences (ESC[nJ, ESC[nK)
-        .replace(new RegExp(ESC + '\\[[0-9]*[JK]', 'g'), '')
-        // Remove save/restore cursor sequences
-        .replace(new RegExp(ESC + '\\[s|' + ESC + '\\[u', 'g'), '');
+          if (hasLF || hasCR || hasAnsiEscapes) {
+            console.log(
+              `[Terminal Debug] Log ${start + index}:`,
+              `LF=${hasLF} CR=${hasCR} ANSI=${hasAnsiEscapes}`,
+              JSON.stringify(log.substring(0, 100)),
+            );
 
-      // Convert ANSI codes to HTML for terminal-like rendering
-      const htmlContent = ansiUp.ansi_to_html(processedContent);
+            // Specifically log cursor movement sequences
+            if (hasAnsiEscapes && /\x1b\[[0-9]*[ABCD]/.test(log)) {
+              console.log(`[Terminal Debug] Cursor movement detected:`, JSON.stringify(log));
+            }
+          }
 
-      // Clear the element and set the new content
-      el.innerHTML = htmlContent;
+          // Process line endings carefully to avoid breaking ANSI sequences
+          let processedLog = log;
 
-      // Clear the buffer since we've processed it
-      terminalBuffer.current = '';
+          if (!hasAnsiEscapes) {
+            // Safe to process line endings for regular text
+            // First, temporarily replace existing \r\n with a placeholder
+            processedLog = processedLog.replace(/\r\n/g, '__CRLF__');
+            // Then replace standalone \n with \r\n
+            processedLog = processedLog.replace(/\n/g, '\r\n');
+            // Finally, restore the original \r\n sequences
+            processedLog = processedLog.replace(/__CRLF__/g, '\r\n');
+          }
+          // If it has ANSI escapes, send it raw to preserve sequences
+
+          terminal.write(processedLog);
+        });
+      }
+
+      lastRenderedIndexRef.current = logs.length;
     }
 
-    // Auto-scroll to bottom to keep latest output visible
-    el.scrollTop = el.scrollHeight;
-    lastRenderedIndexRef.current = logs.length;
+    // When test finishes (!isRunning), keep the terminal content visible
+    // Don't reset lastRenderedIndexRef to preserve the output
   }, [logs, isRunning]);
 
-  // Calculate scrollbar width and adjust cancel button position
+  // Handle terminal resize
   React.useEffect(() => {
-    const updateCancelButtonPosition = () => {
-      const logElement = logRef.current;
-      const cancelButton = cancelButtonRef.current;
-
-      if (!logElement || !cancelButton) return;
-
-      // Calculate scrollbar width
-      const scrollbarWidth = logElement.offsetWidth - logElement.clientWidth;
-
-      // Adjust cancel button position to account for scrollbar
-      const baseOffset = 16; // Base offset from CSS
-      const totalOffset = baseOffset + scrollbarWidth;
-
-      cancelButton.style.right = `${totalOffset}px`;
+    const handleResize = () => {
+      if (fitAddon.current && terminalInstance.current) {
+        fitAddon.current.fit();
+      }
     };
 
-    // Update position when logs change (which might affect scrollbar visibility)
-    updateCancelButtonPosition();
-
-    // Also update on window resize
-    window.addEventListener('resize', updateCancelButtonPosition);
-
-    return () => {
-      window.removeEventListener('resize', updateCancelButtonPosition);
-    };
-  }, [logs, isRunning]);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const totalTests = results.length;
   const passedTests = results.filter((r) => r.status === 'passed').length;
@@ -158,43 +223,32 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
   const handleRunTest = () => {
     if (!isChannelReady) {
-      console.warn('[Visual Regression] Panel: Channel not ready, cannot run test');
       return;
     }
     const currentStory = api.getCurrentStoryData();
     if (currentStory) {
-      console.log('[Visual Regression] Panel: Running test for story:', currentStory.id);
       emit(EVENTS.RUN_TEST, { storyId: currentStory.id });
-    } else {
-      console.warn('[Visual Regression] Panel: No current story available');
     }
   };
 
   const handleRunAllTests = () => {
     if (!isChannelReady) {
-      console.warn('[Visual Regression] Panel: Channel not ready, cannot run all tests');
       return;
     }
-    console.log('[Visual Regression] Panel: Running all tests');
     emit(EVENTS.RUN_ALL_TESTS);
   };
 
   const handleUpdateBaseline = () => {
     const currentStory = api.getCurrentStoryData();
     if (currentStory) {
-      console.log('[Visual Regression] Panel: Updating baseline for story:', currentStory.id);
       emit(EVENTS.UPDATE_BASELINE, { storyId: currentStory.id });
-    } else {
-      console.warn('[Visual Regression] Panel: No current story available for baseline update');
     }
   };
 
   const handleCancelTest = () => {
     if (!isChannelReady) {
-      console.warn('[Visual Regression] Panel: Channel not ready, cannot cancel test');
       return;
     }
-    console.log('[Visual Regression] Panel: Cancelling test');
     cancelTest();
     emit(EVENTS.CANCEL_TEST);
   };
@@ -238,9 +292,8 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
         <>
           {(isRunning || logs.length > 0) && (
             <div className={styles.logContainer}>
-              <div className={styles.log} ref={logRef} />
+              <div className={styles.log} ref={terminalRef} />
               <button
-                ref={cancelButtonRef}
                 className={isRunning ? styles.cancelButton : styles.closeButton}
                 onClick={isRunning ? handleCancelTest : clearLogs}
                 title={isRunning ? 'Cancel running tests' : 'Close log panel'}

@@ -65,11 +65,9 @@ class DiffOverlay {
     // Create control buttons
     const diffButton = this.createButton('Show Diff', () => this.toggleDiff());
     const expectedButton = this.createButton('Show Expected', () => this.toggleExpected());
-    const closeButton = this.createButton('Close', () => this.hide());
 
     this.controls.appendChild(diffButton);
     this.controls.appendChild(expectedButton);
-    this.controls.appendChild(closeButton);
 
     // Create image containers
     const diffContainer = document.createElement('div');

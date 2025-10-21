@@ -34,7 +34,6 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
   useEffect(() => {
     const channel = api.getChannel();
     if (!channel) {
-      console.warn('[Visual Regression] Context: Channel not available, retrying in 100ms...');
       const timeoutId = setTimeout(() => {
         // Trigger re-render to try again
         setState((prev) => ({ ...prev }));
@@ -43,7 +42,6 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
 
     const handleTestStarted = () => {
-      console.log('[Visual Regression] Test started - clearing logs');
       setState((prev) => ({ ...prev, isRunning: true, results: [], logs: [] }));
     };
 
@@ -73,17 +71,14 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
 
     const handleLogOutput = (line: string) => {
-      console.log('[Visual Regression] Log output received:', line.substring(0, 50));
       setState((prev) => ({ ...prev, logs: [...prev.logs, line] }));
     };
 
     const handleHighlightFailedStories = (storyIds: string[]) => {
-      console.log('[Visual Regression] Provider received HIGHLIGHT_FAILED_STORIES:', storyIds);
       setState((prev) => ({ ...prev, failedStories: storyIds }));
     };
 
     const handleCancelTest = () => {
-      console.log('[Visual Regression] Cancelling test...');
       setState((prev) => ({ ...prev, isRunning: false }));
     };
 
@@ -109,20 +104,11 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     fetch('http://localhost:6007/stop', { method: 'POST' })
       .then(async (response) => {
         if (response.ok) {
-          const result = await response.json();
-          console.log('[Visual Regression] Successfully cancelled tests:', result);
           // Immediately set running to false to update UI
           setState((prev) => ({ ...prev, isRunning: false }));
-        } else {
-          console.error(
-            '[Visual Regression] Failed to cancel tests:',
-            response.status,
-            response.statusText,
-          );
         }
       })
-      .catch((error) => {
-        console.error('[Visual Regression] Error cancelling tests:', error);
+      .catch(() => {
         // Still set running to false even if request fails
         setState((prev) => ({ ...prev, isRunning: false }));
       });

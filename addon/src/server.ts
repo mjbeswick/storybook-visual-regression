@@ -33,20 +33,19 @@ async function ensureVisualRegressionDirs(): Promise<void> {
   } catch (error) {
     // Directory might already exist, that's fine
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-      console.warn('[Visual Regression] Could not create directories:', error);
+      // ignore directory creation errors
     }
   }
 }
 
 export function startApiServer(port = 6007): Server {
   if (server) {
-    console.log('[Visual Regression] API server already running');
     return server;
   }
 
   // Ensure directories exist when server starts
-  ensureVisualRegressionDirs().catch((error) => {
-    console.warn('[Visual Regression] Could not create directories on startup:', error);
+  ensureVisualRegressionDirs().catch(() => {
+    // ignore startup directory creation errors
   });
 
   server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -80,8 +79,7 @@ export function startApiServer(port = 6007): Server {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(failedResults));
         return;
-      } catch (error) {
-        console.error('[Visual Regression] Error scanning failed results:', error);
+      } catch {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to scan results directory' }));
         return;
@@ -131,8 +129,7 @@ export function startApiServer(port = 6007): Server {
         });
         res.end(imageData);
         return;
-      } catch (error) {
-        console.error('[Visual Regression] Error serving image:', error);
+      } catch {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to serve image' }));
         return;
@@ -141,68 +138,45 @@ export function startApiServer(port = 6007): Server {
 
     // Stop all running tests endpoint
     if (pathname === '/stop' && req.method === 'POST') {
-      console.log('[Visual Regression] Stopping all running tests...');
       let stoppedCount = 0;
 
-      const stopPromises = Array.from(activeProcesses.entries()).map(
-        async ([processId, childProcess]) => {
-          try {
-            if (childProcess && !childProcess.killed && childProcess.pid) {
-              console.log(
-                `[Visual Regression] Attempting to stop process ${processId} (PID: ${childProcess.pid})`,
-              );
-
-              // First try graceful termination of the entire process group
-              try {
-                // On Unix systems, kill the entire process group using negative PID
-                process.kill(-childProcess.pid, 'SIGTERM');
-                console.log(
-                  `[Visual Regression] Sent SIGTERM to process group ${childProcess.pid}`,
-                );
-              } catch {
-                // If process group kill fails, fall back to individual process kill
-                console.log(
-                  `[Visual Regression] Process group kill failed, trying individual process kill`,
-                );
-                childProcess.kill('SIGTERM');
-              }
-
-              // Wait a bit for graceful termination
-              await new Promise((resolve) => setTimeout(resolve, 2000));
-
-              // Check if process is still running
-              if (!childProcess.killed) {
-                console.log(
-                  `[Visual Regression] Process ${processId} still running, force killing...`,
-                );
-
-                try {
-                  // Try to kill the entire process group with SIGKILL
-                  process.kill(-childProcess.pid, 'SIGKILL');
-                  console.log(
-                    `[Visual Regression] Sent SIGKILL to process group ${childProcess.pid}`,
-                  );
-                } catch {
-                  // Fall back to individual process kill
-                  childProcess.kill('SIGKILL');
-                }
-
-                // Wait a bit more for force kill
-                await new Promise((resolve) => setTimeout(resolve, 1000));
-              }
-
-              if (childProcess.killed) {
-                stoppedCount++;
-                console.log(`[Visual Regression] Successfully stopped process ${processId}`);
-              } else {
-                console.warn(`[Visual Regression] Failed to stop process ${processId}`);
-              }
+      const stopPromises = Array.from(activeProcesses.entries()).map(async ([, childProcess]) => {
+        try {
+          if (childProcess && !childProcess.killed && childProcess.pid) {
+            // First try graceful termination of the entire process group
+            try {
+              // On Unix systems, kill the entire process group using negative PID
+              process.kill(-childProcess.pid, 'SIGTERM');
+            } catch {
+              // If process group kill fails, fall back to individual process kill
+              childProcess.kill('SIGTERM');
             }
-          } catch (error) {
-            console.error(`[Visual Regression] Error stopping process ${processId}:`, error);
+
+            // Wait a bit for graceful termination
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+
+            // Check if process is still running
+            if (!childProcess.killed) {
+              try {
+                // Try to kill the entire process group with SIGKILL
+                process.kill(-childProcess.pid, 'SIGKILL');
+              } catch {
+                // Fall back to individual process kill
+                childProcess.kill('SIGKILL');
+              }
+
+              // Wait a bit more for force kill
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+
+            if (childProcess.killed) {
+              stoppedCount++;
+            }
           }
-        },
-      );
+        } catch {
+          // ignore process stopping errors
+        }
+      });
 
       // Wait for all stop operations to complete
       await Promise.all(stopPromises);
@@ -282,9 +256,6 @@ export function startApiServer(port = 6007): Server {
           });
         } catch {
           // Directory doesn't exist yet, that's okay - we'll create it when needed
-          console.log(
-            '[Visual Regression] Results directory does not exist yet, will create it when needed',
-          );
         }
 
         // Cleanup on client disconnect
@@ -299,8 +270,7 @@ export function startApiServer(port = 6007): Server {
         });
 
         return; // Keep connection open
-      } catch (error) {
-        console.error('[Visual Regression] Error starting failed results watcher:', error);
+      } catch {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to start watcher' }));
         return;
@@ -349,11 +319,6 @@ export function startApiServer(port = 6007): Server {
           // Add --storybook flag to ensure filtered reporter with time estimates is used
           args.push('--storybook');
 
-          // Log the command being run for debugging
-          console.log(`[Visual Regression] Running: storybook-visual-regression ${args.join(' ')}`);
-          console.log(`[Visual Regression] Story ID: ${request.storyId}`);
-          console.log(`[Visual Regression] Request body:`, JSON.stringify(request, null, 2));
-
           // Generate unique process ID and track it
           const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -401,7 +366,6 @@ export function startApiServer(port = 6007): Server {
 
             // Handle EPIPE errors gracefully (pipe closed by client)
             if ((error as NodeJS.ErrnoException).code === 'EPIPE') {
-              console.log('[Visual Regression] CLI process pipe closed (client disconnected)');
               return;
             }
 
@@ -415,13 +379,9 @@ export function startApiServer(port = 6007): Server {
             res.end();
           });
 
-          child.on('close', (code, signal) => {
+          child.on('close', () => {
             // Clean up the process
             activeProcesses.delete(processId);
-
-            console.log(
-              `[Visual Regression] Process ${processId} closed with code ${code}, signal ${signal}`,
-            );
 
             // Just end the stream - terminal output is complete
             res.end();
@@ -485,10 +445,8 @@ export function startApiServer(port = 6007): Server {
           if (storyFiles.length > 0) {
             // Extract story ID from the first image filename
             const imageFile = storyFiles[0];
-            console.log('[Visual Regression] Found image file:', imageFile);
             const imageMatch = imageFile.match(/(.+?)-(actual|expected|diff)\.png$/);
             if (imageMatch) {
-              console.log('[Visual Regression] Extracted story ID from image:', imageMatch[1]);
               storyId = imageMatch[1];
             }
           }
@@ -526,8 +484,8 @@ export function startApiServer(port = 6007): Server {
           }
         }
       }
-    } catch (error) {
-      console.warn('[Visual Regression] Could not scan results directory:', error);
+    } catch {
+      // ignore scan errors
     }
 
     return failedResults;
@@ -535,7 +493,7 @@ export function startApiServer(port = 6007): Server {
 
   // Helper to convert Storybook ID to human-readable name
   function getStoryNameFromId(storyId: string): string {
-    // Example: "screens-basket--empty" -> "Screens / Basket ❯ Empty"
+    // Example: "screens-basket--empty" -> "Screens / Basket / Empty"
     const parts = storyId.split('--');
     const title = parts[0]
       .split('-')
@@ -547,12 +505,10 @@ export function startApiServer(port = 6007): Server {
           .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
           .join(' ')
       : '';
-    return `${title}${name ? ` ❯ ${name}` : ''}`;
+    return `${title}${name ? ` / ${name}` : ''}`;
   }
 
-  server.listen(port, () => {
-    console.log(`[Visual Regression] API server running on http://localhost:${port}`);
-  });
+  server.listen(port);
 
   // Cleanup on process exit
   process.on('exit', () => stopApiServer());
@@ -568,6 +524,5 @@ export function stopApiServer() {
   if (server) {
     server.close();
     server = null;
-    console.log('[Visual Regression] API server stopped');
   }
 }

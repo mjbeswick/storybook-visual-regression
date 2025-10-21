@@ -9,8 +9,6 @@ type StoryHighlighterProps = {
 export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStories }) => {
   const api = useStorybookApi();
 
-  console.log('[Visual Regression] StoryHighlighter received failedStories:', failedStories);
-
   useEffect(() => {
     // Importing the CSS module applies global styles via :global selectors
 
@@ -88,9 +86,6 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
     const expandComponent = (componentElement: Element): void => {
       const isCollapsed = componentElement.getAttribute('aria-expanded') === 'false';
       if (isCollapsed) {
-        console.log(
-          `[Visual Regression] Component ${componentElement.id} is collapsed, clicking to expand`,
-        );
         (componentElement as HTMLElement).click();
       }
     };
@@ -101,8 +96,6 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
       clearAllHighlighting();
 
       if (storyIds.length === 0) return;
-
-      console.log('[Visual Regression] Highlighting failed stories:', storyIds);
 
       const currentStoryId = getCurrentStoryId();
 
@@ -119,15 +112,10 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
             storyElement.classList.add('selected');
           }
 
-          console.log(
-            `[Visual Regression] Highlighted story ${storyId}${currentStoryId === storyId ? ' (selected)' : ''}`,
-          );
-
           // Highlight parent component
           const parentElement = findParentComponent(storyId);
           if (parentElement) {
             parentElement.classList.add('failed-parent-item');
-            console.log(`[Visual Regression] Highlighted parent component for story: ${storyId}`);
 
             // Expand parent if collapsed
             expandComponent(parentElement);
@@ -136,10 +124,6 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
           // Try to find the parent component and expand it
           const parentElement = findParentComponent(storyId);
           if (parentElement) {
-            console.log(
-              `[Visual Regression] Found parent component for story ${storyId}, attempting to expand`,
-            );
-
             // Expand parent if collapsed
             expandComponent(parentElement);
 
@@ -153,23 +137,11 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
                 if (currentStoryId === storyId) {
                   storyElement.classList.add('selected');
                 }
-
-                console.log(
-                  `[Visual Regression] Highlighted expanded story: ${storyId}${currentStoryId === storyId ? ' (selected)' : ''}`,
-                );
-              } else {
-                console.warn(
-                  `[Visual Regression] Still could not find story element after expanding: ${storyId}`,
-                );
               }
             }, 300);
 
             // Highlight parent even if story not found yet
             parentElement.classList.add('failed-parent-item');
-          } else {
-            console.warn(
-              `[Visual Regression] Could not find story element or parent for: ${storyId}`,
-            );
           }
         }
       });

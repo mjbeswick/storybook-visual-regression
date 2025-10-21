@@ -15,8 +15,8 @@ export function previewAnnotations(entry: string[] = []) {
       const port = process.env.VR_API_PORT ? parseInt(process.env.VR_API_PORT) : DEFAULT_PORT;
       startApiServer(port);
       serverStarted = true;
-    } catch (error) {
-      console.error('[Visual Regression] Failed to start API server:', error);
+    } catch {
+      // ignore server startup errors
     }
   }
 

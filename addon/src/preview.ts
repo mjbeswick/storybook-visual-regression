@@ -52,14 +52,12 @@ declare global {
 const initializeAddon = async () => {
   // Prevent multiple initializations
   if (typeof window !== 'undefined' && window.__VISUAL_REGRESSION_INITIALIZED__) {
-    console.log('[Visual Regression Addon] Already initialized, skipping...');
     return;
   }
 
   const channel = getChannel();
 
   if (!channel) {
-    console.warn('[Visual Regression Addon] Channel not available, retrying in 100ms...');
     setTimeout(initializeAddon, 100);
     return;
   }
@@ -68,14 +66,12 @@ const initializeAddon = async () => {
   if (typeof window !== 'undefined') {
     window.__VISUAL_REGRESSION_INITIALIZED__ = true;
   }
-  console.log('[Visual Regression Addon] Initialized - API Server running on port 6007');
 
   // Load existing failed test results on initialization (no sidebar highlighting)
   try {
     const response = await fetch(`${API_BASE_URL}/get-failed-results`);
     if (response.ok) {
       const failedResults = await response.json();
-      console.log('[Visual Regression] Loaded existing failed results:', failedResults);
 
       // Populate failedStories map with existing results
       failedResults.forEach((result: FailedResult) => {
@@ -101,8 +97,8 @@ const initializeAddon = async () => {
 
       // No longer emitting highlight events
     }
-  } catch (error) {
-    console.warn('[Visual Regression] Could not load existing failed results:', error);
+  } catch {
+    // ignore failed results loading errors
   }
 
   // Live-watch the results directory via SSE and keep failures in sync
@@ -231,7 +227,6 @@ const initializeAddon = async () => {
     const eventData = data as { storyId?: string };
     const storyId = eventData.storyId;
     if (!storyId) {
-      console.error('[Visual Regression] No story ID provided in event data');
       channel.emit(EVENTS.TEST_COMPLETE);
       return;
     }
@@ -240,8 +235,6 @@ const initializeAddon = async () => {
 
     // Get story name for display
     const storyName = getStoryNameFromId(storyId);
-
-    console.log('[Visual Regression] Testing story:', storyId, storyName);
 
     try {
       // Call the API server to run the test
@@ -291,8 +284,7 @@ const initializeAddon = async () => {
 
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
-    } catch (error) {
-      console.error('[Visual Regression] Test failed:', error);
+    } catch {
       channel.emit(EVENTS.TEST_COMPLETE);
     }
   });
@@ -300,8 +292,6 @@ const initializeAddon = async () => {
   // Listen for "run all tests" requests from the manager
   channel.on(EVENTS.RUN_ALL_TESTS, async () => {
     channel.emit(EVENTS.TEST_STARTED);
-
-    console.log('[Visual Regression] Running all tests...');
 
     try {
       const response = await fetch(`${API_BASE_URL}/test`, {
@@ -348,28 +338,23 @@ const initializeAddon = async () => {
 
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
-    } catch (error) {
-      console.error('[Visual Regression] API call for all tests failed:', error);
+    } catch {
       channel.emit(EVENTS.TEST_COMPLETE);
     }
   });
 
   // Listen for baseline update requests
   channel.on(EVENTS.UPDATE_BASELINE, async (data: unknown) => {
-    console.log('[Visual Regression] Preview: Received UPDATE_BASELINE event:', data);
     const eventData = data as { storyId?: string };
     const storyId = eventData.storyId;
     if (!storyId) {
-      console.error('[Visual Regression] No story ID provided for baseline update');
       channel.emit(EVENTS.TEST_COMPLETE);
       return;
     }
 
-    console.log('[Visual Regression] Preview: Starting baseline update for story:', storyId);
     channel.emit(EVENTS.TEST_STARTED);
 
     const storyName = getStoryNameFromId(storyId);
-    console.log('[Visual Regression] Updating baseline for story:', storyId, storyName);
 
     try {
       const response = await fetch(`${API_BASE_URL}/test`, {
@@ -418,8 +403,7 @@ const initializeAddon = async () => {
 
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
-    } catch (error) {
-      console.error('[Visual Regression] API call for baseline update failed:', error);
+    } catch {
       channel.emit(EVENTS.TEST_COMPLETE);
     }
   });
@@ -439,7 +423,7 @@ const initializeAddon = async () => {
 
 // Helper to convert Storybook ID to human-readable name
 const getStoryNameFromId = (storyId: string): string => {
-  // Example: "screens-basket--empty" -> "Screens / Basket ❯ Empty"
+  // Example: "screens-basket--empty" -> "Screens / Basket / Empty"
   const parts = storyId.split('--');
   const title = parts[0]
     .split('-')
@@ -451,7 +435,7 @@ const getStoryNameFromId = (storyId: string): string => {
         .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
         .join(' ')
     : '';
-  return `${title}${name ? ` ❯ ${name}` : ''}`;
+  return `${title}${name ? ` / ${name}` : ''}`;
 };
 
 // Initialize the addon when the Storybook channel is ready

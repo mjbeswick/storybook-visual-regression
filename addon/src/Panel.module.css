@@ -29,20 +29,25 @@
 }
 
 .log {
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
-  background: #0b1020;
-  color: #e5e7eb;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 12px;
-  line-height: 18px;
-  min-height: 0;
-  overflow: auto; 
-  padding: 12px;
-  white-space: pre-wrap;
+  background: #1e1e1e;
   height: 100%;
-  --scrollbar-size: 9px;
-  --radix-scroll-area-thumb-width: 6px;
+  min-height: 400px; /* Ensure minimum height for xterm.js */
+  width: 100%;
+  overflow: hidden; /* xterm.js handles its own scrolling */
+  padding: 0; /* xterm.js handles its own padding */
+}
+
+/* Override xterm.js default styles to match our dark theme */
+.log :global(.xterm) {
+  padding: 8px;
+}
+
+.log :global(.xterm-viewport) {
+  background-color: #1e1e1e !important;
+}
+
+.log :global(.xterm-screen) {
+  background-color: #1e1e1e !important;
 }
 
 .failuresList {
@@ -77,7 +82,7 @@
 .cancelButton {
   position: absolute;
   top: 16px;
-  right: 16px;
+  right: 32px;
   z-index: 10;
   background: #dc2626;
   color: white;
@@ -102,7 +107,7 @@
 .closeButton {
   position: absolute;
   top: 16px;
-  right: 16px;
+  right: 32px;
   z-index: 10;
   background: #16a34a;
   color: white;
@@ -155,39 +160,5 @@
   font-weight: 500;
 }
 
-/* ANSI color classes for terminal output */
-.log :global(.ansi-black-fg) { color: #000000; }
-.log :global(.ansi-red-fg) { color: #cd0000; }
-.log :global(.ansi-green-fg) { color: #00cd00; }
-.log :global(.ansi-yellow-fg) { color: #cdcd00; }
-.log :global(.ansi-blue-fg) { color: #0000ee; }
-.log :global(.ansi-magenta-fg) { color: #cd00cd; }
-.log :global(.ansi-cyan-fg) { color: #00cdcd; }
-.log :global(.ansi-white-fg) { color: #e5e5e5; }
-
-.log :global(.ansi-bright-black-fg) { color: #7f7f7f; }
-.log :global(.ansi-bright-red-fg) { color: #ff0000; }
-.log :global(.ansi-bright-green-fg) { color: #00ff00; }
-.log :global(.ansi-bright-yellow-fg) { color: #ffff00; }
-.log :global(.ansi-bright-blue-fg) { color: #5c5cff; }
-.log :global(.ansi-bright-magenta-fg) { color: #ff00ff; }
-.log :global(.ansi-bright-cyan-fg) { color: #00ffff; }
-.log :global(.ansi-bright-white-fg) { color: #ffffff; }
-
-/* Background colors */
-.log :global(.ansi-black-bg) { background-color: #000000; }
-.log :global(.ansi-red-bg) { background-color: #cd0000; }
-.log :global(.ansi-green-bg) { background-color: #00cd00; }
-.log :global(.ansi-yellow-bg) { background-color: #cdcd00; }
-.log :global(.ansi-blue-bg) { background-color: #0000ee; }
-.log :global(.ansi-magenta-bg) { background-color: #cd00cd; }
-.log :global(.ansi-cyan-bg) { background-color: #00cdcd; }
-.log :global(.ansi-white-bg) { background-color: #e5e5e5; }
-
-/* Text styles */
-.log :global(.ansi-bold) { font-weight: bold; }
-.log :global(.ansi-dim) { opacity: 0.5; }
-.log :global(.ansi-italic) { font-style: italic; }
-.log :global(.ansi-underline) { text-decoration: underline; }
-.log :global(.ansi-strikethrough) { text-decoration: line-through; }
+/* xterm.js handles ANSI colors and styles natively */
 

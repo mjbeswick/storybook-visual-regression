@@ -29,22 +29,16 @@ export const Tool: React.FC = () => {
       if (!storyId) {
         const urlParams = new URLSearchParams(window.location.search);
         storyId = urlParams.get('id') || undefined;
-        console.log('[Visual Regression] Tool: Fallback - got story ID from URL:', storyId);
       }
 
       if (!storyId) {
-        console.log('[Visual Regression] Tool: No current story ID found');
         setCurrentResult(null);
         // Reset showingDiff when no story is found
         setShowingDiff({ type: null, result: null });
         return;
       }
 
-      console.log('[Visual Regression] Tool: Current story:', storyId);
-      console.log('[Visual Regression] Tool: Available results:', results);
-
       const result = results.find((r) => r.storyId === storyId);
-      console.log('[Visual Regression] Tool: Found result for current story:', result);
 
       setCurrentResult(result || null);
     };
@@ -56,7 +50,6 @@ export const Tool: React.FC = () => {
     const channel = api.getChannel();
     if (channel) {
       const handleStoryChanged = () => {
-        console.log('[Visual Regression] Tool: storyChanged event received');
         // Restore iframe content when story changes to show the new story instead of diff
         restoreIframe();
         // Reset showingDiff state when story changes
@@ -65,13 +58,11 @@ export const Tool: React.FC = () => {
       };
 
       const handleStoryRendered = () => {
-        console.log('[Visual Regression] Tool: storyRendered event received');
         // Story has finished rendering, try to detect it
         updateCurrentResult();
       };
 
       const handleDiffShown = (data: unknown) => {
-        console.log('[Visual Regression] Tool: DIFF_SHOWN event received:', data);
         const eventData = data as { storyId?: string; type?: string };
         if (eventData.storyId && eventData.type) {
           // Find the result for this story and update showingDiff state
@@ -88,25 +79,21 @@ export const Tool: React.FC = () => {
       };
 
       const handleDiffHidden = () => {
-        console.log('[Visual Regression] Tool: HIDE_DIFF event received');
         setShowingDiff({ type: null, result: null });
       };
 
-      console.log('[Visual Regression] Tool: Setting up event listeners');
       channel.on('storyChanged', handleStoryChanged);
       channel.on('storyRendered', handleStoryRendered);
       channel.on(EVENTS.DIFF_SHOWN, handleDiffShown);
       channel.on(EVENTS.HIDE_DIFF, handleDiffHidden);
 
       return () => {
-        console.log('[Visual Regression] Tool: Cleaning up event listeners');
         channel.off('storyChanged', handleStoryChanged);
         channel.off('storyRendered', handleStoryRendered);
         channel.off(EVENTS.DIFF_SHOWN, handleDiffShown);
         channel.off(EVENTS.HIDE_DIFF, handleDiffHidden);
       };
     } else {
-      console.log('[Visual Regression] Tool: No channel available, falling back to polling');
       // Fallback to polling if no channel available
       const interval = setInterval(updateCurrentResult, 2000);
       return () => clearInterval(interval);
@@ -119,7 +106,6 @@ export const Tool: React.FC = () => {
   const toggleDiffInIframe = (result: TestResult, imageType: 'diff' | 'actual' | 'expected') => {
     const iframe = document.getElementById('storybook-preview-iframe') as HTMLIFrameElement;
     if (!iframe) {
-      console.warn('[Visual Regression] Storybook iframe not found');
       return;
     }
 
@@ -139,13 +125,8 @@ export const Tool: React.FC = () => {
           : result.expectedPath;
 
     if (!imagePath) {
-      console.warn(
-        `[Visual Regression] No ${imageType} image path available for ${result.storyId}`,
-      );
       return;
     }
-
-    console.log(`[Visual Regression] Image path for ${imageType}:`, imagePath);
 
     try {
       // Convert file path to relative path for the web server
@@ -163,12 +144,6 @@ export const Tool: React.FC = () => {
 
       // Create the web server URL
       const imageUrl = `http://localhost:6007/image/${encodeURIComponent(relativePath)}`;
-
-      console.log(`[Visual Regression] Converting image path:`, {
-        original: imagePath,
-        relative: relativePath,
-        url: imageUrl,
-      });
 
       // Simple HTML with just the image
       const htmlContent = `
@@ -214,10 +189,8 @@ export const Tool: React.FC = () => {
       if (channel) {
         channel.emit(EVENTS.DIFF_SHOWN, { storyId: result.storyId, type: imageType });
       }
-
-      console.log(`[Visual Regression] Showing ${imageType} image for ${result.storyId} in iframe`);
-    } catch (error) {
-      console.error('[Visual Regression] Error showing diff in iframe:', error);
+    } catch {
+      // ignore diff display errors
     }
   };
 
@@ -227,7 +200,6 @@ export const Tool: React.FC = () => {
     if (iframe) {
       // Remove srcdoc to restore original content
       iframe.removeAttribute('srcdoc');
-      console.log('[Visual Regression] Restored original iframe content');
 
       // Emit event to notify other components that diff is hidden
       if (channel) {
@@ -253,18 +225,7 @@ export const Tool: React.FC = () => {
 
   return (
     <>
-      {(() => {
-        console.log('[Visual Regression] Tool: Rendering diff buttons check:', {
-          currentResult,
-          hasCurrentResult: !!currentResult,
-          status: currentResult?.status,
-          isFailed: currentResult?.status === 'failed',
-          diffPath: currentResult?.diffPath,
-          actualPath: currentResult?.actualPath,
-          expectedPath: currentResult?.expectedPath,
-        });
-        return currentResult && currentResult.status === 'failed';
-      })() && (
+      {currentResult && currentResult.status === 'failed' && (
         <>
           {currentResult!.diffPath && (
             <IconButton
