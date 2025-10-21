@@ -360,12 +360,17 @@ export function startApiServer(port = 6007): Server {
           // Use filtered reporter for rich terminal output
           const enhancedArgs = [...args, '--reporter', 'filtered'];
 
+          // Create clean environment for terminal output
+          const cleanEnv = { ...process.env };
+          // Remove NO_COLOR to avoid conflicts with FORCE_COLOR
+          delete cleanEnv.NO_COLOR;
+
           // Spawn the CLI process with full terminal support
           const child = spawn('storybook-visual-regression', enhancedArgs, {
             stdio: 'pipe',
             cwd: process.cwd(),
             env: {
-              ...process.env,
+              ...cleanEnv,
               FORCE_COLOR: '1', // Force chalk to output ANSI color codes
               TERM: 'xterm-256color', // Enable full terminal features
               COLUMNS: '120', // Set terminal width for proper formatting
