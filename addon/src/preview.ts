@@ -318,133 +318,36 @@ const initializeAddon = async () => {
         throw new Error(`API returned ${response.status}`);
       }
 
+      // Read the raw terminal stream
       const reader = response.body?.getReader();
       if (!reader) {
         throw new Error('No response body');
       }
 
       const decoder = new TextDecoder();
-      let buffer = '';
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const payload = line.slice(6);
-                // Stream raw output to panel
-                channel.emit(EVENTS.LOG_OUTPUT, payload);
-                const eventData = JSON.parse(payload);
-                console.log('[Visual Regression] Received event:', eventData.type, eventData);
-
-                if (eventData.type === 'test-result') {
-                  console.log('[Visual Regression] Received test-result:', eventData);
-                  // Handle individual test results
-                  const sid: string | undefined = eventData.storyId || eventData.id || undefined;
-                  const title: string | undefined = eventData.title || eventData.storyName;
-                  if (!sid) {
-                    console.warn(
-                      '[Visual Regression] Missing storyId on event, skipping:',
-                      eventData,
-                    );
-                    continue;
-                  }
-                  if (eventData.status === 'passed') {
-                    console.log(`✅ Test Passed: ${eventData.title} [${eventData.storyId}]`);
-
-                    // Remove from failed stories if it was there
-                    failedStories.delete(sid);
-
-                    // Emit test result to manager
-                    channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: sid,
-                      storyName: title || sid || 'Unknown Story',
-                      status: eventData.status,
-                    });
-                  } else if (eventData.status === 'failed') {
-                    console.error(`❌ Test Failed: ${eventData.title} [${eventData.storyId}]`);
-                    console.log('[Visual Regression] Failed test data:', eventData);
-                    if (eventData.error) {
-                      console.error('   Error:', eventData.error);
-                    }
-
-                    // Store failed story information
-                    failedStories.set(sid, {
-                      storyId: sid,
-                      storyName: title || sid,
-                      status: eventData.status,
-                      error: eventData.error,
-                      diffImagePath: eventData.diffImagePath,
-                      actualImagePath: eventData.actualImagePath,
-                      expectedImagePath: eventData.expectedImagePath,
-                    });
-
-                    // Emit test result to manager
-                    channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: sid,
-                      storyName: title || sid,
-                      status: eventData.status,
-                      error: eventData.error,
-                      diffImagePath: eventData.diffImagePath,
-                      actualImagePath: eventData.actualImagePath,
-                      expectedImagePath: eventData.expectedImagePath,
-                    });
-
-                    // Emit updated failed stories list for highlighting
-                    const failedStoryIds = Array.from(failedStories.keys());
-                    console.log(
-                      '[Visual Regression] Emitting HIGHLIGHT_FAILED_STORIES:',
-                      failedStoryIds,
-                    );
-                    channel.emit(EVENTS.HIGHLIGHT_FAILED_STORIES, failedStoryIds);
-                  } else if (eventData.status === 'timedOut') {
-                    console.warn(`⚠️ Test Timed Out: ${eventData.title} [${eventData.storyId}]`);
-
-                    // Emit test result to manager
-                    channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: sid,
-                      storyName: title || sid,
-                      status: eventData.status,
-                      error: eventData.error,
-                    });
-                  }
-                } else if (eventData.type === 'complete') {
-                  if (eventData.wasCancelled) {
-                    console.log('[Visual Regression] All tests were cancelled');
-                  } else if (eventData.exitCode === 0 || eventData.exitCode === null) {
-                    console.log('[Visual Regression] All tests completed successfully');
-                  } else {
-                    console.log(
-                      '[Visual Regression] Some tests failed with exit code:',
-                      eventData.exitCode,
-                    );
-                  }
-
-                  // Emit failed stories to manager for highlighting
-                  const failedStoryIds = Array.from(failedStories.keys());
-                  channel.emit(EVENTS.HIGHLIGHT_FAILED_STORIES, failedStoryIds);
-
-                  channel.emit(EVENTS.TEST_COMPLETE);
-                } else if (eventData.type === 'error') {
-                  console.error('[Visual Regression] Test error:', eventData.error);
-                  channel.emit(EVENTS.TEST_COMPLETE);
-                }
-              } catch {
-                console.warn('[Visual Regression] Failed to parse event:', line);
-              }
-            }
+          const chunk = decoder.decode(value, { stream: true });
+          
+          // Stream raw terminal output directly to panel
+          if (chunk) {
+            channel.emit(EVENTS.LOG_OUTPUT, chunk);
           }
+          
+          // Note: We no longer parse JSON events since we're using pure terminal streaming
+          // The filtered reporter provides all feedback through terminal output
+          // Test completion is detected when the stream ends
         }
       } finally {
         reader.releaseLock();
       }
+      
+      // Stream ended - test is complete
+      channel.emit(EVENTS.TEST_COMPLETE);
     } catch (error) {
       console.error('[Visual Regression] API call for all tests failed:', error);
       channel.emit(EVENTS.TEST_COMPLETE);
