@@ -30,25 +30,16 @@
 
 .log {
   height: 100%;
-  min-height: 400px; /* Ensure minimum height for xterm.js */
   width: 100%;
   overflow: hidden; /* xterm.js handles its own scrolling */
   padding: 0; /* xterm.js handles its own padding */
 }
 
-/* Override xterm.js default styles to match our dark theme */
 .log :global(.xterm) {
   padding: 8px;
   height: 100%;
+  box-sizing: border-box;
 }
-/* 
-.log :global(.xterm-viewport) {
-  background-color: #1e1e1e !important;
-}
-
-.log :global(.xterm-screen) {
-  background-color: #1e1e1e !important;
-} */
 
 .failuresList {
   margin: 0;

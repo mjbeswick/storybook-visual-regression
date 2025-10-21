@@ -31,6 +31,8 @@ A fully functional Storybook addon that integrates visual regression testing dir
 ### 📊 **Real-time Results & Monitoring**
 
 - **Live progress updates** - Watch tests execute in real-time with streaming output
+- **Smart terminal display** - xterm.js terminal with automatic resizing and Bluloco Light theme
+- **Log preservation** - Terminal logs persist between test runs for better debugging
 - **Visual diff display** - Side-by-side comparison of expected vs actual screenshots
 - **Diff highlighting** - Overlay showing exactly what changed between baselines
 - **Test status indicators** - Clear visual indicators for passed (✅), failed (❌), and error (⚠️) states
@@ -46,7 +48,8 @@ A fully functional Storybook addon that integrates visual regression testing dir
 ### 🎨 **Beautiful UI Integration**
 
 - **Seamless Storybook integration** - Native Storybook UI components and styling
-- **Responsive panel** - Adapts to different panel sizes and orientations
+- **Responsive panel** - Adapts to different panel sizes and orientations with automatic terminal resizing
+- **Smart terminal sizing** - Terminal automatically fills available space with precise font calculations
 - **Intuitive controls** - Clear, accessible buttons and controls
 - **Consistent theming** - Follows Storybook's design system and dark/light themes
 - **Keyboard shortcuts** - Power user features for efficient testing

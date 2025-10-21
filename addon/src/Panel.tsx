@@ -28,6 +28,25 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const lastRenderedIndexRef = React.useRef<number>(0);
   const shouldPersistTerminal = React.useRef<boolean>(false);
   const hasShownRunningMessage = React.useRef<boolean>(false);
+  const resizeObserverRef = React.useRef<ResizeObserver | null>(null);
+
+  // Helper function to calculate optimal terminal dimensions
+  const calculateTerminalDimensions = (width: number, height: number) => {
+    // Font size: 14px, Padding: 8px on each side (16px total)
+    // More conservative font dimensions to prevent overflow
+    const fontWidth = 9.0; // Slightly larger to prevent horizontal overflow
+    const fontHeight = 20.1; // Slightly larger to prevent vertical overflow
+    const padding = 20; // Increased padding for safety margin
+
+    const availableWidth = width - padding;
+    const availableHeight = height - padding;
+
+    const cols = Math.max(1, Math.floor(availableWidth / fontWidth));
+    const rows = Math.max(1, Math.floor(availableHeight / fontHeight));
+
+    return { cols, rows };
+  };
+
   // Initialize xterm.js terminal when the log container is shown
   React.useEffect(() => {
     // Only initialize when we have logs or are running
@@ -117,9 +136,26 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       // Fit terminal to container after a short delay
       setTimeout(() => {
         try {
-          fit.fit();
-        } catch {
-          // ignore fit errors
+          // Calculate optimal terminal dimensions for initial fit
+          const terminalElement = terminalRef.current;
+          if (terminalElement) {
+            const rect = terminalElement.getBoundingClientRect();
+            const { cols, rows } = calculateTerminalDimensions(rect.width, rect.height);
+
+            console.log(
+              `Initial terminal fit: ${rect.width}x${rect.height}, Terminal: ${cols}x${rows}`,
+            );
+
+            // Fit and resize with calculated dimensions
+            fit.fit();
+            terminal.resize(cols, rows);
+            terminal.refresh(0, rows - 1);
+          } else {
+            // Fallback to basic fit
+            fit.fit();
+          }
+        } catch (error) {
+          console.warn('Initial terminal fit error:', error);
         }
       }, 100);
     } catch {
@@ -136,8 +172,68 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
         terminalInstance.current = null;
         fitAddon.current = null;
       }
+      // Also clean up resize observer
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+        resizeObserverRef.current = null;
+      }
     };
   }, [isRunning, logs.length > 0]);
+
+  // Set up ResizeObserver to handle panel resizing
+  React.useEffect(() => {
+    const terminal = terminalInstance.current;
+    const fit = fitAddon.current;
+    const terminalElement = terminalRef.current;
+
+    if (!terminal || !fit || !terminalElement) {
+      return;
+    }
+
+    // Find the panel tab content container
+    const panelTabContent = document.querySelector('#panel-tab-content');
+    if (!panelTabContent) {
+      return;
+    }
+
+    // Create ResizeObserver to watch for panel size changes
+    const resizeObserver = new ResizeObserver((entries) => {
+      // Debounce resize events to avoid excessive calls
+      setTimeout(() => {
+        try {
+          for (const entry of entries) {
+            const { width, height } = entry.contentRect;
+            const { cols, rows } = calculateTerminalDimensions(width, height);
+
+            console.log(`Panel resized: ${width}x${height}, Terminal: ${cols}x${rows}`);
+
+            // First fit the terminal to the container
+            fit.fit();
+
+            // Then resize the terminal instance with calculated dimensions
+            terminal.resize(cols, rows);
+
+            // Finally refresh to ensure proper display
+            terminal.refresh(0, rows - 1);
+          }
+        } catch (error) {
+          console.warn('Terminal resize error:', error);
+        }
+      }, 50);
+    });
+
+    // Start observing the panel tab content
+    resizeObserver.observe(panelTabContent);
+    resizeObserverRef.current = resizeObserver;
+
+    // Cleanup function
+    return () => {
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+        resizeObserverRef.current = null;
+      }
+    };
+  }, [terminalInstance.current, fitAddon.current]);
 
   // Handle terminal output
   React.useEffect(() => {
