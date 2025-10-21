@@ -443,6 +443,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const clean = Boolean(options.clean);
   const notFoundCheck = Boolean(options.notFoundCheck);
   const isCIEnvironment = !process.stdout.isTTY;
+  // Override CI detection for Storybook mode - we want rich terminal output in the addon
+  const isStorybookMode = Boolean(options.storybook);
+  const effectiveIsCI = isStorybookMode ? false : isCIEnvironment;
   const isDockerEnvironment = Boolean(
     process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
   );
@@ -623,7 +626,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     hideTimeEstimates,
     hideSpinners,
     printUrls,
-    isCI: isCIEnvironment,
+    isCI: effectiveIsCI,
     isDocker: isDockerEnvironment,
     testTimeout,
     fullPage: runtimeConfig.fullPage,
