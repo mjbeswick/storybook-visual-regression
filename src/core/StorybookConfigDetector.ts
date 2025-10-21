@@ -26,7 +26,6 @@ export class StorybookConfigDetector {
     // Detect Storybook port from package.json scripts
     const packageJsonPort = this.detectPortFromPackageJson();
     if (packageJsonPort) {
-      detected.storybookPort = packageJsonPort;
       detected.storybookUrl = `http://localhost:${packageJsonPort}`;
     }
 

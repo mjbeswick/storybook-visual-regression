@@ -20,6 +20,6 @@
 }
 
 .diffButtonActive {
-  background-color: rgba(115, 130, 140, 0.1);
+  background-color: rgba(115, 130, 140, 0.1)!important;
 }
 

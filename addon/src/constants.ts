@@ -8,6 +8,7 @@ export const EVENTS = {
   RUN_TEST: `${ADDON_ID}/run-test`,
   RUN_ALL_TESTS: `${ADDON_ID}/run-all-tests`,
   UPDATE_BASELINE: `${ADDON_ID}/update-baseline`,
+  CANCEL_TEST: `${ADDON_ID}/cancel-test`,
   TEST_STARTED: `${ADDON_ID}/test-started`,
   TEST_COMPLETE: `${ADDON_ID}/test-complete`,
   TEST_RESULT: `${ADDON_ID}/test-result`,

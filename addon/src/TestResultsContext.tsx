@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useChannel, useStorybookApi } from '@storybook/manager-api';
+import { useStorybookApi } from '@storybook/manager-api';
 import { EVENTS } from './constants';
 import type { TestResult } from './types';
 
@@ -8,6 +8,7 @@ type TestResultsContextType = {
   failedStories: string[];
   isRunning: boolean;
   logs: string[];
+  cancelTest: () => void;
 };
 
 const TestResultsContext = createContext<TestResultsContextType>({
@@ -15,6 +16,7 @@ const TestResultsContext = createContext<TestResultsContextType>({
   failedStories: [],
   isRunning: false,
   logs: [],
+  cancelTest: () => {},
 });
 
 export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -29,7 +31,14 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
   // Listen for test events
   useEffect(() => {
     const channel = api.getChannel();
-    if (!channel) return;
+    if (!channel) {
+      console.warn('[Visual Regression] Context: Channel not available, retrying in 100ms...');
+      const timeoutId = setTimeout(() => {
+        // Trigger re-render to try again
+        setState((prev) => ({ ...prev }));
+      }, 100);
+      return () => clearTimeout(timeoutId);
+    }
 
     const handleTestStarted = () => {
       setState((prev) => ({ ...prev, isRunning: true, results: [], logs: [] }));
@@ -69,11 +78,17 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setState((prev) => ({ ...prev, failedStories: storyIds }));
     };
 
+    const handleCancelTest = () => {
+      console.log('[Visual Regression] Cancelling test...');
+      setState((prev) => ({ ...prev, isRunning: false }));
+    };
+
     channel.on(EVENTS.TEST_STARTED, handleTestStarted);
     channel.on(EVENTS.TEST_COMPLETE, handleTestComplete);
     channel.on(EVENTS.TEST_RESULT, handleTestResult);
     channel.on(EVENTS.HIGHLIGHT_FAILED_STORIES, handleHighlightFailedStories);
     channel.on(EVENTS.LOG_OUTPUT, handleLogOutput);
+    channel.on(EVENTS.CANCEL_TEST, handleCancelTest);
 
     return () => {
       channel.off(EVENTS.TEST_STARTED, handleTestStarted);
@@ -81,10 +96,26 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
       channel.off(EVENTS.TEST_RESULT, handleTestResult);
       channel.off(EVENTS.HIGHLIGHT_FAILED_STORIES, handleHighlightFailedStories);
       channel.off(EVENTS.LOG_OUTPUT, handleLogOutput);
+      channel.off(EVENTS.CANCEL_TEST, handleCancelTest);
     };
   }, [api]);
 
-  return <TestResultsContext.Provider value={state}>{children}</TestResultsContext.Provider>;
+  const cancelTest = () => {
+    // Call the server to stop all running tests
+    fetch('http://localhost:6007/stop', { method: 'POST' })
+      .then(() => {
+        console.log('[Visual Regression] Successfully cancelled tests');
+      })
+      .catch((error) => {
+        console.error('[Visual Regression] Error cancelling tests:', error);
+      });
+  };
+
+  return (
+    <TestResultsContext.Provider value={{ ...state, cancelTest }}>
+      {children}
+    </TestResultsContext.Provider>
+  );
 };
 
 export const useTestResults = () => {

@@ -4,6 +4,7 @@ import { IconButton } from '@storybook/components';
 import { EyeIcon, PhotoIcon } from '@storybook/icons';
 import styles from './Tool.module.css';
 import { useTestResults } from './TestResultsContext';
+import { EVENTS } from './constants';
 import type { TestResult } from './types';
 
 export const Tool: React.FC = () => {
@@ -14,6 +15,9 @@ export const Tool: React.FC = () => {
     type: 'diff' | 'actual' | 'expected' | null;
     result: TestResult | null;
   }>({ type: null, result: null });
+
+  // Get the channel for emitting events
+  const channel = api.getChannel();
 
   // Update current result when story changes or results change
   useEffect(() => {
@@ -60,14 +64,40 @@ export const Tool: React.FC = () => {
         updateCurrentResult();
       };
 
+      const handleDiffShown = (data: unknown) => {
+        console.log('[Visual Regression] Tool: DIFF_SHOWN event received:', data);
+        const eventData = data as { storyId?: string; type?: string };
+        if (eventData.storyId && eventData.type) {
+          // Find the result for this story and update showingDiff state
+          const result = results.find((r) => r.storyId === eventData.storyId);
+          if (
+            result &&
+            (eventData.type === 'diff' ||
+              eventData.type === 'expected' ||
+              eventData.type === 'actual')
+          ) {
+            setShowingDiff({ type: eventData.type as 'diff' | 'expected' | 'actual', result });
+          }
+        }
+      };
+
+      const handleDiffHidden = () => {
+        console.log('[Visual Regression] Tool: HIDE_DIFF event received');
+        setShowingDiff({ type: null, result: null });
+      };
+
       console.log('[Visual Regression] Tool: Setting up event listeners');
       channel.on('storyChanged', handleStoryChanged);
       channel.on('storyRendered', handleStoryRendered);
+      channel.on(EVENTS.DIFF_SHOWN, handleDiffShown);
+      channel.on(EVENTS.HIDE_DIFF, handleDiffHidden);
 
       return () => {
         console.log('[Visual Regression] Tool: Cleaning up event listeners');
         channel.off('storyChanged', handleStoryChanged);
         channel.off('storyRendered', handleStoryRendered);
+        channel.off(EVENTS.DIFF_SHOWN, handleDiffShown);
+        channel.off(EVENTS.HIDE_DIFF, handleDiffHidden);
       };
     } else {
       console.log('[Visual Regression] Tool: No channel available, falling back to polling');
@@ -174,6 +204,11 @@ export const Tool: React.FC = () => {
       // Update state to track what we're showing
       setShowingDiff({ type: imageType, result });
 
+      // Emit event to notify other components that an image is being shown
+      if (channel) {
+        channel.emit(EVENTS.DIFF_SHOWN, { storyId: result.storyId, type: imageType });
+      }
+
       console.log(`[Visual Regression] Showing ${imageType} image for ${result.storyId} in iframe`);
     } catch (error) {
       console.error('[Visual Regression] Error showing diff in iframe:', error);
@@ -188,6 +223,11 @@ export const Tool: React.FC = () => {
       iframe.removeAttribute('srcdoc');
       setShowingDiff({ type: null, result: null });
       console.log('[Visual Regression] Restored original iframe content');
+
+      // Emit event to notify other components that diff is hidden
+      if (channel) {
+        channel.emit(EVENTS.HIDE_DIFF);
+      }
     }
   };
 
@@ -209,6 +249,14 @@ export const Tool: React.FC = () => {
   return (
     <>
       {/* Test buttons removed */}
+
+      {/* Debug info */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{ fontSize: '10px', color: '#666', margin: '2px' }}>
+          Tool Debug:{' '}
+          {currentResult ? `${currentResult.storyId} (${currentResult.status})` : 'No result'}
+        </div>
+      )}
 
       {/* Diff buttons for failed tests */}
       {(() => {

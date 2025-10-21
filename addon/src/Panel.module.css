@@ -41,6 +41,8 @@
   padding: 12px;
   white-space: pre-wrap;
   height: 100%;
+  --scrollbar-size: 9px;
+  --radix-scroll-area-thumb-width: 6px;
 }
 
 .failuresList {
@@ -65,5 +67,35 @@
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
+}
+
+.logContainer {
+  position: relative;
+  height: 100%;
+}
+
+.cancelButton {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  background: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: background-color 0.2s ease;
+}
+
+.cancelButton:hover {
+  background: #b91c1c;
+}
+
+.cancelButton:active {
+  background: #991b1b;
 }
 

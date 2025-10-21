@@ -1,0 +1,8 @@
+{
+  "watch": ["src"],
+  "ext": "ts,tsx,css",
+  "ignore": ["dist", "node_modules"],
+  "exec": "npm run build && echo 'Build completed - Storybook should reload'",
+  "delay": 500,
+  "verbose": true
+}

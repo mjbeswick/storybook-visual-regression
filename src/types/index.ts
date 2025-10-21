@@ -22,7 +22,6 @@ export type StorybookIndex = {
 export type VisualRegressionConfig = {
   // Storybook server configuration
   storybookUrl: string;
-  storybookPort: number;
   storybookCommand?: string;
 
   // Test configuration

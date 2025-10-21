@@ -1,12 +1,12 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
 import { spawn } from 'child_process';
 import { parse as parseUrl } from 'url';
-import { readdir, stat, readFile } from 'fs/promises';
+import { readdir, stat, readFile, mkdir } from 'fs/promises';
 import { watch as watchFs } from 'fs';
 import { join } from 'path';
 
 type TestRequest = {
-  action: 'test' | 'update' | 'test-all';
+  action: 'test' | 'update' | 'update-baseline' | 'test-all';
   storyId?: string;
   storyName?: string;
 };
@@ -22,11 +22,32 @@ type FailedResult = {
 let server: Server | null = null;
 const activeProcesses = new Map<string, ReturnType<typeof spawn>>(); // Track active CLI processes
 
+// Helper function to ensure visual-regression directory structure exists
+async function ensureVisualRegressionDirs(): Promise<void> {
+  const baseDir = join(process.cwd(), 'visual-regression');
+  const resultsDir = join(baseDir, 'results');
+
+  try {
+    await mkdir(baseDir, { recursive: true });
+    await mkdir(resultsDir, { recursive: true });
+  } catch (error) {
+    // Directory might already exist, that's fine
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      console.warn('[Visual Regression] Could not create directories:', error);
+    }
+  }
+}
+
 export function startApiServer(port = 6007): Server {
   if (server) {
     console.log('[Visual Regression] API server already running');
     return server;
   }
+
+  // Ensure directories exist when server starts
+  ensureVisualRegressionDirs().catch((error) => {
+    console.warn('[Visual Regression] Could not create directories on startup:', error);
+  });
 
   server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Enable CORS for Storybook
@@ -195,20 +216,32 @@ export function startApiServer(port = 6007): Server {
         // Send initial state
         await sendSnapshotIfChanged();
 
-        // Start watcher
-        const watcher = watchFs(resultsDir, { recursive: true }, () => {
-          if (scheduled) return;
-          scheduled = true;
-          setTimeout(async () => {
-            scheduled = false;
-            await sendSnapshotIfChanged();
-          }, 200);
-        });
+        // Start watcher - only if directory exists
+        let watcher: ReturnType<typeof watchFs> | null = null;
+        try {
+          // Check if directory exists before watching
+          await stat(resultsDir);
+          watcher = watchFs(resultsDir, { recursive: true }, () => {
+            if (scheduled) return;
+            scheduled = true;
+            setTimeout(async () => {
+              scheduled = false;
+              await sendSnapshotIfChanged();
+            }, 200);
+          });
+        } catch {
+          // Directory doesn't exist yet, that's okay - we'll create it when needed
+          console.log(
+            '[Visual Regression] Results directory does not exist yet, will create it when needed',
+          );
+        }
 
         // Cleanup on client disconnect
         req.on('close', () => {
           try {
-            watcher.close();
+            if (watcher) {
+              watcher.close();
+            }
           } catch {
             // ignore close errors
           }
@@ -247,7 +280,7 @@ export function startApiServer(port = 6007): Server {
 
           if (request.action === 'test') {
             args.push('test');
-          } else if (request.action === 'update') {
+          } else if (request.action === 'update' || request.action === 'update-baseline') {
             args.push('update');
           } else if (request.action === 'test-all') {
             args.push('test');
@@ -323,7 +356,7 @@ export function startApiServer(port = 6007): Server {
               }
             }
 
-            // Only stream non-JSON content
+            // Stream all content (both JSON and non-JSON) to ensure nothing is lost
             if (filteredChunk.trim()) {
               res.write(`data: ${JSON.stringify({ type: 'stdout', data: filteredChunk })}\n\n`);
             }
@@ -339,6 +372,12 @@ export function startApiServer(port = 6007): Server {
             // Clean up the process
             activeProcesses.delete(processId);
 
+            // Handle EPIPE errors gracefully (pipe closed by client)
+            if ((error as NodeJS.ErrnoException).code === 'EPIPE') {
+              console.log('[Visual Regression] CLI process pipe closed (client disconnected)');
+              return;
+            }
+
             res.write(
               `data: ${JSON.stringify({
                 type: 'error',
@@ -353,29 +392,32 @@ export function startApiServer(port = 6007): Server {
             // Clean up the process
             activeProcesses.delete(processId);
 
-            // Try to parse JSON output
-            let result = null;
-            try {
-              // The CLI outputs JSON, try to find and parse it
-              const jsonMatch = stdout.match(/\{[\s\S]*"status"[\s\S]*\}/);
-              if (jsonMatch) {
-                result = JSON.parse(jsonMatch[0]);
+            // Wait a bit for any remaining stdout to be processed
+            setTimeout(() => {
+              // Try to parse JSON output
+              let result = null;
+              try {
+                // The CLI outputs JSON, try to find and parse it
+                const jsonMatch = stdout.match(/\{[\s\S]*"status"[\s\S]*\}/);
+                if (jsonMatch) {
+                  result = JSON.parse(jsonMatch[0]);
+                }
+              } catch {
+                // Not valid JSON, that's okay
               }
-            } catch {
-              // Not valid JSON, that's okay
-            }
 
-            res.write(
-              `data: ${JSON.stringify({
-                type: 'complete',
-                exitCode: code,
-                storyId: request.storyId,
-                result,
-                stdout: !result ? stdout : undefined,
-                stderr: stderr || undefined,
-              })}\n\n`,
-            );
-            res.end();
+              res.write(
+                `data: ${JSON.stringify({
+                  type: 'complete',
+                  exitCode: code,
+                  storyId: request.storyId,
+                  result,
+                  stdout: !result ? stdout : undefined,
+                  stderr: stderr || undefined,
+                })}\n\n`,
+              );
+              res.end();
+            }, 100); // Small delay to ensure all stdout is processed
           });
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -400,6 +442,14 @@ export function startApiServer(port = 6007): Server {
     const failedResults: FailedResult[] = [];
 
     try {
+      // Check if directory exists first
+      try {
+        await stat(resultsDir);
+      } catch {
+        // Directory doesn't exist, return empty results
+        return failedResults;
+      }
+
       const entries = await readdir(resultsDir);
 
       for (const entry of entries) {

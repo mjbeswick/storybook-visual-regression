@@ -4,7 +4,6 @@ export function createDefaultConfig(): VisualRegressionConfig {
   return {
     // Storybook server configuration
     storybookUrl: 'http://localhost:9009',
-    storybookPort: 9009,
     storybookCommand: 'npm run storybook',
 
     // Test configuration

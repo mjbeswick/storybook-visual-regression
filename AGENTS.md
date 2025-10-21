@@ -749,3 +749,4 @@ storybook-visual-regression test --output "test/visual-regression"
 - **Git hygiene**: Always update .gitignore when adding new generated files or directories
 - **Documentation**: Update README.md when making significant changes to functionality or usage
 - **Build verification**: Always test builds locally before committing changes
+- **Agent Memory Maintenance**: Keep AGENTS.md up to date by adding new architectural decisions, patterns, and learnings as they are discovered or implemented

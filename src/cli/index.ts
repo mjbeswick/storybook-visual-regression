@@ -18,7 +18,6 @@ const program = new Command();
 type CliOptions = {
   config?: string;
   url?: string;
-  port?: string;
   command?: string;
   workers?: string;
   retries?: string;
@@ -98,7 +97,6 @@ async function createConfigFromOptions(
   // Numeric options
   const num = (v?: string) => (typeof v === 'string' ? parseInt(v, 10) : undefined);
   const floatNum = (v?: string) => (typeof v === 'string' ? parseFloat(v) : undefined);
-  setIf(hasArg('--port', '-p'), 'port', num(options.port));
   setIf(hasArg('--workers', '-w'), 'workers', num(options.workers));
   setIf(hasArg('--retries'), 'retries', num(options.retries));
   setIf(hasArg('--max-failures'), 'maxFailures', num(options.maxFailures));
@@ -143,7 +141,6 @@ async function createConfigFromOptions(
     const seed: Record<string, unknown> = {};
     // Populate with discovered/detected reasonable defaults
     seed.url = options.url ?? 'http://localhost';
-    seed.port = options.port ? parseInt(options.port, 10) : undefined;
     seed.command = options.command;
     seed.workers = options.workers ? parseInt(options.workers, 10) : undefined;
     seed.retries = options.retries ? parseInt(options.retries, 10) : undefined;
@@ -199,15 +196,9 @@ async function createConfigFromOptions(
   }
 
   // Construct proper URL with port
-  // 1) Prefer explicit --port option
-  // 2) Otherwise, if --url contains an explicit port, infer it
-  // 3) Fallback to detectedConfig.storybookPort
+  // 1) Use --url if provided (with or without port)
+  // 2) Fallback to detectedConfig.storybookPort
   const urlFromOptions: string | undefined = options.url ?? userConfig.url;
-  // Detect if user explicitly provided -p/--port on the CLI (vs. Commander default)
-  const userSpecifiedPortFlag = (() => {
-    const argvJoined = process.argv.slice(2).join(' ');
-    return /(\\s|^)(-p|--port)(\\s|=)/.test(argvJoined);
-  })();
   const inferredPortFromUrl = (() => {
     if (!urlFromOptions) return undefined;
     try {
@@ -220,10 +211,7 @@ async function createConfigFromOptions(
     }
   })();
 
-  const port =
-    userSpecifiedPortFlag && Number.isInteger(parseInt(options.port || ''))
-      ? parseInt(options.port || '')
-      : (inferredPortFromUrl ?? userConfig.port ?? detectedConfig.storybookPort);
+  const port = inferredPortFromUrl ?? userConfig.port ?? 9009;
 
   const baseUrl = urlFromOptions || 'http://localhost';
   const storybookUrl = (() => {
@@ -276,7 +264,6 @@ async function createConfigFromOptions(
   return {
     ...detectedConfig,
     storybookUrl,
-    storybookPort: port,
     storybookCommand: options.command ?? userConfig.command ?? detectedConfig.storybookCommand,
     workers: workersOpt ?? detectedConfig.workers,
     retries: retriesOpt ?? detectedConfig.retries,
@@ -523,8 +510,19 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     return `${baseCommand} ${extraArgs.join(' ')}`;
   }
 
+  // Extract port from storybookUrl for command building
+  const storybookPort = (() => {
+    try {
+      const parsed = new URL(config.storybookUrl);
+      return parsed.port ? parseInt(parsed.port) : 9009;
+    } catch {
+      const match = config.storybookUrl.match(/:(\d{2,5})(?:\/?|$)/);
+      return match ? parseInt(match[1]) : 9009;
+    }
+  })();
+
   const storybookLaunchCommand = storybookCommand
-    ? buildStorybookLaunchCommand(storybookCommand, config.storybookPort)
+    ? buildStorybookLaunchCommand(storybookCommand, storybookPort)
     : undefined;
   let finalStorybookCommand = storybookLaunchCommand;
 
@@ -813,8 +811,7 @@ program
   .command('test')
   .description('Run visual regression tests')
   .option('--config <path>', 'Path to config file')
-  .option('-p, --port <port>', 'Storybook server port', '9009')
-  .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
+  .option('-u, --url <url>', 'Storybook server URL', 'http://localhost:9009')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
   .option('-c, --command <command>', 'Command to start Storybook server')
@@ -926,8 +923,7 @@ program
   .command('update')
   .description('Update visual regression snapshots')
   .option('--config <path>', 'Path to config file')
-  .option('-p, --port <port>', 'Storybook server port', '9009')
-  .option('-u, --url <url>', 'Storybook server URL', 'http://localhost')
+  .option('-u, --url <url>', 'Storybook server URL', 'http://localhost:9009')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
   .option('-w, --workers <number>', 'Number of parallel workers', '12')
   .option('-c, --command <command>', 'Command to start Storybook server')

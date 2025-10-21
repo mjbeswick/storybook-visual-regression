@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "build:watch": "tsc --watch",
+    "dev": "nodemon",
     "postbuild": "cp src/*.module.css dist/"
   },
   "peerDependencies": {
@@ -37,6 +37,7 @@
     "@storybook/types": "^8.0.0",
     "@types/node": "^20.0.0",
     "@types/react": "^18.0.0",
+    "nodemon": "^3.1.10",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "typescript": "^5.0.0"

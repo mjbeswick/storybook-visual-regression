@@ -46,7 +46,8 @@ const initializeAddon = async () => {
   const channel = getChannel();
 
   if (!channel) {
-    console.warn('[Visual Regression Addon] Channel not available');
+    console.warn('[Visual Regression Addon] Channel not available, retrying in 100ms...');
+    setTimeout(initializeAddon, 100);
     return;
   }
 
@@ -531,6 +532,7 @@ const initializeAddon = async () => {
 
   // Listen for baseline update requests
   channel.on(EVENTS.UPDATE_BASELINE, async (data: unknown) => {
+    console.log('[Visual Regression] Preview: Received UPDATE_BASELINE event:', data);
     const eventData = data as { storyId?: string };
     const storyId = eventData.storyId;
     if (!storyId) {
@@ -539,6 +541,7 @@ const initializeAddon = async () => {
       return;
     }
 
+    console.log('[Visual Regression] Preview: Starting baseline update for story:', storyId);
     channel.emit(EVENTS.TEST_STARTED);
 
     const storyName = getStoryNameFromId(storyId);
@@ -581,7 +584,10 @@ const initializeAddon = async () => {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
-                const eventData = JSON.parse(line.slice(6));
+                const payload = line.slice(6);
+                // Stream raw output to panel
+                channel.emit(EVENTS.LOG_OUTPUT, payload);
+                const eventData = JSON.parse(payload);
                 console.log('[Visual Regression] Received event:', eventData.type, eventData);
 
                 if (eventData.type === 'test-result') {

@@ -152,8 +152,7 @@ function computeUserDefaults(): Partial<UserConfig> {
   const d = createDefaultConfig();
   // Map tool defaults → user config keys
   const mapped: Partial<UserConfig> = {
-    url: 'http://localhost',
-    port: d.storybookPort,
+    url: 'http://localhost:9009',
     command: d.storybookCommand,
     workers: d.workers,
     retries: d.retries,

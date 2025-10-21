@@ -13,10 +13,15 @@ type PanelProps = {
 export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const api = useStorybookApi();
   const emit = useChannel({});
-  const { results, isRunning, logs } = useTestResults();
+  const { results, isRunning, logs, cancelTest } = useTestResults();
+
+  // Check if channel is available
+  const channel = api.getChannel();
+  const isChannelReady = !!channel;
 
   const logRef = React.useRef<HTMLDivElement | null>(null);
   const lastRenderedIndexRef = React.useRef<number>(0);
+  const cancelButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
   React.useEffect(() => {
     if (!isRunning) {
@@ -106,26 +111,80 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     lastRenderedIndexRef.current = logs.length;
   }, [logs, isRunning]);
 
+  // Calculate scrollbar width and adjust cancel button position
+  React.useEffect(() => {
+    const updateCancelButtonPosition = () => {
+      const logElement = logRef.current;
+      const cancelButton = cancelButtonRef.current;
+
+      if (!logElement || !cancelButton) return;
+
+      // Calculate scrollbar width
+      const scrollbarWidth = logElement.offsetWidth - logElement.clientWidth;
+
+      // Adjust cancel button position to account for scrollbar
+      const baseOffset = 16; // Base offset from CSS
+      const totalOffset = baseOffset + scrollbarWidth;
+
+      cancelButton.style.right = `${totalOffset}px`;
+    };
+
+    // Update position when logs change (which might affect scrollbar visibility)
+    updateCancelButtonPosition();
+
+    // Also update on window resize
+    window.addEventListener('resize', updateCancelButtonPosition);
+
+    return () => {
+      window.removeEventListener('resize', updateCancelButtonPosition);
+    };
+  }, [logs, isRunning]);
+
   const totalTests = results.length;
   const passedTests = results.filter((r) => r.status === 'passed').length;
   const failedTests = results.filter((r) => r.status === 'failed').length;
 
   const handleRunTest = () => {
+    if (!isChannelReady) {
+      console.warn('[Visual Regression] Panel: Channel not ready, cannot run test');
+      return;
+    }
     const currentStory = api.getCurrentStoryData();
     if (currentStory) {
+      console.log('[Visual Regression] Panel: Running test for story:', currentStory.id);
       emit(EVENTS.RUN_TEST, { storyId: currentStory.id });
+    } else {
+      console.warn('[Visual Regression] Panel: No current story available');
     }
   };
 
   const handleRunAllTests = () => {
+    if (!isChannelReady) {
+      console.warn('[Visual Regression] Panel: Channel not ready, cannot run all tests');
+      return;
+    }
+    console.log('[Visual Regression] Panel: Running all tests');
     emit(EVENTS.RUN_ALL_TESTS);
   };
 
   const handleUpdateBaseline = () => {
     const currentStory = api.getCurrentStoryData();
     if (currentStory) {
+      console.log('[Visual Regression] Panel: Updating baseline for story:', currentStory.id);
       emit(EVENTS.UPDATE_BASELINE, { storyId: currentStory.id });
+    } else {
+      console.warn('[Visual Regression] Panel: No current story available for baseline update');
     }
+  };
+
+  const handleCancelTest = () => {
+    if (!isChannelReady) {
+      console.warn('[Visual Regression] Panel: Channel not ready, cannot cancel test');
+      return;
+    }
+    console.log('[Visual Regression] Panel: Cancelling test');
+    cancelTest();
+    emit(EVENTS.CANCEL_TEST);
   };
 
   // Removed summary counters and spinner for simplified failure list
@@ -165,14 +224,26 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       {!active && null}
       {active && (
         <>
-          {isRunning && <div className={styles.log} ref={logRef} />}
+          {isRunning && (
+            <div className={styles.logContainer}>
+              <div className={styles.log} ref={logRef} />
+              <button
+                ref={cancelButtonRef}
+                className={styles.cancelButton}
+                onClick={handleCancelTest}
+                title="Cancel running tests"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
           {!isRunning && (
             <ScrollArea vertical>
               <div className={styles.section}>
                 <div className={styles.buttonsRow}>
                   <Button
                     onClick={handleRunTest}
-                    disabled={isRunning}
+                    disabled={isRunning || !isChannelReady}
                     title="Run visual regression test for the current story"
                   >
                     <PlayIcon className={styles.buttonIcon} />
@@ -180,7 +251,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                   </Button>
                   <Button
                     onClick={handleUpdateBaseline}
-                    disabled={isRunning}
+                    disabled={isRunning || !isChannelReady}
                     title="Update baseline snapshot for the current story"
                   >
                     <DownloadIcon className={styles.buttonIcon} />
@@ -188,7 +259,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                   </Button>
                   <Button
                     onClick={handleRunAllTests}
-                    disabled={isRunning}
+                    disabled={isRunning || !isChannelReady}
                     title="Run visual regression tests for all stories"
                   >
                     <SyncIcon className={styles.buttonIcon} />

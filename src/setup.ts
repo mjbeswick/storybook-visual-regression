@@ -42,7 +42,6 @@ export const createMockConfig = (
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
   storybookUrl: 'http://localhost:6006',
-  storybookPort: 6006,
   storybookCommand: 'npm run storybook',
   viewportSizes: { desktop: { width: 1920, height: 1080 } },
   headless: true,
