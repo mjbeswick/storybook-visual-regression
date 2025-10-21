@@ -830,7 +830,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         console.error(chalk.red.bold('⏰ Operation timed out'));
       } else if (isNonCriticalError) {
         // Don't show error message for non-critical issues
-        console.log(chalk.green('🎉 Visual regression tests completed successfully'));
+        console.log(chalk.green('✓ Tests completed'));
       } else {
         console.error(chalk.red.bold('💥 Test execution failed'));
       }

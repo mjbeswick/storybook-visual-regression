@@ -346,8 +346,8 @@ export function startApiServer(port = 6007): Server {
             args.push('--grep', `^${escapedId}$`);
           }
 
-          // Remove --storybook flag since we're using filtered reporter
-          // No initial status needed - terminal output will show progress
+          // Add --storybook flag to ensure filtered reporter with time estimates is used
+          args.push('--storybook');
 
           // Log the command being run for debugging
           console.log(`[Visual Regression] Running: storybook-visual-regression ${args.join(' ')}`);

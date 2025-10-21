@@ -514,6 +514,8 @@ class FilteredReporter implements Reporter {
 
         console.log(chalk.dim(`\n💡 Tip: Use --print-urls to see URLs inline with test results`));
       }
+    } else if (this.passed > 0) {
+      console.log(chalk.green.bold('✓ All passed'));
     }
   }
 }

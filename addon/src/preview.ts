@@ -275,12 +275,12 @@ const initializeAddon = async () => {
           if (done) break;
 
           const chunk = decoder.decode(value, { stream: true });
-          
+
           // Stream raw terminal output directly to panel
           if (chunk) {
             channel.emit(EVENTS.LOG_OUTPUT, chunk);
           }
-          
+
           // Note: We no longer parse JSON events since we're using pure terminal streaming
           // The filtered reporter provides all feedback through terminal output
           // Test completion is detected when the stream ends
@@ -288,7 +288,7 @@ const initializeAddon = async () => {
       } finally {
         reader.releaseLock();
       }
-      
+
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
     } catch (error) {
@@ -332,12 +332,12 @@ const initializeAddon = async () => {
           if (done) break;
 
           const chunk = decoder.decode(value, { stream: true });
-          
+
           // Stream raw terminal output directly to panel
           if (chunk) {
             channel.emit(EVENTS.LOG_OUTPUT, chunk);
           }
-          
+
           // Note: We no longer parse JSON events since we're using pure terminal streaming
           // The filtered reporter provides all feedback through terminal output
           // Test completion is detected when the stream ends
@@ -345,7 +345,7 @@ const initializeAddon = async () => {
       } finally {
         reader.releaseLock();
       }
-      
+
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
     } catch (error) {
@@ -402,12 +402,12 @@ const initializeAddon = async () => {
           if (done) break;
 
           const chunk = decoder.decode(value, { stream: true });
-          
+
           // Stream raw terminal output directly to panel
           if (chunk) {
             channel.emit(EVENTS.LOG_OUTPUT, chunk);
           }
-          
+
           // Note: We no longer parse JSON events since we're using pure terminal streaming
           // The filtered reporter provides all feedback through terminal output
           // Test completion is detected when the stream ends
@@ -415,7 +415,7 @@ const initializeAddon = async () => {
       } finally {
         reader.releaseLock();
       }
-      
+
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
     } catch (error) {

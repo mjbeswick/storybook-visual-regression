@@ -31,14 +31,16 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     return converter;
   }, []);
 
-  // Buffer for handling terminal control sequences
+  // Terminal state for handling cursor movements and line overwrites
+  const terminalLines = React.useRef<string[]>([]);
   const terminalBuffer = React.useRef<string>('');
 
   React.useEffect(() => {
     if (!isRunning) {
       // Reset counters when leaving running state
       lastRenderedIndexRef.current = 0;
-      terminalBuffer.current = ''; // Clear terminal buffer
+      terminalBuffer.current = '';
+      terminalLines.current = [];
       return;
     }
     const el = logRef.current;
@@ -55,34 +57,65 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     // On first render with logs, clear placeholder
     if (lastRenderedIndexRef.current === 0) {
       el.textContent = '';
+      terminalLines.current = [];
     }
 
     const start = lastRenderedIndexRef.current;
     if (start >= logs.length) return;
 
-    // For raw terminal streams, accumulate all content in a buffer
+    // Process new content chunk by chunk to handle terminal control sequences
     const newContent = logs.slice(start).join('');
 
     if (newContent) {
       terminalBuffer.current += newContent;
 
-      // Process the buffer to handle carriage returns and cursor movements
-      let processedContent = terminalBuffer.current;
+      // Process the buffer to simulate terminal behavior
+      const buffer = terminalBuffer.current;
 
-      // Handle carriage returns by splitting lines and keeping only the last part after \r
-      const lines = processedContent.split('\n');
-      const processedLines = lines.map((line) => {
-        const parts = line.split('\r');
-        return parts[parts.length - 1]; // Keep only the last part after \r
-      });
+      // Split by lines, but handle carriage returns within lines
+      const chunks = buffer.split(/(\r|\n)/);
+      let currentLine = terminalLines.current.length > 0 ? terminalLines.current.pop() || '' : '';
 
-      processedContent = processedLines.join('\n');
+      for (const chunk of chunks) {
+        if (chunk === '\n') {
+          // New line - add current line and start a new one
+          terminalLines.current.push(currentLine);
+          currentLine = '';
+        } else if (chunk === '\r') {
+          // Carriage return - cursor goes to beginning of current line (overwrite)
+          currentLine = '';
+        } else if (chunk) {
+          // Regular content - append to current line
+          currentLine += chunk;
+        }
+      }
+
+      // Add the current line back (it might be incomplete)
+      terminalLines.current.push(currentLine);
+
+      // Join all lines and clean up ANSI escape sequences
+      let processedContent = terminalLines.current.join('\n');
+
+      // Remove ANSI escape sequences that control cursor position but aren't handled by ansi_up
+      const ESC = String.fromCharCode(27); // ESC character
+      processedContent = processedContent
+        // Remove cursor movement sequences (ESC[nA, ESC[nB, ESC[nC, ESC[nD)
+        .replace(new RegExp(ESC + '\\[[0-9]*[ABCD]', 'g'), '')
+        // Remove cursor position sequences (ESC[n;mH, ESC[nG)
+        .replace(new RegExp(ESC + '\\[[0-9]*;?[0-9]*[HG]', 'g'), '')
+        // Remove clear sequences (ESC[nJ, ESC[nK)
+        .replace(new RegExp(ESC + '\\[[0-9]*[JK]', 'g'), '')
+        // Remove save/restore cursor sequences
+        .replace(new RegExp(ESC + '\\[s|' + ESC + '\\[u', 'g'), '');
 
       // Convert ANSI codes to HTML for terminal-like rendering
       const htmlContent = ansiUp.ansi_to_html(processedContent);
 
       // Clear the element and set the new content
       el.innerHTML = htmlContent;
+
+      // Clear the buffer since we've processed it
+      terminalBuffer.current = '';
     }
 
     // Auto-scroll to bottom to keep latest output visible
@@ -272,7 +305,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
                     {failedTests === 0 && (
                       <div className={styles.allPassed}>
-                        <p>✅ All tests passed!</p>
+                        <p>✅ All passed</p>
                       </div>
                     )}
                   </div>
