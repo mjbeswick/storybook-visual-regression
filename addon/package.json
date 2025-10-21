@@ -46,7 +46,4 @@
     "dist",
     "README.md"
   ],
-  "dependencies": {
-    "ansi-to-html": "^0.7.2"
-  }
 }

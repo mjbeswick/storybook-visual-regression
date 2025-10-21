@@ -30,9 +30,19 @@ export default class StorybookReporter implements Reporter {
     this.totalTests = this.countTests(suite);
     this.completedTests = 0;
 
+    // Calculate estimated time based on test timeout and parallelization
+    const workers = _config.workers || 1;
+    // Get timeout from project config or use default
+    const projectTimeout = _config.projects?.[0]?.timeout || 30000; // Default 30s if not set
+    const estimatedTimePerTest = Math.min(projectTimeout * 0.3, 15000); // Assume tests take ~30% of timeout, max 15s
+    const estimatedTotalTimeMs = (this.totalTests * estimatedTimePerTest) / workers;
+    const estimatedMinutes = Math.ceil(estimatedTotalTimeMs / 60000);
+    
+    const timeEstimate = estimatedMinutes === 1 ? '~1 minute' : `~${estimatedMinutes} minutes`;
+
     // Output blank line and progress info to match terminal
     console.log('');
-    console.log(`Running ${this.totalTests} tests using ${_config.workers || 1} workers...`);
+    console.log(`Running ${this.totalTests} tests using ${workers} workers... (estimated ${timeEstimate})`);
     console.log('');
   }
 
@@ -88,7 +98,7 @@ export default class StorybookReporter implements Reporter {
     console.log(`  ${statusSymbol} ${title} › ${name} ${durationText}`);
   }
 
-  onEnd(result: FullResult): void {
+  onEnd(_result: FullResult): void {
     const duration = Date.now() - this.startTime;
     const passed = this.tests.filter((t) => t.status === 'passed').length;
     const failed = this.tests.filter((t) => t.status === 'failed').length;

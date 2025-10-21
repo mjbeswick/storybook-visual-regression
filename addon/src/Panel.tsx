@@ -5,7 +5,6 @@ import { PlayIcon, SyncIcon, DownloadIcon } from '@storybook/icons';
 import { EVENTS } from './constants';
 import styles from './Panel.module.css';
 import { useTestResults } from './TestResultsContext';
-import Convert from 'ansi-to-html';
 
 type PanelProps = {
   active?: boolean;
@@ -24,14 +23,11 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const lastRenderedIndexRef = React.useRef<number>(0);
   const cancelButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
-  // Initialize ANSI to HTML converter
-  const convert = new Convert({
-    fg: '#e5e7eb', // Default foreground color
-    bg: '#0b1020', // Default background color
-    newline: true,
-    escapeXML: true,
-    stream: false,
-  });
+  // Simple function to strip ANSI codes
+  const stripAnsiCodes = (text: string): string => {
+    // Remove ANSI escape sequences
+    return text.replace(/\u001b\[[0-9;]*m/g, '');
+  };
 
   React.useEffect(() => {
     if (!isRunning) {
@@ -115,12 +111,12 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
           continue;
         }
 
-        // Convert ANSI codes to HTML
-        const htmlContent = convert.toHtml(textLine);
+        // Strip ANSI codes and create text content
+        const cleanText = stripAnsiCodes(textLine);
 
         // Create a container for this line
         const lineDiv = document.createElement('div');
-        lineDiv.innerHTML = htmlContent;
+        lineDiv.textContent = cleanText;
 
         // Append the line container to the fragment
         frag.appendChild(lineDiv);
@@ -288,9 +284,16 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                   </Button>
                 </div>
 
-                {/* spinner keyframes moved to Panel.module.css */}
+                {/* Show message when no test results */}
+                {results.length === 0 && (
+                  <div className={styles.noResults}>
+                    <p>No test results yet.</p>
+                    <p>Click "Test Current" to test the current story, or "Test All" to run all visual regression tests.</p>
+                  </div>
+                )}
 
-                {results.some((r) => r.status === 'failed') && (
+                {/* Show results summary and failed tests */}
+                {results.length > 0 && (
                   <div>
                     <div className={styles.counts}>
                       <span className={styles.count}>Total: {totalTests}</span>
@@ -301,6 +304,17 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                         Failed: {failedTests}
                       </span>
                     </div>
+                    
+                    {failedTests === 0 && (
+                      <div className={styles.allPassed}>
+                        <p>✅ All tests passed!</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {results.some((r) => r.status === 'failed') && (
+                  <div>
                     <ul className={styles.failuresList}>
                       {results
                         .filter((r) => r.status === 'failed')
