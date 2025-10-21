@@ -35,6 +35,8 @@ export const Tool: React.FC = () => {
       if (!storyId) {
         console.log('[Visual Regression] Tool: No current story ID found');
         setCurrentResult(null);
+        // Reset showingDiff when no story is found
+        setShowingDiff({ type: null, result: null });
         return;
       }
 
@@ -55,6 +57,10 @@ export const Tool: React.FC = () => {
     if (channel) {
       const handleStoryChanged = () => {
         console.log('[Visual Regression] Tool: storyChanged event received');
+        // Restore iframe content when story changes to show the new story instead of diff
+        restoreIframe();
+        // Reset showingDiff state when story changes
+        setShowingDiff({ type: null, result: null });
         updateCurrentResult();
       };
 
@@ -221,7 +227,6 @@ export const Tool: React.FC = () => {
     if (iframe) {
       // Remove srcdoc to restore original content
       iframe.removeAttribute('srcdoc');
-      setShowingDiff({ type: null, result: null });
       console.log('[Visual Regression] Restored original iframe content');
 
       // Emit event to notify other components that diff is hidden
@@ -248,17 +253,6 @@ export const Tool: React.FC = () => {
 
   return (
     <>
-      {/* Test buttons removed */}
-
-      {/* Debug info */}
-      {process.env.NODE_ENV === 'development' && (
-        <div style={{ fontSize: '10px', color: '#666', margin: '2px' }}>
-          Tool Debug:{' '}
-          {currentResult ? `${currentResult.storyId} (${currentResult.status})` : 'No result'}
-        </div>
-      )}
-
-      {/* Diff buttons for failed tests */}
       {(() => {
         console.log('[Visual Regression] Tool: Rendering diff buttons check:', {
           currentResult,

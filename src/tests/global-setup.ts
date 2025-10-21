@@ -251,8 +251,7 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     );
   }
 
-  const { storyIds, importPaths } = extractStoryMetadata(indexData);
-
+  const { storyIds } = extractStoryMetadata(indexData);
   if (storyIds.length === 0) {
     throw new Error('Storybook index.json did not contain any runnable stories.');
   }

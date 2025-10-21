@@ -26,7 +26,7 @@ type CliOptions = {
   locale?: string;
   maxFailures?: string;
   reporter?: string;
-  json?: boolean;
+  storybook?: boolean;
   quiet?: boolean;
   include?: string;
   exclude?: string;
@@ -296,10 +296,14 @@ async function _waitForStorybookServer(url: string, timeout: number): Promise<vo
   console.log('Giving Storybook 5 seconds to start up...');
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
+  // Wait 3 seconds before hiding the log
+  console.log('Waiting 3 seconds before hiding log output...');
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+
   let attempt = 1;
   while (Date.now() - startTime < maxWaitTime) {
     try {
-      console.log(`Checking if Storybook is ready (attempt ${attempt})...`);
+      console.log(`🔍 Checking if Storybook is ready (attempt ${attempt})...`);
 
       // Try the main page first (faster to respond)
       const mainResponse = await fetch(url, {
@@ -527,7 +531,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   let finalStorybookCommand = storybookLaunchCommand;
 
   // Check if Storybook is already running if we have a command
-  if (storybookLaunchCommand) {
+  // Skip this check when using --storybook flag since Storybook is already running
+  if (storybookLaunchCommand && !options.storybook) {
     const storybookIndexUrl = `${config.storybookUrl.replace(/\/$/, '')}/index.json`;
     console.log(`🔍 Checking if Storybook is already running at: ${storybookIndexUrl}`);
 
@@ -548,6 +553,10 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         `🔍 Storybook not accessible (${error instanceof Error ? error.message : 'unknown error'}), will start webserver`,
       );
     }
+  } else if (options.storybook) {
+    // When using --storybook flag, assume Storybook is already running
+    console.log(`📚 Running in Storybook mode`);
+    finalStorybookCommand = undefined;
   }
 
   const runtimeConfig: VisualRegressionConfig = {
@@ -606,9 +615,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   mkdirSync(path.dirname(runtimeOptionsPath), { recursive: true });
   writeFileSync(runtimeOptionsPath, JSON.stringify(runtimeOptions, null, 2), 'utf8');
 
-  console.log('');
   console.log(chalk.bold('🚀 Starting Playwright visual regression tests'));
-  if (storybookCommand) {
+  if (storybookCommand && !options.storybook) {
     console.log(
       `${chalk.dim('  •')} Storybook command: ${chalk.cyan(storybookLaunchCommand)} (${chalk.dim(
         storybookCommand,
@@ -616,7 +624,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     );
     console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
     console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
-  } else {
+  } else if (!options.storybook) {
     console.log(
       `${chalk.dim('  •')} Using existing Storybook server at ${chalk.cyan(config.storybookUrl)}`,
     );
@@ -671,14 +679,14 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     let reporterArg: string | undefined;
     if (useSilentReporter) {
       reporterArg = resolvedSilentReporter;
-    } else if ((options as CliOptions).json) {
-      // Use our custom JSON reporter when --json flag is set
-      const jsonReporterCandidates = [
-        join(projectRoot, 'dist', 'reporters', 'json-reporter.js'),
-        join(projectRoot, 'src', 'reporters', 'json-reporter.ts'),
+    } else if ((options as CliOptions).storybook) {
+      // Use our custom Storybook reporter when --storybook flag is set
+      const storybookReporterCandidates = [
+        join(projectRoot, 'dist', 'reporters', 'storybook-reporter.js'),
+        join(projectRoot, 'src', 'reporters', 'storybook-reporter.ts'),
       ];
-      const resolvedJsonReporter = jsonReporterCandidates.find((p) => existsSync(p));
-      reporterArg = resolvedJsonReporter || 'json'; // Fallback to Playwright's default JSON reporter
+      const resolvedStorybookReporter = storybookReporterCandidates.find((p) => existsSync(p));
+      reporterArg = resolvedStorybookReporter;
     } else if ((options as CliOptions).reporter) {
       reporterArg = String((options as CliOptions).reporter);
     } else if (debugEnabled) {
@@ -827,7 +835,7 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
-  .option('--json', 'Output results as JSON (for programmatic consumption)')
+  .option('--storybook', 'Output results as JSON for Storybook addon consumption', false)
   .option('--print-urls', 'Show story URLs inline with test results')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
@@ -939,7 +947,7 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
-  .option('--json', 'Output results as JSON (for programmatic consumption)')
+  .option('--storybook', 'Output results as JSON for Storybook addon consumption', false)
   .option('--print-urls', 'Show story URLs inline with test results')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')

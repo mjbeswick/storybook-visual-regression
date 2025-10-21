@@ -5,6 +5,7 @@ import { PlayIcon, SyncIcon, DownloadIcon } from '@storybook/icons';
 import { EVENTS } from './constants';
 import styles from './Panel.module.css';
 import { useTestResults } from './TestResultsContext';
+import Convert from 'ansi-to-html';
 
 type PanelProps = {
   active?: boolean;
@@ -13,7 +14,7 @@ type PanelProps = {
 export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const api = useStorybookApi();
   const emit = useChannel({});
-  const { results, isRunning, logs, cancelTest } = useTestResults();
+  const { results, isRunning, logs, cancelTest, clearLogs } = useTestResults();
 
   // Check if channel is available
   const channel = api.getChannel();
@@ -22,6 +23,15 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const logRef = React.useRef<HTMLDivElement | null>(null);
   const lastRenderedIndexRef = React.useRef<number>(0);
   const cancelButtonRef = React.useRef<HTMLButtonElement | null>(null);
+
+  // Initialize ANSI to HTML converter
+  const convert = new Convert({
+    fg: '#e5e7eb', // Default foreground color
+    bg: '#0b1020', // Default background color
+    newline: true,
+    escapeXML: true,
+    stream: false,
+  });
 
   React.useEffect(() => {
     if (!isRunning) {
@@ -52,7 +62,12 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     for (let i = start; i < logs.length; i++) {
       const line = logs[i];
       const appendLine = (text: string) => {
-        frag.append(document.createTextNode(text));
+        const htmlContent = convert.toHtml(text);
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = htmlContent;
+        while (tempDiv.firstChild) {
+          frag.appendChild(tempDiv.firstChild);
+        }
         // Ensure each appended chunk ends with a newline for readability
         if (!/\n$/.test(text)) frag.append(document.createTextNode('\n'));
       };
@@ -79,6 +94,11 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
         data?: unknown;
         error?: unknown;
         test?: { name?: string; status?: string; duration?: number };
+        display?: string;
+        summary?: string;
+        progress?: number;
+        total?: number;
+        workers?: number;
       } | null;
 
       if (obj) {
@@ -91,16 +111,37 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
           continue;
         }
         if (obj.type === 'test-result' && obj.test) {
-          const status = (obj.test.status || '').toLowerCase();
-          const isPass = status === 'passed' || status === 'ok' || status === 'success';
-          const symbol = isPass ? '✓' : '✗';
-          const name = obj.test.name || 'Unnamed test';
-          const duration = typeof obj.test.duration === 'number' ? `${obj.test.duration}ms` : '';
-          appendLine(`${symbol} ${name}${duration ? ` (${duration})` : ''}`);
+          // Use optimized display format if available, otherwise fallback to manual formatting
+          if (obj.display) {
+            appendLine(obj.display);
+          } else {
+            const status = (obj.test.status || '').toLowerCase();
+            const isPass = status === 'passed' || status === 'ok' || status === 'success';
+            const symbol = isPass ? '✓' : '✗';
+            const name = obj.test.name || 'Unnamed test';
+            const duration = typeof obj.test.duration === 'number' ? `${obj.test.duration}ms` : '';
+            appendLine(`${symbol} ${name}${duration ? ` (${duration})` : ''}`);
+          }
+          continue;
+        }
+        if (obj.type === 'test-progress' && obj.display) {
+          // Display the test progress info
+          appendLine(obj.display);
+          continue;
+        }
+        if (obj.type === 'test-summary' && obj.summary) {
+          // Display the test summary
+          appendLine(obj.summary);
           continue;
         }
         // ignore 'start' and 'complete' payloads silently
       } else {
+        // Check if this looks like a large JSON block (summary output)
+        const trimmedLine = line.trim();
+        if (trimmedLine.startsWith('{') && trimmedLine.length > 100) {
+          // This is likely the final JSON summary - skip it
+          continue;
+        }
         // Not JSON; render as-is
         appendLine(line);
       }
@@ -224,20 +265,20 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       {!active && null}
       {active && (
         <>
-          {isRunning && (
+          {(isRunning || logs.length > 0) && (
             <div className={styles.logContainer}>
               <div className={styles.log} ref={logRef} />
               <button
                 ref={cancelButtonRef}
-                className={styles.cancelButton}
-                onClick={handleCancelTest}
-                title="Cancel running tests"
+                className={isRunning ? styles.cancelButton : styles.closeButton}
+                onClick={isRunning ? handleCancelTest : clearLogs}
+                title={isRunning ? 'Cancel running tests' : 'Close log panel'}
               >
-                Cancel
+                {isRunning ? 'Cancel' : 'Close'}
               </button>
             </div>
           )}
-          {!isRunning && (
+          {!isRunning && logs.length === 0 && (
             <ScrollArea vertical>
               <div className={styles.section}>
                 <div className={styles.buttonsRow}>

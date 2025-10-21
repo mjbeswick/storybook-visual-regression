@@ -347,7 +347,9 @@ const initializeAddon = async () => {
                     });
                   }
                 } else if (eventData.type === 'complete') {
-                  if (eventData.exitCode === 0 || eventData.exitCode === null) {
+                  if (eventData.wasCancelled) {
+                    console.log('[Visual Regression] Test was cancelled');
+                  } else if (eventData.exitCode === 0 || eventData.exitCode === null) {
                     console.log('[Visual Regression] Test completed successfully');
                   } else {
                     console.log(
@@ -497,7 +499,9 @@ const initializeAddon = async () => {
                     });
                   }
                 } else if (eventData.type === 'complete') {
-                  if (eventData.exitCode === 0 || eventData.exitCode === null) {
+                  if (eventData.wasCancelled) {
+                    console.log('[Visual Regression] All tests were cancelled');
+                  } else if (eventData.exitCode === 0 || eventData.exitCode === null) {
                     console.log('[Visual Regression] All tests completed successfully');
                   } else {
                     console.log(
@@ -633,7 +637,9 @@ const initializeAddon = async () => {
                     });
                   }
                 } else if (eventData.type === 'complete') {
-                  if (eventData.exitCode === 0 || eventData.exitCode === null) {
+                  if (eventData.wasCancelled) {
+                    console.log('[Visual Regression] Baseline update was cancelled');
+                  } else if (eventData.exitCode === 0 || eventData.exitCode === null) {
                     console.log('[Visual Regression] Baseline updated successfully');
                   } else {
                     console.log(

@@ -144,17 +144,44 @@ export function startApiServer(port = 6007): Server {
       console.log('[Visual Regression] Stopping all running tests...');
       let stoppedCount = 0;
 
-      for (const [processId, childProcess] of activeProcesses) {
-        try {
-          if (childProcess && !childProcess.killed) {
-            childProcess.kill('SIGTERM');
-            stoppedCount++;
-            console.log(`[Visual Regression] Stopped process ${processId}`);
+      const stopPromises = Array.from(activeProcesses.entries()).map(
+        async ([processId, childProcess]) => {
+          try {
+            if (childProcess && !childProcess.killed) {
+              console.log(`[Visual Regression] Attempting to stop process ${processId}`);
+
+              // First try graceful termination
+              childProcess.kill('SIGTERM');
+
+              // Wait a bit for graceful termination
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+
+              // Check if process is still running
+              if (!childProcess.killed) {
+                console.log(
+                  `[Visual Regression] Process ${processId} still running, force killing...`,
+                );
+                childProcess.kill('SIGKILL');
+
+                // Wait a bit more for force kill
+                await new Promise((resolve) => setTimeout(resolve, 500));
+              }
+
+              if (childProcess.killed) {
+                stoppedCount++;
+                console.log(`[Visual Regression] Successfully stopped process ${processId}`);
+              } else {
+                console.warn(`[Visual Regression] Failed to stop process ${processId}`);
+              }
+            }
+          } catch (error) {
+            console.error(`[Visual Regression] Error stopping process ${processId}:`, error);
           }
-        } catch (error) {
-          console.error(`[Visual Regression] Error stopping process ${processId}:`, error);
-        }
-      }
+        },
+      );
+
+      // Wait for all stop operations to complete
+      await Promise.all(stopPromises);
 
       activeProcesses.clear();
 
@@ -295,7 +322,7 @@ export function startApiServer(port = 6007): Server {
           }
 
           // Always use JSON output
-          args.push('--json');
+          args.push('--storybook');
 
           // Send initial status
           res.write(`data: ${JSON.stringify({ type: 'start', storyId: request.storyId })}\n\n`);
@@ -388,9 +415,13 @@ export function startApiServer(port = 6007): Server {
             res.end();
           });
 
-          child.on('close', (code) => {
+          child.on('close', (code, signal) => {
             // Clean up the process
             activeProcesses.delete(processId);
+
+            console.log(
+              `[Visual Regression] Process ${processId} closed with code ${code}, signal ${signal}`,
+            );
 
             // Wait a bit for any remaining stdout to be processed
             setTimeout(() => {
@@ -406,10 +437,15 @@ export function startApiServer(port = 6007): Server {
                 // Not valid JSON, that's okay
               }
 
+              // Check if this was a cancellation (SIGTERM or SIGKILL)
+              const wasCancelled = signal === 'SIGTERM' || signal === 'SIGKILL' || code === 130;
+
               res.write(
                 `data: ${JSON.stringify({
                   type: 'complete',
                   exitCode: code,
+                  signal,
+                  wasCancelled,
                   storyId: request.storyId,
                   result,
                   stdout: !result ? stdout : undefined,

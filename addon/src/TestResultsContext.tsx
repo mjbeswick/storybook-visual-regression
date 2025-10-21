@@ -9,6 +9,7 @@ type TestResultsContextType = {
   isRunning: boolean;
   logs: string[];
   cancelTest: () => void;
+  clearLogs: () => void;
 };
 
 const TestResultsContext = createContext<TestResultsContextType>({
@@ -17,6 +18,7 @@ const TestResultsContext = createContext<TestResultsContextType>({
   isRunning: false,
   logs: [],
   cancelTest: () => {},
+  clearLogs: () => {},
 });
 
 export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -103,16 +105,33 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const cancelTest = () => {
     // Call the server to stop all running tests
     fetch('http://localhost:6007/stop', { method: 'POST' })
-      .then(() => {
-        console.log('[Visual Regression] Successfully cancelled tests');
+      .then(async (response) => {
+        if (response.ok) {
+          const result = await response.json();
+          console.log('[Visual Regression] Successfully cancelled tests:', result);
+          // Immediately set running to false to update UI
+          setState((prev) => ({ ...prev, isRunning: false }));
+        } else {
+          console.error(
+            '[Visual Regression] Failed to cancel tests:',
+            response.status,
+            response.statusText,
+          );
+        }
       })
       .catch((error) => {
         console.error('[Visual Regression] Error cancelling tests:', error);
+        // Still set running to false even if request fails
+        setState((prev) => ({ ...prev, isRunning: false }));
       });
   };
 
+  const clearLogs = () => {
+    setState((prev) => ({ ...prev, logs: [] }));
+  };
+
   return (
-    <TestResultsContext.Provider value={{ ...state, cancelTest }}>
+    <TestResultsContext.Provider value={{ ...state, cancelTest, clearLogs }}>
       {children}
     </TestResultsContext.Provider>
   );
