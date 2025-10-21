@@ -41,8 +41,21 @@ type FailedStoryData = {
 };
 const failedStories: Map<string, FailedStoryData> = new Map();
 
+// Guard to prevent multiple initializations (stored on window to persist across HMR)
+declare global {
+  interface Window {
+    __VISUAL_REGRESSION_INITIALIZED__?: boolean;
+  }
+}
+
 // Initialize the addon by setting up event listeners
 const initializeAddon = async () => {
+  // Prevent multiple initializations
+  if (typeof window !== 'undefined' && window.__VISUAL_REGRESSION_INITIALIZED__) {
+    console.log('[Visual Regression Addon] Already initialized, skipping...');
+    return;
+  }
+
   const channel = getChannel();
 
   if (!channel) {
@@ -51,6 +64,10 @@ const initializeAddon = async () => {
     return;
   }
 
+  // Mark as initialized before setting up handlers
+  if (typeof window !== 'undefined') {
+    window.__VISUAL_REGRESSION_INITIALIZED__ = true;
+  }
   console.log('[Visual Regression Addon] Initialized - API Server running on port 6007');
 
   // Load existing failed test results on initialization (no sidebar highlighting)
@@ -179,23 +196,6 @@ const initializeAddon = async () => {
   };
 
   startFailedResultsWatcher();
-
-  // Stop any running tests when the page is about to reload/unload
-  const stopRunningTests = async () => {
-    try {
-      await fetch(`${API_BASE_URL}/stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      console.log('[Visual Regression] Stopped running tests due to page reload');
-    } catch {
-      // Silent fail - page is reloading anyway
-    }
-  };
-
-  // Listen for page unload/reload events
-  window.addEventListener('beforeunload', stopRunningTests);
-  window.addEventListener('unload', stopRunningTests);
 
   // Listen for story changes to show/hide diff overlay
   channel.on('storyChanged', (data: unknown) => {

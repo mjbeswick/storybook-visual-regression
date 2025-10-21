@@ -75,8 +75,8 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       if (trimmedLine.startsWith('{')) {
         try {
           const obj = JSON.parse(trimmedLine) as { type?: string; data?: string };
-          if (obj.type === 'stdout' && typeof obj.data === 'string') {
-            // Extract the actual text from the JSON wrapper
+          if ((obj.type === 'stdout' || obj.type === 'stderr') && typeof obj.data === 'string') {
+            // Extract the actual text from the JSON wrapper (both stdout and stderr)
             line = obj.data;
           } else if (obj.type === 'start') {
             // Skip start messages
@@ -93,10 +93,21 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
       // Split multi-line content into separate lines
       const lines = line.split('\n');
-      for (const textLine of lines) {
+
+      // Check if the line ends with \n (which creates a trailing empty string after split)
+      const hasTrailingNewline = line.endsWith('\n');
+
+      for (let j = 0; j < lines.length; j++) {
+        const textLine = lines[j];
+
+        // Skip only the trailing empty line from split if the original line ended with \n
+        if (hasTrailingNewline && j === lines.length - 1 && textLine === '') {
+          continue;
+        }
+
         const trimmed = textLine.trim();
 
-        // Handle empty lines within multi-line content
+        // Handle empty lines within multi-line content (blank lines in the middle)
         if (!trimmed) {
           const emptyDiv = document.createElement('div');
           emptyDiv.innerHTML = '&nbsp;';

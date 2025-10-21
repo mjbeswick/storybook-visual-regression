@@ -43,6 +43,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
 
     const handleTestStarted = () => {
+      console.log('[Visual Regression] Test started - clearing logs');
       setState((prev) => ({ ...prev, isRunning: true, results: [], logs: [] }));
     };
 
@@ -72,6 +73,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
 
     const handleLogOutput = (line: string) => {
+      console.log('[Visual Regression] Log output received:', line.substring(0, 50));
       setState((prev) => ({ ...prev, logs: [...prev.logs, line] }));
     };
 

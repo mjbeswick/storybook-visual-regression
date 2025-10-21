@@ -32,7 +32,7 @@ export default class StorybookReporter implements Reporter {
 
     // Output blank line and progress info to match terminal
     console.log('');
-    console.log(`Running ${this.totalTests} tests using ${_config.workers || 1} workers`);
+    console.log(`Running ${this.totalTests} tests using ${_config.workers || 1} workers...`);
     console.log('');
   }
 

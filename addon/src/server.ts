@@ -147,24 +147,48 @@ export function startApiServer(port = 6007): Server {
       const stopPromises = Array.from(activeProcesses.entries()).map(
         async ([processId, childProcess]) => {
           try {
-            if (childProcess && !childProcess.killed) {
-              console.log(`[Visual Regression] Attempting to stop process ${processId}`);
+            if (childProcess && !childProcess.killed && childProcess.pid) {
+              console.log(
+                `[Visual Regression] Attempting to stop process ${processId} (PID: ${childProcess.pid})`,
+              );
 
-              // First try graceful termination
-              childProcess.kill('SIGTERM');
+              // First try graceful termination of the entire process group
+              try {
+                // On Unix systems, kill the entire process group using negative PID
+                process.kill(-childProcess.pid, 'SIGTERM');
+                console.log(
+                  `[Visual Regression] Sent SIGTERM to process group ${childProcess.pid}`,
+                );
+              } catch {
+                // If process group kill fails, fall back to individual process kill
+                console.log(
+                  `[Visual Regression] Process group kill failed, trying individual process kill`,
+                );
+                childProcess.kill('SIGTERM');
+              }
 
               // Wait a bit for graceful termination
-              await new Promise((resolve) => setTimeout(resolve, 1000));
+              await new Promise((resolve) => setTimeout(resolve, 2000));
 
               // Check if process is still running
               if (!childProcess.killed) {
                 console.log(
                   `[Visual Regression] Process ${processId} still running, force killing...`,
                 );
-                childProcess.kill('SIGKILL');
+
+                try {
+                  // Try to kill the entire process group with SIGKILL
+                  process.kill(-childProcess.pid, 'SIGKILL');
+                  console.log(
+                    `[Visual Regression] Sent SIGKILL to process group ${childProcess.pid}`,
+                  );
+                } catch {
+                  // Fall back to individual process kill
+                  childProcess.kill('SIGKILL');
+                }
 
                 // Wait a bit more for force kill
-                await new Promise((resolve) => setTimeout(resolve, 500));
+                await new Promise((resolve) => setTimeout(resolve, 1000));
               }
 
               if (childProcess.killed) {
@@ -343,6 +367,8 @@ export function startApiServer(port = 6007): Server {
               ...process.env,
               FORCE_COLOR: '1', // Force chalk to output ANSI color codes
             },
+            // Create a new process group to enable killing all child processes
+            detached: true,
           });
 
           // Track the process
