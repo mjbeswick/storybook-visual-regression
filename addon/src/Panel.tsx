@@ -26,6 +26,8 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const terminalInstance = React.useRef<Terminal | null>(null);
   const fitAddon = React.useRef<FitAddon | null>(null);
   const lastRenderedIndexRef = React.useRef<number>(0);
+  const shouldPersistTerminal = React.useRef<boolean>(false);
+  const hasShownRunningMessage = React.useRef<boolean>(false);
   // Initialize xterm.js terminal when the log container is shown
   React.useEffect(() => {
     // Only initialize when we have logs or are running
@@ -37,52 +39,62 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       return;
     }
 
-    // Don't reinitialize if already exists
+    // Don't reinitialize if already exists and is still attached to DOM
     if (terminalInstance.current) {
-      return;
+      // Check if terminal is still properly attached to the DOM
+      const terminalElement = terminalRef.current?.querySelector('.xterm');
+      if (terminalElement && terminalInstance.current.element?.isConnected) {
+        return; // Terminal exists and is attached, no need to recreate
+      } else {
+        // Terminal instance exists but not attached to DOM, dispose and recreate
+        console.log('[Visual Regression] Terminal detached from DOM, recreating...');
+        terminalInstance.current.dispose();
+        terminalInstance.current = null;
+        fitAddon.current = null;
+        shouldPersistTerminal.current = false; // Allow recreation
+      }
     }
 
     // Create terminal instance
     const terminal = new Terminal({
       theme: {
-        background: '#1e1e1e',
-        foreground: '#d4d4d4',
-        cursor: '#ffffff',
-        cursorAccent: '#000000',
-        selectionBackground: '#264f78',
+        background: '#ffffff',
+        foreground: '#4d4d4c',
+        cursor: '#4d4d4c',
+        cursorAccent: '#ffffff',
+        selectionBackground: '#d6d6d6',
         black: '#000000',
-        red: '#cd3131',
-        green: '#0dbc79',
-        yellow: '#e5e510',
-        blue: '#2472c8',
-        magenta: '#bc3fbc',
-        cyan: '#11a8cd',
-        white: '#e5e5e5',
-        brightBlack: '#666666',
-        brightRed: '#f14c4c',
-        brightGreen: '#23d18b',
-        brightYellow: '#f5f543',
-        brightBlue: '#3b8eea',
-        brightMagenta: '#d670d6',
-        brightCyan: '#29b8db',
-        brightWhite: '#e5e5e5',
+        red: '#d70000',
+        green: '#718c00',
+        yellow: '#d75f00',
+        blue: '#4271ae',
+        magenta: '#8959a8',
+        cyan: '#3e999f',
+        white: '#ffffff',
+        brightBlack: '#4d4d4c',
+        brightRed: '#d70000',
+        brightGreen: '#718c00',
+        brightYellow: '#d75f00',
+        brightBlue: '#4271ae',
+        brightMagenta: '#8959a8',
+        brightCyan: '#3e999f',
+        brightWhite: '#ffffff',
       },
-      fontSize: 12,
+      fontSize: 14,
       fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
       cursorBlink: false,
       disableStdin: true, // Read-only terminal
-      rows: 30,
-      cols: 120,
-      convertEol: false, // Handle line endings manually for better control
+      convertEol: true, // Let xterm.js handle line endings naturally
       allowProposedApi: true, // Enable proposed APIs for better terminal features
       rescaleOverlappingGlyphs: true,
-      // Enable proper ANSI escape sequence handling
-      allowTransparency: false,
+      allowTransparency: true,
       macOptionIsMeta: true,
       rightClickSelectsWord: false,
-      // Ensure cursor movement and other escape sequences work properly
       cursorStyle: 'block',
       cursorWidth: 1,
+      scrollback: 10000,
+      letterSpacing: 0.5,
+      lineHeight: 1.2,
     });
 
     // Create fit addon
@@ -114,9 +126,12 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       // ignore terminal opening errors
     }
 
-    // Cleanup function
+    // Mark that terminal should persist once created
+    shouldPersistTerminal.current = true;
+
+    // Cleanup function - only dispose when logs are explicitly cleared
     return () => {
-      if (terminalInstance.current) {
+      if (terminalInstance.current && !shouldPersistTerminal.current) {
         terminalInstance.current.dispose();
         terminalInstance.current = null;
         fitAddon.current = null;
@@ -135,66 +150,47 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     if (logs.length === 0 && lastRenderedIndexRef.current > 0) {
       terminal.clear();
       lastRenderedIndexRef.current = 0;
+      shouldPersistTerminal.current = false; // Allow terminal to be disposed
+      hasShownRunningMessage.current = false; // Reset running message flag
       return;
     }
 
-    // If we're starting a new test run (isRunning=true, no logs yet)
-    if (isRunning && logs.length === 0) {
-      terminal.clear();
+    // If we're starting a new test run (isRunning=true)
+    // Check if this is a fresh start by comparing with last rendered index
+    if (isRunning && lastRenderedIndexRef.current === logs.length) {
+      // Add separator line if there are previous logs
+      if (logs.length > 0) {
+        terminal.write('\r\n\r\n' + '─'.repeat(60) + '\r\n');
+      }
       terminal.write('Running…');
-      lastRenderedIndexRef.current = 0;
+      hasShownRunningMessage.current = true;
       return;
     }
 
     // If we have logs, render them
     if (logs.length > 0) {
-      // Clear terminal on first logs of a new run
-      if (lastRenderedIndexRef.current === 0) {
-        terminal.clear();
-      }
+      // Clear terminal only when explicitly cleared by user (logs.length === 0 case above)
+      // Don't clear when starting a new test run to preserve previous output
 
       const start = lastRenderedIndexRef.current;
       if (start >= logs.length) {
         return;
       }
 
-      // Write new content to terminal - process each log chunk individually
+      // Write new content to terminal - pass raw output directly to xterm.js
       const newLogs = logs.slice(start);
       if (newLogs.length > 0) {
-        newLogs.forEach((log, index) => {
-          // Debug line endings and ANSI sequences
-          const hasLF = log.includes('\n');
-          const hasCR = log.includes('\r');
-          const hasAnsiEscapes = /\x1b\[[0-9;]*[a-zA-Z]/.test(log);
+        // If we showed "Running..." message, clear it before showing logs
+        if (hasShownRunningMessage.current && start === 0) {
+          // Clear the "Running..." message by moving cursor to beginning of line and clearing it
+          terminal.write('\r\x1b[K');
+          hasShownRunningMessage.current = false;
+        }
 
-          if (hasLF || hasCR || hasAnsiEscapes) {
-            console.log(
-              `[Terminal Debug] Log ${start + index}:`,
-              `LF=${hasLF} CR=${hasCR} ANSI=${hasAnsiEscapes}`,
-              JSON.stringify(log.substring(0, 100)),
-            );
-
-            // Specifically log cursor movement sequences
-            if (hasAnsiEscapes && /\x1b\[[0-9]*[ABCD]/.test(log)) {
-              console.log(`[Terminal Debug] Cursor movement detected:`, JSON.stringify(log));
-            }
-          }
-
-          // Process line endings carefully to avoid breaking ANSI sequences
-          let processedLog = log;
-
-          if (!hasAnsiEscapes) {
-            // Safe to process line endings for regular text
-            // First, temporarily replace existing \r\n with a placeholder
-            processedLog = processedLog.replace(/\r\n/g, '__CRLF__');
-            // Then replace standalone \n with \r\n
-            processedLog = processedLog.replace(/\n/g, '\r\n');
-            // Finally, restore the original \r\n sequences
-            processedLog = processedLog.replace(/__CRLF__/g, '\r\n');
-          }
-          // If it has ANSI escapes, send it raw to preserve sequences
-
-          terminal.write(processedLog);
+        newLogs.forEach((log) => {
+          // Pass raw terminal output directly to xterm.js without any processing
+          // This preserves all ANSI escape sequences, cursor movements, and formatting
+          terminal.write(log);
         });
       }
 
@@ -239,6 +235,9 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   };
 
   const handleUpdateBaseline = () => {
+    if (!isChannelReady) {
+      return;
+    }
     const currentStory = api.getCurrentStoryData();
     if (currentStory) {
       emit(EVENTS.UPDATE_BASELINE, { storyId: currentStory.id });
@@ -355,12 +354,6 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                         Failed: {failedTests}
                       </span>
                     </div>
-
-                    {failedTests === 0 && (
-                      <div className={styles.allPassed}>
-                        <p>✅ All passed</p>
-                      </div>
-                    )}
                   </div>
                 )}
 

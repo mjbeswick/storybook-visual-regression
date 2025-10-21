@@ -39,7 +39,7 @@ describe('FilteredReporter', () => {
 
       reporter.onBegin(config, rootSuite);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('Running 3 tests using 4 workers\n');
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 3 tests using 4 workers...\n');
     });
 
     it('should handle empty test suite', () => {
@@ -55,7 +55,7 @@ describe('FilteredReporter', () => {
 
       reporter.onBegin(config, rootSuite);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('Running 0 tests using 1 workers\n');
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 0 tests using 1 workers...\n');
     });
   });
 
@@ -391,7 +391,7 @@ describe('FilteredReporter', () => {
 
       reporter.onBegin(config, rootSuite);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('Running 5 tests using 1 workers\n');
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 5 tests using 1 workers...\n');
     });
 
     it('should provide more accurate estimates with actual test durations', () => {
@@ -473,7 +473,7 @@ describe('FilteredReporter', () => {
       reporter.onTestEnd(test2, failedResult);
       reporter.onEnd(finalResult);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('Running 2 tests using 2 workers\n');
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 2 tests using 2 workers...\n');
       expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 100ms');
       expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 2 100ms');
       expect(consoleLogSpy).toHaveBeenCalledWith(
@@ -499,7 +499,7 @@ describe('FilteredReporter', () => {
 
       reporter.onBegin(config, rootSuite);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('Running 100 tests using 8 workers\n');
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 100 tests using 8 workers...\n');
     });
   });
 });

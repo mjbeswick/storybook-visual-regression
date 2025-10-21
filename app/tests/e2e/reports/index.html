@@ -186,7 +186,7 @@
               (R = pe === '' ? '.' + J(Ee, 0) : pe),
               B(me)
                 ? (($ = ''),
-                  R != null && ($ = R.replace(re, '$&/') + '/'),
+                  R != null && ($ = R.replace(re, '$&/') + '❯'),
                   ce(me, L, $, '', function (Xe) {
                     return Xe;
                   }))
@@ -197,7 +197,7 @@
                       $ +
                         (!me.key || (Ee && Ee.key === me.key)
                           ? ''
-                          : ('' + me.key).replace(re, '$&/') + '/') +
+                          : ('' + me.key).replace(re, '$&/') + '❯') +
                         R,
                     )),
                   L.push(me)),
@@ -1858,7 +1858,7 @@
         od = 16,
         ad = 16384,
         ud = 73,
-        cd = '/',
+        cd = '❯',
         qe = void 0,
         Tn = 'undefined',
         ki = 'function';
@@ -16185,7 +16185,7 @@ Error generating stack: ` +
         display: inline-block;
         min-width: 20px;
         padding: 0 6px;
-        font-size: 12px;
+        font-size: 14px;
         font-weight: 500;
         line-height: 18px;
         color: var(--color-fg-default);
@@ -16368,7 +16368,7 @@ Error generating stack: ` +
       .label {
         display: inline-block;
         padding: 0 8px;
-        font-size: 12px;
+        font-size: 14px;
         font-weight: 500;
         line-height: 18px;
         border: 1px solid transparent;

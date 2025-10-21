@@ -42,7 +42,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
 
     const handleTestStarted = () => {
-      setState((prev) => ({ ...prev, isRunning: true, results: [], logs: [] }));
+      setState((prev) => ({ ...prev, isRunning: true, results: [] }));
     };
 
     const handleTestComplete = () => {

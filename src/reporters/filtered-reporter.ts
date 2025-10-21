@@ -9,9 +9,21 @@ import {
 import chalk from 'chalk';
 import { existsSync, rmSync, statSync, readdirSync, unlinkSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
+import {
+  clearLine as rlClearLine,
+  cursorTo as rlCursorTo,
+  moveCursor as rlMoveCursor,
+} from 'node:readline';
 import ora from 'ora';
 import type { Ora } from 'ora';
 import { tryLoadRuntimeOptions } from '../runtime/runtime-options.js';
+
+type TTYLikeStream = NodeJS.WriteStream & { isTTY?: boolean };
+type SpinnerStream = TTYLikeStream & {
+  cursorTo?: (x: number, y?: number) => void;
+  clearLine?: (dir: 0 | 1 | -1) => void;
+  moveCursor?: (dx: number, dy: number) => void;
+};
 
 class FilteredReporter implements Reporter {
   private runtimeOptions = tryLoadRuntimeOptions();
@@ -36,6 +48,11 @@ class FilteredReporter implements Reporter {
   private perWorkerDurations: Record<number, number[]> = {}; // rolling window per worker
   private recentAllDurations: number[] = []; // for percentile/outlier capping
   private spinner: Ora | null = null;
+  private spinnerStream: SpinnerStream | null = null;
+  private spinnerOriginalIsTTY: boolean | undefined;
+  private spinnerOriginalCursorTo?: SpinnerStream['cursorTo'];
+  private spinnerOriginalClearLine?: SpinnerStream['clearLine'];
+  private spinnerOriginalMoveCursor?: SpinnerStream['moveCursor'];
   private isCI = false;
   private showTimeEstimates = true;
   private showSpinners = true;
@@ -136,6 +153,40 @@ class FilteredReporter implements Reporter {
     return { etaMs, confidence };
   }
 
+  private restoreSpinnerStream(): void {
+    if (!this.spinnerStream) return;
+
+    if (typeof this.spinnerOriginalIsTTY === 'boolean') {
+      this.spinnerStream.isTTY = this.spinnerOriginalIsTTY;
+    } else {
+      Reflect.deleteProperty(this.spinnerStream, 'isTTY');
+    }
+
+    if (typeof this.spinnerOriginalCursorTo === 'function') {
+      this.spinnerStream.cursorTo = this.spinnerOriginalCursorTo;
+    } else {
+      Reflect.deleteProperty(this.spinnerStream, 'cursorTo');
+    }
+
+    if (typeof this.spinnerOriginalClearLine === 'function') {
+      this.spinnerStream.clearLine = this.spinnerOriginalClearLine;
+    } else {
+      Reflect.deleteProperty(this.spinnerStream, 'clearLine');
+    }
+
+    if (typeof this.spinnerOriginalMoveCursor === 'function') {
+      this.spinnerStream.moveCursor = this.spinnerOriginalMoveCursor;
+    } else {
+      Reflect.deleteProperty(this.spinnerStream, 'moveCursor');
+    }
+
+    this.spinnerStream = null;
+    this.spinnerOriginalIsTTY = undefined;
+    this.spinnerOriginalCursorTo = undefined;
+    this.spinnerOriginalClearLine = undefined;
+    this.spinnerOriginalMoveCursor = undefined;
+  }
+
   private safeRemoveEmptyDirsUp(startDir: string, stopDir: string): void {
     let cursor = startDir;
     // Only prune within the results root to avoid accidental removals
@@ -185,8 +236,7 @@ class FilteredReporter implements Reporter {
 
     // Detect CI environment and configure display options
     this.isCI = this.runtimeOptions?.isCI ?? false;
-    this.showTimeEstimates =
-      !this.isCI && !(this.runtimeOptions?.hideTimeEstimates ?? false);
+    this.showTimeEstimates = !this.isCI && !(this.runtimeOptions?.hideTimeEstimates ?? false);
     this.showSpinners = !this.isCI && !(this.runtimeOptions?.hideSpinners ?? false);
 
     // Set first batch size for improved time estimation
@@ -199,12 +249,46 @@ class FilteredReporter implements Reporter {
     this.lastEstimationUpdate = 0;
 
     // Header line for tests and workers, followed by a newline as expected by tests
-    console.log(`Running ${this.totalTests} tests using ${this.workers} workers\n`);
+    console.log(`Running ${this.totalTests} tests using ${this.workers} workers...\n`);
 
     if (this.showSpinners) {
+      // Force TTY detection for ora spinner to work in Storybook addon
+      this.spinnerStream = process.stdout as SpinnerStream;
+      this.spinnerOriginalIsTTY = this.spinnerStream.isTTY;
+      this.spinnerOriginalCursorTo = this.spinnerStream.cursorTo;
+      this.spinnerOriginalClearLine = this.spinnerStream.clearLine;
+      this.spinnerOriginalMoveCursor = this.spinnerStream.moveCursor;
+      this.spinnerStream.isTTY = true;
+
+      const stream = this.spinnerStream;
+
+      if (typeof stream.cursorTo !== 'function') {
+        stream.cursorTo = ((
+          x: number,
+          yOrCallback?: number | (() => void),
+          callback?: () => void,
+        ) => {
+          if (typeof yOrCallback === 'function') {
+            return rlCursorTo(stream, x, undefined, yOrCallback);
+          }
+          return rlCursorTo(stream, x, yOrCallback, callback);
+        }) as SpinnerStream['cursorTo'];
+      }
+
+      if (typeof stream.clearLine !== 'function') {
+        stream.clearLine = ((dir: 0 | 1 | -1, callback?: () => void) =>
+          rlClearLine(stream, dir, callback)) as SpinnerStream['clearLine'];
+      }
+
+      if (typeof stream.moveCursor !== 'function') {
+        stream.moveCursor = ((dx: number, dy: number, callback?: () => void) =>
+          rlMoveCursor(stream, dx, dy, callback)) as SpinnerStream['moveCursor'];
+      }
+
       this.spinner = ora({
         text: chalk.gray(`0 ${chalk.dim('of')} ${this.totalTests} ${chalk.dim('estimating…')}`),
         isEnabled: true,
+        stream: this.spinnerStream,
       }).start();
     }
   }
@@ -219,7 +303,10 @@ class FilteredReporter implements Reporter {
 
   onTestEnd(test: TestCase, result: TestResult): void {
     const displayTitle = test.title.replace(/^snapshots-/, '');
-    const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:9009').replace(/\/$/, '');
+    const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:9009').replace(
+      /\/$/,
+      '',
+    );
     const idMatch = displayTitle.match(/\[(.*)\]$/);
     const storyIdForUrl = idMatch ? idMatch[1] : displayTitle;
 
@@ -235,26 +322,24 @@ class FilteredReporter implements Reporter {
     // Fix spacing issues and add colors to slashes and chevrons
     formattedTitle = formattedTitle
       .replace(/\s*\/\s*/g, ' / ') // Ensure consistent spacing around slashes
-      .replace(/\s*›\s*/g, ' ❯ ') // Ensure consistent spacing around chevrons
+      .replace(/\s*›\s*/g, ' / ') // Ensure consistent spacing around chevrons
       .replace(/\s+/g, ' ') // Remove extra spaces
       .trim();
 
     // Split the title into category path and story name
-    const chevronIndex = formattedTitle.lastIndexOf(' ❯ ');
+    const chevronIndex = formattedTitle.lastIndexOf(' / ');
     let categoryPath = '';
     let storyName = '';
 
     if (chevronIndex !== -1) {
-      categoryPath = formattedTitle.substring(0, chevronIndex + 3); // Include the chevron
-      storyName = formattedTitle.substring(chevronIndex + 3); // Story name after chevron
+      categoryPath = formattedTitle.substring(0, chevronIndex + 3); // Include the slash
+      storyName = formattedTitle.substring(chevronIndex + 3); // Story name after slash
     } else {
       categoryPath = formattedTitle;
     }
 
-    // Color the category path (slashes and chevrons)
-    categoryPath = categoryPath
-      .replace(/\s\/\s/g, ` ${chalk.cyan.bold('/')} `)
-      .replace(/\s❯\s/g, ` ${chalk.cyan.bold('❯')} `);
+    // Color the category path (slashes)
+    categoryPath = categoryPath.replace(/\s\/\s/g, ` ${chalk.cyan.bold('/')} `);
 
     // Combine colored category path with uncolored story name and retry suffix
     formattedTitle = categoryPath + storyName + retrySuffix;
@@ -450,6 +535,7 @@ class FilteredReporter implements Reporter {
       this.spinner.stop();
       this.spinner = null;
     }
+    this.restoreSpinnerStream();
 
     // Calculate total elapsed time
     const totalDuration = Date.now() - this.startedAtMs;

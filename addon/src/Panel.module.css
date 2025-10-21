@@ -29,7 +29,6 @@
 }
 
 .log {
-  background: #1e1e1e;
   height: 100%;
   min-height: 400px; /* Ensure minimum height for xterm.js */
   width: 100%;
@@ -40,15 +39,16 @@
 /* Override xterm.js default styles to match our dark theme */
 .log :global(.xterm) {
   padding: 8px;
+  height: 100%;
 }
-
+/* 
 .log :global(.xterm-viewport) {
   background-color: #1e1e1e !important;
 }
 
 .log :global(.xterm-screen) {
   background-color: #1e1e1e !important;
-}
+} */
 
 .failuresList {
   margin: 0;
@@ -83,13 +83,14 @@
   position: absolute;
   top: 16px;
   right: 32px;
+  min-width: 85px;
   z-index: 10;
   background: #dc2626;
   color: white;
   border: none;
   border-radius: 4px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
@@ -108,13 +109,14 @@
   position: absolute;
   top: 16px;
   right: 32px;
+  min-width: 85px;
   z-index: 10;
   background: #16a34a;
   color: white;
   border: none;
   border-radius: 4px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
@@ -146,10 +148,6 @@
 }
 
 .allPassed {
-  padding: 16px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 6px;
   margin-top: 12px;
 }
 

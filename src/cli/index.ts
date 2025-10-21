@@ -637,7 +637,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   mkdirSync(path.dirname(runtimeOptionsPath), { recursive: true });
   writeFileSync(runtimeOptionsPath, JSON.stringify(runtimeOptions, null, 2), 'utf8');
 
-  console.log(chalk.bold('🚀 Starting Playwright visual regression tests'));
+  console.log(chalk.bold('🚀 Starting Playwright visual regression tests...'));
   if (isDockerEnvironment) {
     console.log(`${chalk.dim('  •')} Running in Docker environment`);
   }

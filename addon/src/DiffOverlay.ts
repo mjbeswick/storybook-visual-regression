@@ -111,7 +111,7 @@ class DiffOverlay {
       margin: 0 4px;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 14px;
     `;
     button.addEventListener('click', onClick);
     return button;

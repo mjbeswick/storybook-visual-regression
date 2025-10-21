@@ -284,7 +284,12 @@ const initializeAddon = async () => {
 
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
-    } catch {
+    } catch (error) {
+      console.error('[Visual Regression] Single test failed:', error);
+      channel.emit(
+        EVENTS.LOG_OUTPUT,
+        `\r\n❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}\r\n`,
+      );
       channel.emit(EVENTS.TEST_COMPLETE);
     }
   });
@@ -338,7 +343,12 @@ const initializeAddon = async () => {
 
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
-    } catch {
+    } catch (error) {
+      console.error('[Visual Regression] Run all tests failed:', error);
+      channel.emit(
+        EVENTS.LOG_OUTPUT,
+        `\r\n❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}\r\n`,
+      );
       channel.emit(EVENTS.TEST_COMPLETE);
     }
   });
@@ -403,7 +413,12 @@ const initializeAddon = async () => {
 
       // Stream ended - test is complete
       channel.emit(EVENTS.TEST_COMPLETE);
-    } catch {
+    } catch (error) {
+      console.error('[Visual Regression] Update baseline failed:', error);
+      channel.emit(
+        EVENTS.LOG_OUTPUT,
+        `\r\n❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}\r\n`,
+      );
       channel.emit(EVENTS.TEST_COMPLETE);
     }
   });
