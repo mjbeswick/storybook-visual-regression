@@ -281,102 +281,16 @@ const initializeAddon = async () => {
             channel.emit(EVENTS.LOG_OUTPUT, chunk);
           }
           
-          // Try to parse any JSON test results that might be embedded
-          // (The filtered reporter might still output JSON for structured data)
-          const lines = chunk.split('\n');
-          for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (trimmedLine.startsWith('{')) {
-              try {
-                const eventData = JSON.parse(trimmedLine);
-                console.log('[Visual Regression] Received structured data:', eventData.type, eventData);
-
-                if (eventData.type === 'test-result') {
-                  console.log('[Visual Regression] Received test-result:', eventData);
-                  // Handle individual test results
-                  if (eventData.status === 'passed') {
-                    console.log(`✅ Test Passed: ${eventData.title} [${eventData.storyId}]`);
-
-                    // Remove from failed stories if it was there
-                    failedStories.delete(eventData.storyId);
-
-                    // Emit test result to manager
-                    channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
-                      status: eventData.status,
-                    });
-                    // Immediately refresh highlights so passed stories are un-highlighted
-                    channel.emit(EVENTS.HIGHLIGHT_FAILED_STORIES, Array.from(failedStories.keys()));
-                  } else if (eventData.status === 'failed') {
-                    console.error(`❌ Test Failed: ${eventData.title} [${eventData.storyId}]`);
-                    console.log('[Visual Regression] Failed test data:', eventData);
-                    if (eventData.error) {
-                      console.error('   Error:', eventData.error);
-                    }
-
-                    // Store failed story information
-                    failedStories.set(eventData.storyId, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
-                      status: eventData.status,
-                      error: eventData.error,
-                      diffImagePath: eventData.diffImagePath,
-                      actualImagePath: eventData.actualImagePath,
-                      expectedImagePath: eventData.expectedImagePath,
-                    });
-
-                    // Emit test result to manager
-                    channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
-                      status: eventData.status,
-                      error: eventData.error,
-                      diffImagePath: eventData.diffImagePath,
-                      actualImagePath: eventData.actualImagePath,
-                      expectedImagePath: eventData.expectedImagePath,
-                    });
-
-                    // No sidebar highlight updates
-                  } else if (eventData.status === 'timedOut') {
-                    console.warn(`⚠️ Test Timed Out: ${eventData.title} [${eventData.storyId}]`);
-
-                    // Emit test result to manager
-                    channel.emit(EVENTS.TEST_RESULT, {
-                      storyId: eventData.storyId,
-                      storyName: eventData.title,
-                      status: eventData.status,
-                      error: eventData.error,
-                    });
-                  }
-                } else if (eventData.type === 'complete') {
-                  if (eventData.wasCancelled) {
-                    console.log('[Visual Regression] Test was cancelled');
-                  } else if (eventData.exitCode === 0 || eventData.exitCode === null) {
-                    console.log('[Visual Regression] Test completed successfully');
-                  } else {
-                    console.log(
-                      '[Visual Regression] Test failed with exit code:',
-                      eventData.exitCode,
-                    );
-                  }
-
-                  // No sidebar highlight updates
-
-                  channel.emit(EVENTS.TEST_COMPLETE);
-                } else if (eventData.type === 'error') {
-                  console.error('[Visual Regression] Test error:', eventData.error);
-                  channel.emit(EVENTS.TEST_COMPLETE);
-                }
-              } catch {
-                console.warn('[Visual Regression] Failed to parse event:', line);
-              }
-            }
-          }
+          // Note: We no longer parse JSON events since we're using pure terminal streaming
+          // The filtered reporter provides all feedback through terminal output
+          // Test completion is detected when the stream ends
         }
       } finally {
         reader.releaseLock();
       }
+      
+      // Stream ended - test is complete
+      channel.emit(EVENTS.TEST_COMPLETE);
     } catch (error) {
       console.error('[Visual Regression] Test failed:', error);
       channel.emit(EVENTS.TEST_COMPLETE);

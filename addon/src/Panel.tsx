@@ -31,10 +31,14 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     return converter;
   }, []);
 
+  // Buffer for handling terminal control sequences
+  const terminalBuffer = React.useRef<string>('');
+
   React.useEffect(() => {
     if (!isRunning) {
       // Reset counters when leaving running state
       lastRenderedIndexRef.current = 0;
+      terminalBuffer.current = ''; // Clear terminal buffer
       return;
     }
     const el = logRef.current;
@@ -56,24 +60,31 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     const start = lastRenderedIndexRef.current;
     if (start >= logs.length) return;
 
-    // For raw terminal streams, we need to handle the content differently
-    // Accumulate all new log content and process it as a continuous stream
+    // For raw terminal streams, accumulate all content in a buffer
     const newContent = logs.slice(start).join('');
     
     if (newContent) {
+      terminalBuffer.current += newContent;
+      
+      // Process the buffer to handle carriage returns and cursor movements
+      let processedContent = terminalBuffer.current;
+      
+      // Handle carriage returns by splitting lines and keeping only the last part after \r
+      const lines = processedContent.split('\n');
+      const processedLines = lines.map(line => {
+        const parts = line.split('\r');
+        return parts[parts.length - 1]; // Keep only the last part after \r
+      });
+      
+      processedContent = processedLines.join('\n');
+      
       // Convert ANSI codes to HTML for terminal-like rendering
-      const htmlContent = ansiUp.ansi_to_html(newContent);
+      const htmlContent = ansiUp.ansi_to_html(processedContent);
       
-      // Create a temporary container to parse the HTML
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = htmlContent;
-      
-      // Append all the converted content
-      while (tempDiv.firstChild) {
-        el.appendChild(tempDiv.firstChild);
-      }
+      // Clear the element and set the new content
+      el.innerHTML = htmlContent;
     }
-    
+
     // Auto-scroll to bottom to keep latest output visible
     el.scrollTop = el.scrollHeight;
     lastRenderedIndexRef.current = logs.length;

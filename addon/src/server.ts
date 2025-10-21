@@ -346,11 +346,8 @@ export function startApiServer(port = 6007): Server {
             args.push('--grep', `^${escapedId}$`);
           }
 
-          // Always use JSON output
-          args.push('--storybook');
-
-          // Send initial status
-          res.write(`data: ${JSON.stringify({ type: 'start', storyId: request.storyId })}\n\n`);
+          // Remove --storybook flag since we're using filtered reporter
+          // No initial status needed - terminal output will show progress
 
           // Log the command being run for debugging
           console.log(`[Visual Regression] Running: storybook-visual-regression ${args.join(' ')}`);
@@ -362,7 +359,7 @@ export function startApiServer(port = 6007): Server {
 
           // Use filtered reporter for rich terminal output
           const enhancedArgs = [...args, '--reporter', 'filtered'];
-          
+
           // Spawn the CLI process with full terminal support
           const child = spawn('storybook-visual-regression', enhancedArgs, {
             stdio: 'pipe',
@@ -381,20 +378,14 @@ export function startApiServer(port = 6007): Server {
           // Track the process
           activeProcesses.set(processId, child);
 
-          let stdout = '';
-          let stderr = '';
-
           child.stdout?.on('data', (data) => {
             const chunk = data.toString();
-            stdout += chunk;
-
             // Stream raw terminal output directly (no JSON wrapping)
             res.write(chunk);
           });
 
           child.stderr?.on('data', (data) => {
             const chunk = data.toString();
-            stderr += chunk;
             // Stream stderr directly as well
             res.write(chunk);
           });
@@ -427,37 +418,8 @@ export function startApiServer(port = 6007): Server {
               `[Visual Regression] Process ${processId} closed with code ${code}, signal ${signal}`,
             );
 
-            // Wait a bit for any remaining stdout to be processed
-            setTimeout(() => {
-              // Try to parse JSON output
-              let result = null;
-              try {
-                // The CLI outputs JSON, try to find and parse it
-                const jsonMatch = stdout.match(/\{[\s\S]*"status"[\s\S]*\}/);
-                if (jsonMatch) {
-                  result = JSON.parse(jsonMatch[0]);
-                }
-              } catch {
-                // Not valid JSON, that's okay
-              }
-
-              // Check if this was a cancellation (SIGTERM or SIGKILL)
-              const wasCancelled = signal === 'SIGTERM' || signal === 'SIGKILL' || code === 130;
-
-              res.write(
-                `data: ${JSON.stringify({
-                  type: 'complete',
-                  exitCode: code,
-                  signal,
-                  wasCancelled,
-                  storyId: request.storyId,
-                  result,
-                  stdout: !result ? stdout : undefined,
-                  stderr: stderr || undefined,
-                })}\n\n`,
-              );
-              res.end();
-            }, 100); // Small delay to ensure all stdout is processed
+            // Just end the stream - terminal output is complete
+            res.end();
           });
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
