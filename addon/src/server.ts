@@ -357,8 +357,8 @@ export function startApiServer(port = 6007): Server {
           // Generate unique process ID and track it
           const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-          // Use filtered reporter for rich terminal output
-          const enhancedArgs = [...args, '--reporter', 'filtered'];
+          // Let the CLI determine the appropriate reporter (filtered-reporter for storybook mode)
+          const enhancedArgs = [...args];
 
           // Create clean environment for terminal output
           const cleanEnv = { ...process.env };
