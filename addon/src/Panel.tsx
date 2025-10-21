@@ -62,25 +62,25 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
     // For raw terminal streams, accumulate all content in a buffer
     const newContent = logs.slice(start).join('');
-    
+
     if (newContent) {
       terminalBuffer.current += newContent;
-      
+
       // Process the buffer to handle carriage returns and cursor movements
       let processedContent = terminalBuffer.current;
-      
+
       // Handle carriage returns by splitting lines and keeping only the last part after \r
       const lines = processedContent.split('\n');
-      const processedLines = lines.map(line => {
+      const processedLines = lines.map((line) => {
         const parts = line.split('\r');
         return parts[parts.length - 1]; // Keep only the last part after \r
       });
-      
+
       processedContent = processedLines.join('\n');
-      
+
       // Convert ANSI codes to HTML for terminal-like rendering
       const htmlContent = ansiUp.ansi_to_html(processedContent);
-      
+
       // Clear the element and set the new content
       el.innerHTML = htmlContent;
     }

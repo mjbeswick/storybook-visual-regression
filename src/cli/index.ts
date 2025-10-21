@@ -707,13 +707,13 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     if (useSilentReporter) {
       reporterArg = resolvedSilentReporter;
     } else if ((options as CliOptions).storybook) {
-      // Use our custom Storybook reporter when --storybook flag is set
-      const storybookReporterCandidates = [
-        join(projectRoot, 'dist', 'reporters', 'storybook-reporter.js'),
-        join(projectRoot, 'src', 'reporters', 'storybook-reporter.ts'),
+      // Use filtered reporter for Storybook mode - provides rich terminal output
+      const filteredReporterCandidates = [
+        join(projectRoot, 'dist', 'reporters', 'filtered-reporter.js'),
+        join(projectRoot, 'src', 'reporters', 'filtered-reporter.ts'),
       ];
-      const resolvedStorybookReporter = storybookReporterCandidates.find((p) => existsSync(p));
-      reporterArg = resolvedStorybookReporter;
+      const resolvedFilteredReporter = filteredReporterCandidates.find((p) => existsSync(p));
+      reporterArg = resolvedFilteredReporter;
     } else if ((options as CliOptions).reporter) {
       reporterArg = String((options as CliOptions).reporter);
     } else if (debugEnabled) {
