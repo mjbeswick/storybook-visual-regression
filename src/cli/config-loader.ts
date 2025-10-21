@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { createDefaultConfig } from '../config/defaultConfig.js';
 import { pathToFileURL } from 'url';
@@ -193,7 +193,22 @@ export function saveUserConfig(cwd: string, config: UserConfig): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
+  
   const json = JSON.stringify(toSave, null, 2);
-  writeFileSync(filePath, json, 'utf8');
-  console.log(`📝 Saved config: ${filePath}`);
+  
+  // Only save if the content has actually changed
+  let existingContent = '';
+  if (existsSync(filePath)) {
+    try {
+      existingContent = readFileSync(filePath, 'utf8');
+    } catch {
+      // If we can't read the existing file, proceed with saving
+      existingContent = '';
+    }
+  }
+  
+  if (json !== existingContent) {
+    writeFileSync(filePath, json, 'utf8');
+    console.log(`📝 Saved config: ${filePath}`);
+  }
 }
