@@ -29,8 +29,10 @@ export type RuntimeOptions = {
   hideSpinners: boolean;
   printUrls: boolean;
   isCI: boolean;
+  isDocker: boolean;
   testTimeout: number;
   fullPage?: boolean;
+  storybookMode: boolean;
 };
 
 const __filename = fileURLToPath(import.meta.url);

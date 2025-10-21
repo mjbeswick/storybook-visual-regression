@@ -19,18 +19,6 @@ export type StorybookTestResult = {
   actualImagePath?: string;
 };
 
-export type StorybookOutput = {
-  type: 'storybook-result';
-  status: 'passed' | 'failed' | 'timedout' | 'interrupted';
-  startTime: number;
-  duration: number;
-  totalTests: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-  tests: StorybookTestResult[];
-};
-
 export default class StorybookReporter implements Reporter {
   private startTime = 0;
   private tests: StorybookTestResult[] = [];
@@ -42,15 +30,10 @@ export default class StorybookReporter implements Reporter {
     this.totalTests = this.countTests(suite);
     this.completedTests = 0;
 
-    // Output test count and progress info
-    console.log(
-      JSON.stringify({
-        type: 'test-progress',
-        display: `Running ${this.totalTests} tests using ${_config.workers || 1} workers`,
-        total: this.totalTests,
-        workers: _config.workers || 1,
-      }),
-    );
+    // Output blank line and progress info to match terminal
+    console.log('');
+    console.log(`Running ${this.totalTests} tests using ${_config.workers || 1} workers`);
+    console.log('');
   }
 
   onTestEnd(test: TestCase, result: TestResult): void {
@@ -98,45 +81,32 @@ export default class StorybookReporter implements Reporter {
     this.tests.push(testResult);
     this.completedTests++;
 
-    // Output individual test result immediately for real-time updates
-    // Format optimized for addon log panel to match terminal output
+    // Output individual test result to match terminal format exactly
     const statusSymbol = this.getStatusSymbol(result.status);
     const durationText = `${(result.duration / 1000).toFixed(1)}s`;
-    const _progress = `${this.completedTests}/${this.totalTests}`;
 
-    console.log(
-      JSON.stringify({
-        type: 'test-result',
-        test: testResult,
-        display: `  ${statusSymbol} ${title} ❯ ${name} ${durationText}`,
-        progress: this.completedTests,
-        total: this.totalTests,
-      }),
-    );
+    console.log(`  ${statusSymbol} ${title} › ${name} ${durationText}`);
   }
 
   onEnd(result: FullResult): void {
     const duration = Date.now() - this.startTime;
     const passed = this.tests.filter((t) => t.status === 'passed').length;
     const failed = this.tests.filter((t) => t.status === 'failed').length;
-    const skipped = this.tests.filter((t) => t.status === 'skipped').length;
+    const skipped = this.tests.filter(
+      (t) => t.status === 'skipped' || t.status === 'interrupted',
+    ).length;
 
-    // Output clean summary for addon to match terminal format
+    // Output summary to match terminal format exactly
     const durationSeconds = (duration / 1000).toFixed(1);
     const summary = `${passed} passed, ${failed} failed${skipped > 0 ? `, ${skipped} interrupted` : ''} (${durationSeconds}s)`;
 
-    console.log(
-      JSON.stringify({
-        type: 'test-summary',
-        summary,
-        passed,
-        failed,
-        skipped,
-        total: this.tests.length,
-        duration,
-        status: result.status,
-      }),
-    );
+    console.log('');
+    console.log(summary);
+
+    // Add final status line if tests failed
+    if (failed > 0) {
+      console.log('✘ Some tests failed');
+    }
   }
 
   private getStatusSymbol(status: string): string {
@@ -144,7 +114,7 @@ export default class StorybookReporter implements Reporter {
       case 'passed':
         return '✔';
       case 'failed':
-        return '✗';
+        return '✘';
       case 'skipped':
         return '⏹';
       case 'timedOut':

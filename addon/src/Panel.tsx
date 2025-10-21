@@ -60,90 +60,59 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
     const frag = document.createDocumentFragment();
     for (let i = start; i < logs.length; i++) {
-      const line = logs[i];
-      const appendLine = (text: string) => {
-        const htmlContent = convert.toHtml(text);
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = htmlContent;
-        while (tempDiv.firstChild) {
-          frag.appendChild(tempDiv.firstChild);
-        }
-        // Ensure each appended chunk ends with a newline for readability
-        if (!/\n$/.test(text)) frag.append(document.createTextNode('\n'));
-      };
+      let line = logs[i];
+      const trimmedLine = line.trim();
 
-      const parseJsonFromLine = (raw: string): unknown => {
+      // Handle empty lines - render as blank div
+      if (!trimmedLine) {
+        const emptyDiv = document.createElement('div');
+        emptyDiv.innerHTML = '&nbsp;'; // Non-breaking space to maintain height
+        frag.appendChild(emptyDiv);
+        continue;
+      }
+
+      // Check if this is JSON from the server (e.g., {"type":"stdout","data":"..."})
+      if (trimmedLine.startsWith('{')) {
         try {
-          return JSON.parse(raw);
-        } catch {
-          // Try parsing Server-Sent Events style: `data: {...}`
-          const match = /^data:\s*(\{[\s\S]*\})\s*$/.exec(raw);
-          if (match) {
-            try {
-              return JSON.parse(match[1]);
-            } catch {
-              return null;
-            }
-          }
-          return null;
-        }
-      };
-
-      const obj = parseJsonFromLine(line) as {
-        type?: string;
-        data?: unknown;
-        error?: unknown;
-        test?: { name?: string; status?: string; duration?: number };
-        display?: string;
-        summary?: string;
-        progress?: number;
-        total?: number;
-        workers?: number;
-      } | null;
-
-      if (obj) {
-        if (obj.type === 'stdout' && typeof obj.data === 'string') {
-          appendLine(obj.data);
-          continue;
-        }
-        if (obj.type === 'error' && obj.error) {
-          appendLine(String(obj.error));
-          continue;
-        }
-        if (obj.type === 'test-result' && obj.test) {
-          // Use optimized display format if available, otherwise fallback to manual formatting
-          if (obj.display) {
-            appendLine(obj.display);
+          const obj = JSON.parse(trimmedLine) as { type?: string; data?: string };
+          if (obj.type === 'stdout' && typeof obj.data === 'string') {
+            // Extract the actual text from the JSON wrapper
+            line = obj.data;
+          } else if (obj.type === 'start') {
+            // Skip start messages
+            continue;
           } else {
-            const status = (obj.test.status || '').toLowerCase();
-            const isPass = status === 'passed' || status === 'ok' || status === 'success';
-            const symbol = isPass ? '✓' : '✗';
-            const name = obj.test.name || 'Unnamed test';
-            const duration = typeof obj.test.duration === 'number' ? `${obj.test.duration}ms` : '';
-            appendLine(`${symbol} ${name}${duration ? ` (${duration})` : ''}`);
+            // Unknown JSON type, skip it
+            continue;
           }
+        } catch {
+          // Not valid JSON, skip it
           continue;
         }
-        if (obj.type === 'test-progress' && obj.display) {
-          // Display the test progress info
-          appendLine(obj.display);
+      }
+
+      // Split multi-line content into separate lines
+      const lines = line.split('\n');
+      for (const textLine of lines) {
+        const trimmed = textLine.trim();
+
+        // Handle empty lines within multi-line content
+        if (!trimmed) {
+          const emptyDiv = document.createElement('div');
+          emptyDiv.innerHTML = '&nbsp;';
+          frag.appendChild(emptyDiv);
           continue;
         }
-        if (obj.type === 'test-summary' && obj.summary) {
-          // Display the test summary
-          appendLine(obj.summary);
-          continue;
-        }
-        // ignore 'start' and 'complete' payloads silently
-      } else {
-        // Check if this looks like a large JSON block (summary output)
-        const trimmedLine = line.trim();
-        if (trimmedLine.startsWith('{') && trimmedLine.length > 100) {
-          // This is likely the final JSON summary - skip it
-          continue;
-        }
-        // Not JSON; render as-is
-        appendLine(line);
+
+        // Convert ANSI codes to HTML
+        const htmlContent = convert.toHtml(textLine);
+
+        // Create a container for this line
+        const lineDiv = document.createElement('div');
+        lineDiv.innerHTML = htmlContent;
+
+        // Append the line container to the fragment
+        frag.appendChild(lineDiv);
       }
     }
     el.appendChild(frag);

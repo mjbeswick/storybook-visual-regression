@@ -335,10 +335,14 @@ export function startApiServer(port = 6007): Server {
           // Generate unique process ID and track it
           const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-          // Spawn the CLI process
+          // Spawn the CLI process with color support enabled
           const child = spawn('storybook-visual-regression', args, {
             stdio: 'pipe',
             cwd: process.cwd(),
+            env: {
+              ...process.env,
+              FORCE_COLOR: '1', // Force chalk to output ANSI color codes
+            },
           });
 
           // Track the process
@@ -351,41 +355,9 @@ export function startApiServer(port = 6007): Server {
             const chunk = data.toString();
             stdout += chunk;
 
-            // Check for individual test results in the chunk
-            const lines = chunk.split('\n');
-            let filteredChunk = '';
-
-            for (const line of lines) {
-              if (line.trim()) {
-                try {
-                  const parsed = JSON.parse(line);
-                  if (parsed.type === 'test-result') {
-                    // Forward individual test result immediately
-                    res.write(
-                      `data: ${JSON.stringify({
-                        type: 'test-result',
-                        test: parsed.test,
-                        storyId: request.storyId,
-                      })}\n\n`,
-                    );
-                    // Don't include this line in stdout
-                    continue;
-                  } else {
-                    // Other JSON (like final summary) - include in stdout for later parsing
-                    filteredChunk += line + '\n';
-                  }
-                } catch {
-                  // Not JSON, include in filtered chunk
-                  filteredChunk += line + '\n';
-                }
-              } else {
-                filteredChunk += line + '\n';
-              }
-            }
-
-            // Stream all content (both JSON and non-JSON) to ensure nothing is lost
-            if (filteredChunk.trim()) {
-              res.write(`data: ${JSON.stringify({ type: 'stdout', data: filteredChunk })}\n\n`);
+            // Just send the chunk as-is, preserving exact formatting
+            if (chunk.trim()) {
+              res.write(`data: ${JSON.stringify({ type: 'stdout', data: chunk })}\n\n`);
             }
           });
 

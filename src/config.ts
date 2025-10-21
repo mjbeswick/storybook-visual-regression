@@ -33,6 +33,7 @@ export function createPlaywrightConfig(
   // This is sourced from runtime options written by the CLI before invoking Playwright
   const runtimeOptions = tryLoadRuntimeOptions();
   const webServerCwd = runtimeOptions?.originalCwd ?? process.cwd();
+  const isDockerEnvironment = runtimeOptions?.isDocker ?? false;
 
   // Wrap command in shell to ensure proper npm/pnpm/yarn resolution with version managers
   const wrappedCommand = userConfig.storybookCommand
@@ -82,10 +83,12 @@ export function createPlaywrightConfig(
           command: wrappedCommand,
           url: storybookIndexUrl,
           reuseExistingServer: true,
-          timeout: userConfig.serverTimeout,
+          timeout: isDockerEnvironment
+            ? Math.max(userConfig.serverTimeout, 300000)
+            : userConfig.serverTimeout, // 5 minutes for Docker
           cwd: webServerCwd,
-          stdout: 'pipe',
-          stderr: 'pipe',
+          stdout: isDockerEnvironment ? 'ignore' : 'pipe',
+          stderr: isDockerEnvironment ? 'ignore' : 'pipe',
           env: {
             ...process.env,
             NODE_ENV: 'development',

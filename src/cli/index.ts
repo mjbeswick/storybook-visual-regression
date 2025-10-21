@@ -220,6 +220,20 @@ async function createConfigFromOptions(
     return baseUrl.includes(`:${port}`) ? baseUrl : `${baseUrl.replace(/\/$/, '')}:${port}`;
   })();
 
+  // Docker environment detection and URL adjustment
+  const isDockerEnvironment = Boolean(
+    process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
+  );
+
+  // If running in Docker and using localhost/127.0.0.1, suggest host.docker.internal
+  if (isDockerEnvironment && storybookUrl.includes('127.0.0.1')) {
+    console.log(
+      chalk.yellow(
+        '⚠️  Docker detected: Consider using --url http://host.docker.internal:9009 instead of 127.0.0.1',
+      ),
+    );
+  }
+
   const parseNumberOption = (value: unknown): number | undefined => {
     const n = typeof value === 'string' ? parseInt(value, 10) : Number(value);
     return Number.isFinite(n) && !Number.isNaN(n) ? n : undefined;
@@ -429,6 +443,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const clean = Boolean(options.clean);
   const notFoundCheck = Boolean(options.notFoundCheck);
   const isCIEnvironment = !process.stdout.isTTY;
+  const isDockerEnvironment = Boolean(
+    process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
+  );
 
   // Optionally install Playwright browsers/deps for CI convenience
   // Only install if the --install-browsers flag was explicitly provided
@@ -607,8 +624,10 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     hideSpinners,
     printUrls,
     isCI: isCIEnvironment,
+    isDocker: isDockerEnvironment,
     testTimeout,
     fullPage: runtimeConfig.fullPage,
+    storybookMode: Boolean(options.storybook),
   };
 
   const runtimeOptionsPath = join(projectRoot, 'dist', 'runtime-options.json');
@@ -616,6 +635,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   writeFileSync(runtimeOptionsPath, JSON.stringify(runtimeOptions, null, 2), 'utf8');
 
   console.log(chalk.bold('🚀 Starting Playwright visual regression tests'));
+  if (isDockerEnvironment) {
+    console.log(`${chalk.dim('  •')} Running in Docker environment`);
+  }
   if (storybookCommand && !options.storybook) {
     console.log(
       `${chalk.dim('  •')} Storybook command: ${chalk.cyan(storybookLaunchCommand)} (${chalk.dim(
@@ -623,6 +645,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       )})`,
     );
     console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
+    if (isDockerEnvironment) {
+      console.log(`${chalk.dim('  •')} Docker mode: Extended timeout (5min), output ignored`);
+    }
     console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
   } else if (!options.storybook) {
     console.log(
@@ -630,7 +655,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     );
     console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
   }
-  console.log('');
+  if (!options.storybook) {
+    console.log('');
+  }
 
   try {
     const playwrightArgs = ['playwright', 'test'];
