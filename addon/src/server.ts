@@ -342,8 +342,9 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
             let processedCommand = cliCommand;
             // Handle npm run commands first (before Docker processing)
             if (cliCommand.startsWith('npm run')) {
-              // For npm run commands, always append arguments with -- separator
-              processedCommand = `${cliCommand} -- ${enhancedArgs.join(' ')}`;
+              // For npm run commands, add --silent flag and append arguments with -- separator
+              const silentCommand = cliCommand.replace('npm run', 'npm run --silent');
+              processedCommand = `${silentCommand} -- ${enhancedArgs.join(' ')}`;
               console.log(`[VR Addon] npm run command, appending with --: ${processedCommand}`);
             } else if (cliCommand.includes('docker run')) {
               // Remove -it flags (both combined and separate) from anywhere in the command
