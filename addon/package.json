@@ -1,6 +1,6 @@
 {
   "name": "storybook-visual-regression-addon",
-  "version": "0.4.1",
+  "version": "1.0.0",
   "description": "Fully functional Storybook addon for visual regression testing with built-in API server",
   "main": "dist/preset.js",
   "types": "dist/preset.d.ts",
