@@ -400,7 +400,7 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
               cwd: process.cwd(),
               env: {
                 ...cleanEnv,
-                FORCE_COLOR: '1', // Force chalk to output ANSI color codes
+                FORCE_COLOR: '3', // Force chalk to output ANSI color codes (level 3 = full color)
                 TERM: 'xterm-256color', // Enable full terminal features
                 COLUMNS: '120', // Set terminal width for proper formatting
                 LINES: '30', // Set terminal height
@@ -408,6 +408,9 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
                 // Force TTY detection for CLI tools
                 CI: 'false', // Disable CI mode
                 STORYBOOK_MODE: 'true', // Enable Storybook mode
+                // Additional color forcing
+                COLORTERM: 'truecolor', // Enable true color support
+                NO_COLOR: undefined, // Ensure NO_COLOR is not set
               },
             });
           } else {
@@ -420,13 +423,16 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
               cwd: process.cwd(),
               env: {
                 ...cleanEnv,
-                FORCE_COLOR: '1', // Force chalk to output ANSI color codes
+                FORCE_COLOR: '3', // Force chalk to output ANSI color codes (level 3 = full color)
                 TERM: 'xterm-256color', // Enable full terminal features
                 COLUMNS: '120', // Set terminal width for proper formatting
                 LINES: '30', // Set terminal height
                 // Force TTY detection for CLI tools
                 CI: 'false', // Disable CI mode
                 STORYBOOK_MODE: 'true', // Enable Storybook mode
+                // Additional color forcing
+                COLORTERM: 'truecolor', // Enable true color support
+                NO_COLOR: undefined, // Ensure NO_COLOR is not set
               },
               // Create a new process group to enable killing all child processes
               detached: true,
