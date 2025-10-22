@@ -21,7 +21,7 @@
     "test:ui": "vitest --ui",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
-    "prepublishOnly": "npm run build && cd addon && npm run build && cd .. && npm run test",
+    "prepublishOnly": "npm run build && npm run test",
     "prepare": "npm run build && cd addon && npm run build && cd ..",
     "postinstall": "playwright install chromium",
     "format": "prettier --write .",
