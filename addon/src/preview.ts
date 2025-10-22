@@ -9,8 +9,24 @@ import { EVENTS } from './constants';
 import type { FailedResult } from './types';
 import { getApiBaseUrl } from './config';
 
-// Use default API URL
-const API_BASE_URL = getApiBaseUrl(6007);
+// Get API URL from Storybook parameters or use default
+function getApiUrl(): string {
+  // Try to get configuration from Storybook's global parameters
+  if (typeof window !== 'undefined' && (window as any).__STORYBOOK_STORY_STORE__) {
+    const storyStore = (window as any).__STORYBOOK_STORY_STORE__;
+    const globalParams = storyStore?.getGlobalParameters?.();
+    const addonConfig = globalParams?.visualRegressionAddon;
+    
+    if (addonConfig?.port) {
+      return getApiBaseUrl(addonConfig.port);
+    }
+  }
+  
+  // Fallback to default
+  return getApiBaseUrl(6007);
+}
+
+const API_BASE_URL = getApiUrl();
 
 // Try to get the addons channel from the global window object
 // This is how Storybook addons communicate between manager and preview

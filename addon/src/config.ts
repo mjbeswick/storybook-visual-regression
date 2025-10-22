@@ -12,9 +12,13 @@ const DEFAULT_PORT = 6007;
 const DEFAULT_CLI_COMMAND = 'storybook-visual-regression';
 
 export function loadAddonConfig(): ResolvedConfig {
+  // Check for environment variables as fallback
+  const port = process.env.VR_API_PORT ? parseInt(process.env.VR_API_PORT) : DEFAULT_PORT;
+  const cliCommand = process.env.VR_CLI_COMMAND || DEFAULT_CLI_COMMAND;
+
   return {
-    port: DEFAULT_PORT,
-    cliCommand: DEFAULT_CLI_COMMAND,
+    port,
+    cliCommand,
   };
 }
 

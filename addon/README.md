@@ -146,11 +146,155 @@ The addon will use the default configuration from your `svr.config.js` file if i
 npx storybook-visual-regression init
 ```
 
-The addon uses sensible defaults:
+#### Addon Configuration
+
+You can configure the addon through Storybook's main configuration:
+
+**`.storybook/main.js` or `.storybook/main.ts`:**
+```javascript
+module.exports = {
+  addons: [
+    // ... other addons
+    {
+      name: 'storybook-visual-regression-addon',
+      options: {
+        port: 6008,                    // Custom API server port
+        cliCommand: 'npx storybook-visual-regression'  // Custom CLI command
+      }
+    }
+  ],
+};
+```
+
+#### Configuration Examples
+
+**Basic Configuration:**
+```javascript
+// .storybook/main.js
+module.exports = {
+  addons: [
+    'storybook-visual-regression-addon'
+  ],
+};
+```
+
+**Custom Port:**
+```javascript
+// .storybook/main.js
+module.exports = {
+  addons: [
+    {
+      name: 'storybook-visual-regression-addon',
+      options: {
+        port: 6008
+      }
+    }
+  ],
+};
+```
+
+**Custom CLI Command:**
+```javascript
+// .storybook/main.js
+module.exports = {
+  addons: [
+    {
+      name: 'storybook-visual-regression-addon',
+      options: {
+        cliCommand: 'npx storybook-visual-regression'
+      }
+    }
+  ],
+};
+```
+
+**Docker CLI Command (for cross-platform consistency):**
+```javascript
+// .storybook/main.js
+module.exports = {
+  addons: [
+    {
+      name: 'storybook-visual-regression-addon',
+      options: {
+        cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression'
+      }
+    }
+  ],
+};
+```
+
+**Default Configuration:**
 - **API Server Port**: 6007
 - **CLI Command**: `storybook-visual-regression`
 
-For advanced customization, you can modify the addon source code or create a custom build.
+#### Cross-Platform Considerations
+
+**⚠️ Important: Font Rendering Differences**
+
+If you're running visual regression tests in GitHub Actions (Linux) but developing locally on macOS or Windows, you may encounter font rendering differences that cause false positives. This happens because:
+
+- **Linux**: Uses different font rendering engines (FreeType)
+- **macOS**: Uses Core Text with different font smoothing
+- **Windows**: Uses DirectWrite with different font rendering
+
+**Solution: Use Docker for Consistency**
+
+To ensure consistent font rendering across all platforms, use the Docker CLI command:
+
+```javascript
+// .storybook/main.js
+module.exports = {
+  addons: [
+    {
+      name: 'storybook-visual-regression-addon',
+      options: {
+        cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression'
+      }
+    }
+  ],
+};
+```
+
+**Docker Setup:**
+
+1. **Build the Docker image:**
+   ```bash
+   docker build -t storybook-visual-regression .
+   ```
+
+2. **Use in GitHub Actions:**
+   ```yaml
+   # .github/workflows/visual-regression.yml
+   - name: Run Visual Regression Tests
+     run: |
+       docker run --rm \
+         -v ${{ github.workspace }}:/app \
+         -w /app \
+         storybook-visual-regression
+   ```
+
+3. **Use locally (optional):**
+   ```bash
+   # Same command works on macOS, Windows, and Linux
+   docker run --rm -v $(pwd):/app storybook-visual-regression
+   ```
+
+This ensures identical font rendering across all environments.
+
+#### Environment Variables (Fallback)
+
+You can also use environment variables as a fallback:
+
+```bash
+# Custom port
+VR_API_PORT=6008 npm run storybook
+
+# Custom CLI command
+VR_CLI_COMMAND="npx storybook-visual-regression" npm run storybook
+
+# Both custom
+VR_API_PORT=6008 VR_CLI_COMMAND="npx storybook-visual-regression" npm run storybook
+```
 
 ## Usage
 
