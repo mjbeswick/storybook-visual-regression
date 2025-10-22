@@ -340,7 +340,12 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
             // Complex command - use shell execution
             // Remove -it flags from Docker commands to prevent TTY errors
             let processedCommand = cliCommand;
-            if (cliCommand.includes('docker run')) {
+            // Handle npm run commands first (before Docker processing)
+            if (cliCommand.startsWith('npm run')) {
+              // For npm run commands, always append arguments with -- separator
+              processedCommand = `${cliCommand} -- ${enhancedArgs.join(' ')}`;
+              console.log(`[VR Addon] npm run command, appending with --: ${processedCommand}`);
+            } else if (cliCommand.includes('docker run')) {
               // Remove -it flags (both combined and separate) from anywhere in the command
               processedCommand = cliCommand
                 .replace(/\s-it\s/g, ' ')
@@ -359,25 +364,34 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
               console.log(`[VR Addon] Original command: ${cliCommand}`);
               console.log(`[VR Addon] Processed command: ${processedCommand}`);
 
-              // For Docker commands, inject arguments before the final command
-              // Find the last part of the command (the actual CLI command)
-              const parts = processedCommand.split(' ');
-              const lastPart = parts[parts.length - 1];
+              // For Docker commands, inject arguments into the CLI command inside Docker
+              // Find the CLI command part (after the Docker image name)
+              const dockerImageMatch = processedCommand.match(
+                /docker run[^]*?storybook-visual-regression:latest\s+(.+)/,
+              );
+              if (dockerImageMatch) {
+                const cliCommand = dockerImageMatch[1];
+                const beforeCliCommand = processedCommand.substring(
+                  0,
+                  processedCommand.indexOf(cliCommand),
+                );
+                const afterCliCommand = processedCommand.substring(
+                  processedCommand.indexOf(cliCommand) + cliCommand.length,
+                );
 
-              // If the last part is a URL or doesn't look like a command, append arguments
-              if (lastPart.startsWith('http') || lastPart.includes('://')) {
-                // URL is the last part, append arguments with -- separator for npm run
-                processedCommand = `${processedCommand} -- ${enhancedArgs.join(' ')}`;
+                // Inject arguments into the CLI command
+                const enhancedCliCommand = `${cliCommand} ${enhancedArgs.join(' ')}`;
+                processedCommand = `${beforeCliCommand}${enhancedCliCommand}${afterCliCommand}`;
+                console.log(`[VR Addon] Docker command, injecting into CLI: ${processedCommand}`);
               } else {
-                // Command is the last part, inject arguments before it with -- separator for npm run
-                const commandIndex = processedCommand.lastIndexOf(lastPart);
-                const beforeCommand = processedCommand.substring(0, commandIndex);
-                const afterCommand = processedCommand.substring(commandIndex);
-                processedCommand = `${beforeCommand}-- ${enhancedArgs.join(' ')} ${afterCommand}`;
+                // Fallback: append arguments at the end
+                processedCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
+                console.log(`[VR Addon] Docker command fallback: ${processedCommand}`);
               }
             } else {
-              // For non-Docker commands, append arguments normally
+              // For other commands, append arguments normally
               processedCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
+              console.log(`[VR Addon] Other command: ${processedCommand}`);
             }
             const fullCommand = processedCommand;
             console.log(`[VR Addon] Executing command: ${fullCommand}`);

@@ -585,7 +585,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const isDockerEnvironment = Boolean(
     process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
   );
-  const isStorybookMode = Boolean(options.storybook);
+  const isStorybookMode = Boolean(options.storybook || process.env.STORYBOOK_MODE === 'true');
   const effectiveIsCI = isStorybookMode ? false : isCIEnvironment && !isDockerEnvironment;
 
   // Optionally install Playwright browsers/deps for CI convenience
@@ -770,7 +770,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     isDocker: isDockerEnvironment,
     testTimeout,
     fullPage: runtimeConfig.fullPage,
-    storybookMode: Boolean(options.storybook),
+    storybookMode: isStorybookMode,
   };
 
   const runtimeOptionsPath = join(projectRoot, 'dist', 'runtime-options.json');

@@ -1,36 +1,48 @@
-# Start from Microsoft Playwright image (includes Chromium + deps)
-FROM mcr.microsoft.com/playwright:v1.55.1-jammy
+FROM node:22-slim
 
-# Install Node.js v22 (for projects requiring Node ^22)
-USER root
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates dumb-init \
-  && rm -rf /var/lib/apt/lists/* \
-  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-  && apt-get install -y --no-install-recommends nodejs \
-  && node -v \
-  && npm -v
+# Install system dependencies for Chromium
+RUN apt-get update && apt-get install -y \
+    chromium \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libxss1 \
+    libxtst6 \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy project files and install locally
-COPY package.json /usr/local/lib/node_modules/storybook-visual-regression/
-COPY dist /usr/local/lib/node_modules/storybook-visual-regression/dist
-COPY README.md /usr/local/lib/node_modules/storybook-visual-regression/
-COPY LICENSE /usr/local/lib/node_modules/storybook-visual-regression/
+# Set working directory
+WORKDIR /usr/local/lib/node_modules/storybook-visual-regression
 
-# Install dependencies and create global symlink
-RUN cd /usr/local/lib/node_modules/storybook-visual-regression && npm install --production --ignore-scripts \
-  && ln -sf /usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js /usr/local/bin/storybook-visual-regression \
-  && chmod +x /usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js
+# Copy package files
+COPY package.json package-lock.json ./
 
-# Install Playwright browsers to ensure they're available
+# Copy built distribution
+COPY dist ./dist
+COPY README.md ./
+COPY LICENSE ./
+
+# Install production dependencies and create symlink
+RUN npm install --production --ignore-scripts && \
+    ln -sf /usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js /usr/local/bin/storybook-visual-regression && \
+    chmod +x /usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js
+
+# Install Playwright browsers and set environment variables
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 RUN npx playwright install chromium
 
-# Working directory
-WORKDIR /app
-
-# Use non-root user available in base image
-USER pwuser
-
-# Default entrypoint to run the CLI
-ENTRYPOINT ["dumb-init", "--", "node", "/usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js"]
-CMD ["--help"]
+# Set entrypoint
+ENTRYPOINT ["node", "/usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js"]
