@@ -1,5 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { parse as parseUrl } from 'url';
 import { readdir, stat, readFile, mkdir } from 'fs/promises';
 import { watch as watchFs } from 'fs';
@@ -300,13 +300,11 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
           // Build command arguments
           const args: string[] = [];
 
-          if (request.action === 'test') {
-            args.push('test');
-          } else if (request.action === 'update' || request.action === 'update-baseline') {
-            args.push('update');
-          } else if (request.action === 'test-all') {
-            args.push('test');
+          // Handle update mode
+          if (request.action === 'update' || request.action === 'update-baseline') {
+            args.push('--update');
           }
+          // For 'test' and 'test-all', no additional args needed - main program runs tests by default
 
           // Add story filter if provided
           // Use --grep with exact match for better precision
@@ -331,19 +329,44 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
           delete cleanEnv.NO_COLOR;
 
           // Spawn the CLI process with full terminal support
-          const child = spawn(cliCommand, enhancedArgs, {
-            stdio: 'pipe',
-            cwd: process.cwd(),
-            env: {
-              ...cleanEnv,
-              FORCE_COLOR: '1', // Force chalk to output ANSI color codes
-              TERM: 'xterm-256color', // Enable full terminal features
-              COLUMNS: '120', // Set terminal width for proper formatting
-              LINES: '30', // Set terminal height
-            },
-            // Create a new process group to enable killing all child processes
-            detached: true,
-          });
+          // Handle complex commands like Docker by using shell execution
+          let child: ChildProcess;
+          
+          if (cliCommand.includes('docker') || cliCommand.includes('$(pwd)') || cliCommand.includes(' ')) {
+            // Complex command - use shell execution
+            const fullCommand = `${cliCommand} ${enhancedArgs.join(' ')}`;
+            console.log(`[VR Addon] Executing complex command: ${fullCommand}`);
+            child = spawn(fullCommand, {
+              stdio: 'pipe',
+              cwd: process.cwd(),
+              shell: true, // Enable shell for complex commands
+              env: {
+                ...cleanEnv,
+                FORCE_COLOR: '1', // Force chalk to output ANSI color codes
+                TERM: 'xterm-256color', // Enable full terminal features
+                COLUMNS: '120', // Set terminal width for proper formatting
+                LINES: '30', // Set terminal height
+              },
+              // Create a new process group to enable killing all child processes
+              detached: true,
+            });
+          } else {
+            // Simple command - direct execution
+            console.log(`[VR Addon] Executing simple command: ${cliCommand} ${enhancedArgs.join(' ')}`);
+            child = spawn(cliCommand, enhancedArgs, {
+              stdio: 'pipe',
+              cwd: process.cwd(),
+              env: {
+                ...cleanEnv,
+                FORCE_COLOR: '1', // Force chalk to output ANSI color codes
+                TERM: 'xterm-256color', // Enable full terminal features
+                COLUMNS: '120', // Set terminal width for proper formatting
+                LINES: '30', // Set terminal height
+              },
+              // Create a new process group to enable killing all child processes
+              detached: true,
+            });
+          }
 
           // Track the process
           activeProcesses.set(processId, child);

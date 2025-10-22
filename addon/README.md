@@ -151,6 +151,7 @@ npx storybook-visual-regression init
 You can configure the addon through Storybook's main configuration:
 
 **`.storybook/main.js` or `.storybook/main.ts`:**
+
 ```javascript
 module.exports = {
   addons: [
@@ -158,10 +159,10 @@ module.exports = {
     {
       name: 'storybook-visual-regression-addon',
       options: {
-        port: 6008,                    // Custom API server port
-        cliCommand: 'npx storybook-visual-regression'  // Custom CLI command
-      }
-    }
+        port: 6008, // Custom API server port
+        cliCommand: 'npx storybook-visual-regression', // Custom CLI command
+      },
+    },
   ],
 };
 ```
@@ -169,16 +170,16 @@ module.exports = {
 #### Configuration Examples
 
 **Basic Configuration:**
+
 ```javascript
 // .storybook/main.js
 module.exports = {
-  addons: [
-    'storybook-visual-regression-addon'
-  ],
+  addons: ['storybook-visual-regression-addon'],
 };
 ```
 
 **Custom Port:**
+
 ```javascript
 // .storybook/main.js
 module.exports = {
@@ -186,14 +187,15 @@ module.exports = {
     {
       name: 'storybook-visual-regression-addon',
       options: {
-        port: 6008
-      }
-    }
+        port: 6008,
+      },
+    },
   ],
 };
 ```
 
 **Custom CLI Command:**
+
 ```javascript
 // .storybook/main.js
 module.exports = {
@@ -201,14 +203,15 @@ module.exports = {
     {
       name: 'storybook-visual-regression-addon',
       options: {
-        cliCommand: 'npx storybook-visual-regression'
-      }
-    }
+        cliCommand: 'npx storybook-visual-regression',
+      },
+    },
   ],
 };
 ```
 
 **Docker CLI Command (for cross-platform consistency):**
+
 ```javascript
 // .storybook/main.js
 module.exports = {
@@ -216,14 +219,15 @@ module.exports = {
     {
       name: 'storybook-visual-regression-addon',
       options: {
-        cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression'
-      }
-    }
+        cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression',
+      },
+    },
   ],
 };
 ```
 
 **Default Configuration:**
+
 - **API Server Port**: 6007
 - **CLI Command**: `storybook-visual-regression`
 
@@ -248,9 +252,9 @@ module.exports = {
     {
       name: 'storybook-visual-regression-addon',
       options: {
-        cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression'
-      }
-    }
+        cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression',
+      },
+    },
   ],
 };
 ```
@@ -258,11 +262,13 @@ module.exports = {
 **Docker Setup:**
 
 1. **Build the Docker image:**
+
    ```bash
    docker build -t storybook-visual-regression .
    ```
 
 2. **Use in GitHub Actions:**
+
    ```yaml
    # .github/workflows/visual-regression.yml
    - name: Run Visual Regression Tests
