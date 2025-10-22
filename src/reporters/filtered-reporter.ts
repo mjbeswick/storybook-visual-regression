@@ -20,6 +20,19 @@ import { dirname, resolve, sep } from 'path';
 // import type { Ora } from 'ora';
 import { tryLoadRuntimeOptions } from '../runtime/runtime-options.js';
 
+// Utility function to replace host.docker.internal with localhost for better accessibility in Docker environments
+function replaceDockerHostInUrl(url: string): string {
+  const isDockerEnvironment = Boolean(
+    process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
+  );
+
+  if (isDockerEnvironment && url.includes('host.docker.internal')) {
+    return url.replace(/host\.docker\.internal/g, 'localhost');
+  }
+
+  return url;
+}
+
 type TTYLikeStream = NodeJS.WriteStream & { isTTY?: boolean };
 type SpinnerStream = TTYLikeStream & {
   cursorTo?: (x: number, y?: number) => void;
@@ -605,7 +618,7 @@ class FilteredReporter implements Reporter {
           const storyUrl = `${baseUrl}/iframe.html?id=${storyIdForUrl}&viewMode=story`;
 
           console.log(chalk.red(`${index + 1}. ${displayTitle}`));
-          console.log(chalk.cyan(`   🔗 ${storyUrl}`));
+          console.log(chalk.cyan(`   🔗 ${replaceDockerHostInUrl(storyUrl)}`));
           if (failure.diffPath) {
             console.log(chalk.gray(`   📸 ${failure.diffPath}`));
           }

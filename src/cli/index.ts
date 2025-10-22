@@ -13,6 +13,19 @@ import path, { dirname, join } from 'path';
 import { loadUserConfig, saveUserConfig, getDefaultConfigPath } from './config-loader.js';
 import type { RuntimeOptions } from '../runtime/runtime-options.js';
 
+// Utility function to replace host.docker.internal with localhost for better accessibility in Docker environments
+function replaceDockerHostInUrl(url: string): string {
+  const isDockerEnvironment = Boolean(
+    process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
+  );
+
+  if (isDockerEnvironment && url.includes('host.docker.internal')) {
+    return url.replace(/host\.docker\.internal/g, 'localhost');
+  }
+
+  return url;
+}
+
 const program = new Command();
 
 program
@@ -82,8 +95,8 @@ program
   )
   .option(
     '--wait-until <state>',
-    "Navigation strategy: 'domcontentloaded' (fastest), 'networkidle' (default, stable), 'load' (wait for all resources), 'commit' (earliest).",
-    'networkidle',
+    "Navigation strategy: 'domcontentloaded' (fastest), 'networkidle' (stable), 'load' (default, wait for all resources), 'commit' (earliest).",
+    'load',
   )
   .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
@@ -101,6 +114,7 @@ program
     '--missing-only',
     'Only create snapshots that do not already exist (skip existing baselines)',
   )
+  .option('--save-config', 'Save CLI options to config file for future use')
   .action(async (options) => {
     const cliOptions = options as CliOptions;
 
@@ -162,6 +176,8 @@ type CliOptions = {
   // CI convenience
   installBrowsers?: string;
   installDeps?: boolean;
+  // Config persistence
+  saveConfig?: boolean;
 };
 
 async function createConfigFromOptions(
@@ -236,9 +252,9 @@ async function createConfigFromOptions(
   setIf(hasArg('--exclude'), 'exclude', parseList(options.exclude));
 
   const defaultConfigPath = getDefaultConfigPath(cwd);
-  if (didUpdate) {
+  if (didUpdate && options.saveConfig) {
     saveUserConfig(cwd, updatedUserConfig as VisualRegressionConfig);
-  } else if (!existsSync(defaultConfigPath)) {
+  } else if (!existsSync(defaultConfigPath) && options.saveConfig) {
     // No config file exists and no explicit overrides were provided: seed a config.json
     const seed: Record<string, unknown> = {};
     // Populate with discovered/detected reasonable defaults
@@ -406,7 +422,7 @@ async function _waitForStorybookServer(url: string, timeout: number): Promise<vo
   const startTime = Date.now();
   const maxWaitTime = timeout;
 
-  console.log(`Waiting for Storybook server to be ready at ${url}...`);
+  console.log(`Waiting for Storybook server to be ready at ${replaceDockerHostInUrl(url)}...`);
 
   // Give Storybook some time to start up before we start polling
   console.log('Giving Storybook 5 seconds to start up...');
@@ -435,7 +451,7 @@ async function _waitForStorybookServer(url: string, timeout: number): Promise<vo
         });
 
         if (indexResponse.ok) {
-          console.log(`✓ Storybook server is ready at ${url}`);
+          console.log(`✓ Storybook server is ready at ${replaceDockerHostInUrl(url)}`);
           return;
         } else {
           console.log(`Index.json not ready yet (${indexResponse.status})`);
@@ -531,11 +547,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const overlayTimeout = parseNumber(options.overlayTimeout, userConfig.overlayTimeout ?? 5_000);
   const stabilizeInterval = parseNumber(
     options.stabilizeInterval,
-    userConfig.stabilizeInterval ?? 150,
+    userConfig.stabilizeInterval ?? 0,
   );
   const stabilizeAttempts = parseNumber(
     options.stabilizeAttempts,
-    userConfig.stabilizeAttempts ?? 20,
+    userConfig.stabilizeAttempts ?? 0,
   );
   const finalSettle = parseNumber(options.finalSettle, userConfig.finalSettle ?? 500);
   const resourceSettle = parseNumber(options.resourceSettle, userConfig.resourceSettle ?? 100);
@@ -543,7 +559,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const waitUntilInput = (options.waitUntil || userConfig.waitUntil || '').toLowerCase();
   const waitUntilValue = waitUntilCandidates.has(waitUntilInput)
     ? (waitUntilInput as 'load' | 'domcontentloaded' | 'networkidle' | 'commit')
-    : 'networkidle';
+    : 'load';
   const notFoundRetryDelay = parseNumber(
     options.notFoundRetryDelay,
     userConfig.notFoundRetryDelay ?? 200,
@@ -668,7 +684,9 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   // Skip this check when using --storybook flag since Storybook is already running
   if (storybookLaunchCommand && !options.storybook) {
     const storybookIndexUrl = `${config.storybookUrl.replace(/\/$/, '')}/index.json`;
-    console.log(`🔍 Checking if Storybook is already running at: ${storybookIndexUrl}`);
+    console.log(
+      `🔍 Checking if Storybook is already running at: ${replaceDockerHostInUrl(storybookIndexUrl)}`,
+    );
 
     try {
       const response = await fetch(storybookIndexUrl, {
@@ -768,7 +786,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
   } else if (!options.storybook) {
     console.log(
-      `${chalk.dim('  •')} Using existing Storybook server at ${chalk.cyan(config.storybookUrl)}`,
+      `${chalk.dim('  •')} Using existing Storybook server at ${chalk.cyan(replaceDockerHostInUrl(config.storybookUrl))}`,
     );
     console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
   }
@@ -958,6 +976,5 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     }
   }
 }
-
 
 program.parse();

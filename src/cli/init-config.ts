@@ -37,8 +37,8 @@ export default {
   resourceSettle: 100,      // Time to wait after resource loads before considering all resources settled (ms)
   
   // Wait strategy: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
-  // 'domcontentloaded' is faster, 'networkidle' is more stable
-  waitUntil: 'networkidle',
+  // 'domcontentloaded' is faster, 'load' is most thorough (default)
+  waitUntil: 'load',
 
   // Story filtering (optional)
   // include: ['Components/*', 'Screens/*'],
@@ -80,7 +80,7 @@ const jsonConfigTemplate = `{
   "stabilizeAttempts": 0,
   "finalSettle": 500,
   "resourceSettle": 100,
-  "waitUntil": "networkidle",
+  "waitUntil": "load",
   "quiet": false,
   "debug": false,
   "printUrls": false,
