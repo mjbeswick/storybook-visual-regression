@@ -366,14 +366,14 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
 
               // If the last part is a URL or doesn't look like a command, append arguments
               if (lastPart.startsWith('http') || lastPart.includes('://')) {
-                // URL is the last part, append arguments
-                processedCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
+                // URL is the last part, append arguments with -- separator for npm run
+                processedCommand = `${processedCommand} -- ${enhancedArgs.join(' ')}`;
               } else {
-                // Command is the last part, inject arguments before it
+                // Command is the last part, inject arguments before it with -- separator for npm run
                 const commandIndex = processedCommand.lastIndexOf(lastPart);
                 const beforeCommand = processedCommand.substring(0, commandIndex);
                 const afterCommand = processedCommand.substring(commandIndex);
-                processedCommand = `${beforeCommand}${enhancedArgs.join(' ')} ${afterCommand}`;
+                processedCommand = `${beforeCommand}-- ${enhancedArgs.join(' ')} ${afterCommand}`;
               }
             } else {
               // For non-Docker commands, append arguments normally
