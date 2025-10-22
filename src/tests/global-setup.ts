@@ -211,10 +211,8 @@ async function globalSetup(_config: FullConfig): Promise<void> {
   const baseURL = runtimeOptions.storybookUrl;
   const projectCwd = runtimeOptions.originalCwd;
 
-  if (!runtimeOptions.storybookMode) {
-    console.log('');
-  }
-  console.log(chalk.bold('🔧 Storybook discovery')); // section header
+  console.log('');
+  console.log(chalk.bold('👀 Storybook discovery')); // section header
   console.log(`  ${chalk.dim('•')} Target URL: ${chalk.cyan(baseURL)}`);
 
   let indexData: StorybookIndex | null = null;

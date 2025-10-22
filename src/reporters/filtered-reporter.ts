@@ -264,6 +264,7 @@ class FilteredReporter implements Reporter {
     this.lastEstimationUpdate = 0;
 
     // Header line for tests and workers, followed by a newline as expected by tests
+    console.log('');
     console.log(`Running ${this.totalTests} tests using ${this.workers} workers...\n`);
 
     // Enable spinners for Docker environments and when explicitly enabled
@@ -635,8 +636,6 @@ class FilteredReporter implements Reporter {
 
         console.log(chalk.dim(`\n💡 Tip: Use --print-urls to see URLs inline with test results`));
       }
-    } else if (this.passed > 0) {
-      console.log(chalk.green.bold('✓ All passed'));
     }
   }
 }

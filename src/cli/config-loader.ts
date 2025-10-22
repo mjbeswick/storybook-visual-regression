@@ -215,6 +215,7 @@ export function saveUserConfig(cwd: string, config: UserConfig): void {
 
   if (json !== existingContent) {
     writeFileSync(filePath, json, 'utf8');
+    console.log('');
     console.log(`📝 Saved config: ${filePath}`);
   }
 }
