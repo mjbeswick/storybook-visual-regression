@@ -226,6 +226,8 @@ module.exports = {
 };
 ```
 
+**Note:** When using Docker commands with `host.docker.internal` URLs, the addon automatically replaces `host.docker.internal` with `localhost` in the terminal output, making URLs clickable from your host machine.
+
 **Default Configuration:**
 
 - **API Server Port**: 6007
