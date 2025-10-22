@@ -36,6 +36,7 @@ type CliOptions = {
   hideSpinners?: boolean;
   output?: string;
   updateSnapshots?: boolean;
+  update?: boolean; // new --update flag
   browser?: string;
   printUrls?: boolean;
   // Screenshot configuration
@@ -925,7 +926,25 @@ program
   .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
   .option('--not-found-check', 'Enable detection and retry for "Not Found" / 404 pages')
   .option('--not-found-retry-delay <ms>', 'Delay between "Not Found" retries', '200')
-  .action(async (options) => runTests(options as CliOptions));
+  .option('--update', 'Update visual regression snapshots (create new baselines)')
+  .option(
+    '--missing-only',
+    'Only create snapshots that do not already exist (skip existing baselines)',
+  )
+  .action(async (options) => {
+    const cliOptions = options as CliOptions;
+    
+    // Handle update mode
+    if (cliOptions.update) {
+      cliOptions.updateSnapshots = true;
+      // Set clean to true by default for update mode
+      if (cliOptions.clean === undefined) {
+        cliOptions.clean = true;
+      }
+    }
+    
+    await runTests(cliOptions);
+  });
 
 program
   .command('install-browsers')
