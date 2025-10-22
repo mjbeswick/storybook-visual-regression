@@ -146,6 +146,39 @@ The addon will use the default configuration from your `svr.config.js` file if i
 npx storybook-visual-regression init
 ```
 
+#### Environment Variables
+
+You can customize the addon behavior using environment variables:
+
+```bash
+# Customize API server port (default: 6007)
+export VR_API_PORT=6008
+
+# Customize CLI command (default: storybook-visual-regression)
+export VR_CLI_COMMAND="npx storybook-visual-regression"
+# or for global installation:
+export VR_CLI_COMMAND="storybook-visual-regression"
+# or for custom path:
+export VR_CLI_COMMAND="/path/to/custom/cli"
+```
+
+#### Configuration Examples
+
+**Custom Port:**
+```bash
+VR_API_PORT=6008 npm run storybook
+```
+
+**Custom CLI Command:**
+```bash
+VR_CLI_COMMAND="npx storybook-visual-regression" npm run storybook
+```
+
+**Both Custom:**
+```bash
+VR_API_PORT=6008 VR_CLI_COMMAND="npx storybook-visual-regression" npm run storybook
+```
+
 ## Usage
 
 ### Running Tests
@@ -646,12 +679,35 @@ The addon can be extended with:
 
 - **Port conflicts**: Port 6007 is already in use
   - Kill existing process: `kill -9 $(lsof -t -i:6007)`
-  - Or restart Storybook
+  - Or use custom port: `VR_API_PORT=6008 npm run storybook`
 - **Firewall blocking**: Check firewall settings for port 6007
 - **Node.js version**: Ensure Node.js version >= 18
 - **Memory issues**: Increase Node.js memory limit
   ```bash
   NODE_OPTIONS="--max-old-space-size=4096" npm run storybook
+  ```
+
+#### CLI Command Issues
+
+**Symptoms**: Tests fail with "command not found" or "permission denied"
+
+**Causes & Solutions**:
+
+- **CLI not installed**: Install the CLI tool
+  ```bash
+  npm install --save-dev storybook-visual-regression
+  ```
+- **Wrong CLI command**: Use custom command
+  ```bash
+  VR_CLI_COMMAND="npx storybook-visual-regression" npm run storybook
+  ```
+- **Permission issues**: Check CLI execution permissions
+  ```bash
+  chmod +x node_modules/.bin/storybook-visual-regression
+  ```
+- **Custom CLI path**: Use absolute path
+  ```bash
+  VR_CLI_COMMAND="/absolute/path/to/storybook-visual-regression" npm run storybook
   ```
 
 ### Debug Mode

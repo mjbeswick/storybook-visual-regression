@@ -7,8 +7,11 @@
 
 import { EVENTS } from './constants';
 import type { FailedResult } from './types';
+import { loadAddonConfig, getApiBaseUrl } from './config';
 
-const API_BASE_URL = 'http://localhost:6007';
+// Load configuration and get API URL
+const config = loadAddonConfig();
+const API_BASE_URL = getApiBaseUrl(config.port);
 
 // Try to get the addons channel from the global window object
 // This is how Storybook addons communicate between manager and preview

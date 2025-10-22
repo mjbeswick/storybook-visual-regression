@@ -38,7 +38,7 @@ async function ensureVisualRegressionDirs(): Promise<void> {
   }
 }
 
-export function startApiServer(port = 6007): Server {
+export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regression'): Server {
   if (server) {
     return server;
   }
@@ -331,7 +331,7 @@ export function startApiServer(port = 6007): Server {
           delete cleanEnv.NO_COLOR;
 
           // Spawn the CLI process with full terminal support
-          const child = spawn('storybook-visual-regression', enhancedArgs, {
+          const child = spawn(cliCommand, enhancedArgs, {
             stdio: 'pipe',
             cwd: process.cwd(),
             env: {

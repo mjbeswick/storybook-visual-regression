@@ -1,7 +1,6 @@
 import { startApiServer } from './server';
+import { loadAddonConfig } from './config';
 
-// Start the API server when Storybook loads
-const DEFAULT_PORT = 6007;
 let serverStarted = false;
 
 export function managerEntries(entry: string[] = []) {
@@ -12,8 +11,8 @@ export function previewAnnotations(entry: string[] = []) {
   // Start API server (only once)
   if (!serverStarted) {
     try {
-      const port = process.env.VR_API_PORT ? parseInt(process.env.VR_API_PORT) : DEFAULT_PORT;
-      startApiServer(port);
+      const config = loadAddonConfig();
+      startApiServer(config.port, config.cliCommand);
       serverStarted = true;
     } catch {
       // ignore server startup errors
