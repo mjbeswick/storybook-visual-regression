@@ -348,9 +348,16 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
                 .replace(/^-it\s/, '')
                 .replace(/^-i\s-t\s/, '')
                 .replace(/\s-it$/, '')
-                .replace(/\s-i\s-t$/, '');
+                .replace(/\s-i\s-t$/, '')
+                // Also handle cases where -it is at the beginning without space
+                .replace(/^-it/, '')
+                .replace(/^-i\s-t/, '')
+                // Handle cases where -it is followed by other flags
+                .replace(/\s-it\s/, ' ')
+                .replace(/\s-i\s-t\s/, ' ');
 
-              // Do not inject -T/--no-tty; leave TTY behavior to the host Docker version
+              console.log(`[VR Addon] Original command: ${cliCommand}`);
+              console.log(`[VR Addon] Processed command: ${processedCommand}`);
             }
             const fullCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
             console.log(`[VR Addon] Executing command: ${fullCommand}`);

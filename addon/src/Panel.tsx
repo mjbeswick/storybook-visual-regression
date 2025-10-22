@@ -114,6 +114,9 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       scrollback: 10000,
       letterSpacing: 0.5,
       lineHeight: 1.2,
+      // Enable 256-color support
+      cols: 120,
+      rows: 30,
     });
 
     // Create fit addon
