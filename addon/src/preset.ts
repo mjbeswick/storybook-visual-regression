@@ -17,7 +17,8 @@ export function previewAnnotations(entry: string[] = [], options: AddonOptions =
   if (!serverStarted) {
     try {
       const defaultConfig = loadAddonConfig();
-      const port = options.port || defaultConfig.port;
+      // Always use our default port, ignore Storybook's port to avoid conflicts
+      const port = defaultConfig.port;
       const cliCommand = options.cliCommand || defaultConfig.cliCommand;
       startApiServer(port, cliCommand);
       serverStarted = true;

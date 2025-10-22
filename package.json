@@ -14,8 +14,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "build:watch": "tsc -p tsconfig.build.json --watch",
-    "build:all": "npm run build && cd addon && npm run build && cd ..",
+    "dev": "tsc -p tsconfig.build.json --watch",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest run --coverage",

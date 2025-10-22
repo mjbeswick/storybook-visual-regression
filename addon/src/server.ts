@@ -43,6 +43,8 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
     return server;
   }
 
+  console.log(`[VR Addon] Starting API server on port ${port} with CLI command: ${cliCommand}`);
+
   // Ensure directories exist when server starts
   ensureVisualRegressionDirs().catch(() => {
     // ignore startup directory creation errors
