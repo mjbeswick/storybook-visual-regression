@@ -9,13 +9,15 @@ import {
 import chalk from 'chalk';
 import { existsSync, rmSync, statSync, readdirSync, unlinkSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
-import {
-  clearLine as rlClearLine,
-  cursorTo as rlCursorTo,
-  moveCursor as rlMoveCursor,
-} from 'node:readline';
-import ora from 'ora';
-import type { Ora } from 'ora';
+// Disable readline operations to prevent TTY errors
+// import {
+//   clearLine as rlClearLine,
+//   cursorTo as rlCursorTo,
+//   moveCursor as rlMoveCursor,
+// } from 'node:readline';
+// Disable ora import to prevent TTY errors
+// import ora from 'ora';
+// import type { Ora } from 'ora';
 import { tryLoadRuntimeOptions } from '../runtime/runtime-options.js';
 
 type TTYLikeStream = NodeJS.WriteStream & { isTTY?: boolean };
@@ -47,7 +49,7 @@ class FilteredReporter implements Reporter {
   private lastDurations: number[] = []; // rolling window across all workers (fallback)
   private perWorkerDurations: Record<number, number[]> = {}; // rolling window per worker
   private recentAllDurations: number[] = []; // for percentile/outlier capping
-  private spinner: Ora | null = null;
+  private spinner: any | null = null; // Disabled to prevent TTY errors
   private spinnerStream: SpinnerStream | null = null;
   private spinnerOriginalIsTTY: boolean | undefined;
   private spinnerOriginalCursorTo?: SpinnerStream['cursorTo'];
@@ -251,8 +253,11 @@ class FilteredReporter implements Reporter {
     // Header line for tests and workers, followed by a newline as expected by tests
     console.log(`Running ${this.totalTests} tests using ${this.workers} workers...\n`);
 
-    if (this.showSpinners) {
+    // Disable spinners entirely to prevent TTY errors
+    /*
+    if (this.showSpinners && process.stdout.isTTY) {
       // Force TTY detection for ora spinner to work in Storybook addon
+      // Only enable spinners if we actually have a TTY
       this.spinnerStream = process.stdout as SpinnerStream;
       this.spinnerOriginalIsTTY = this.spinnerStream.isTTY;
       this.spinnerOriginalCursorTo = this.spinnerStream.cursorTo;
@@ -268,21 +273,31 @@ class FilteredReporter implements Reporter {
           yOrCallback?: number | (() => void),
           callback?: () => void,
         ) => {
+          // No-op function to prevent TTY errors
           if (typeof yOrCallback === 'function') {
-            return rlCursorTo(stream, x, undefined, yOrCallback);
+            yOrCallback();
+          } else if (typeof callback === 'function') {
+            callback();
           }
-          return rlCursorTo(stream, x, yOrCallback, callback);
         }) as SpinnerStream['cursorTo'];
       }
 
       if (typeof stream.clearLine !== 'function') {
-        stream.clearLine = ((dir: 0 | 1 | -1, callback?: () => void) =>
-          rlClearLine(stream, dir, callback)) as SpinnerStream['clearLine'];
+        stream.clearLine = ((dir: 0 | 1 | -1, callback?: () => void) => {
+          // No-op function to prevent TTY errors
+          if (typeof callback === 'function') {
+            callback();
+          }
+        }) as SpinnerStream['clearLine'];
       }
 
       if (typeof stream.moveCursor !== 'function') {
-        stream.moveCursor = ((dx: number, dy: number, callback?: () => void) =>
-          rlMoveCursor(stream, dx, dy, callback)) as SpinnerStream['moveCursor'];
+        stream.moveCursor = ((dx: number, dy: number, callback?: () => void) => {
+          // No-op function to prevent TTY errors
+          if (typeof callback === 'function') {
+            callback();
+          }
+        }) as SpinnerStream['moveCursor'];
       }
 
       this.spinner = ora({
@@ -291,6 +306,7 @@ class FilteredReporter implements Reporter {
         stream: this.spinnerStream,
       }).start();
     }
+    */
   }
 
   onStdOut(_chunk: string | Buffer, _test?: TestCase, _result?: TestResult): void {

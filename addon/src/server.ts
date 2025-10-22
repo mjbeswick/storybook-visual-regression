@@ -1,5 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, exec } from 'child_process';
 import { parse as parseUrl } from 'url';
 import { readdir, stat, readFile, mkdir } from 'fs/promises';
 import { watch as watchFs } from 'fs';
@@ -42,8 +42,6 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
   if (server) {
     return server;
   }
-
-  console.log(`[VR Addon] Starting API server on port ${port} with CLI command: ${cliCommand}`);
 
   // Ensure directories exist when server starts
   ensureVisualRegressionDirs().catch(() => {
@@ -340,21 +338,37 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
             cliCommand.includes(' ')
           ) {
             // Complex command - use shell execution
-            const fullCommand = `${cliCommand} ${enhancedArgs.join(' ')}`;
-            console.log(`[VR Addon] Executing complex command: ${fullCommand}`);
-            child = spawn(fullCommand, {
-              stdio: 'pipe',
+            // Remove -it flags from Docker commands to prevent TTY errors
+            let processedCommand = cliCommand;
+            if (cliCommand.includes('docker run')) {
+              // Remove -it flags (both combined and separate) from anywhere in the command
+              processedCommand = cliCommand
+                .replace(/\s-it\s/g, ' ')
+                .replace(/\s-i\s-t\s/g, ' ')
+                .replace(/^-it\s/, '')
+                .replace(/^-i\s-t\s/, '')
+                .replace(/\s-it$/, '')
+                .replace(/\s-i\s-t$/, '');
+              
+              // Add -T flag to explicitly disable TTY allocation (shorter form of --no-tty)
+              if (!processedCommand.includes('-T') && !processedCommand.includes('--no-tty')) {
+                processedCommand = processedCommand.replace('docker run', 'docker run -T');
+              }
+            }
+            const fullCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
+            child = exec(fullCommand, {
               cwd: process.cwd(),
-              shell: true, // Enable shell for complex commands
               env: {
                 ...cleanEnv,
                 FORCE_COLOR: '1', // Force chalk to output ANSI color codes
                 TERM: 'xterm-256color', // Enable full terminal features
                 COLUMNS: '120', // Set terminal width for proper formatting
                 LINES: '30', // Set terminal height
+                DOCKER_TTY: 'false', // Prevent Docker from trying to allocate TTY
+                // Force TTY detection for CLI tools
+                CI: 'false', // Disable CI mode
+                STORYBOOK_MODE: 'true', // Enable Storybook mode
               },
-              // Create a new process group to enable killing all child processes
-              detached: true,
             });
           } else {
             // Simple command - direct execution
@@ -362,7 +376,7 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
               `[VR Addon] Executing simple command: ${cliCommand} ${enhancedArgs.join(' ')}`,
             );
             child = spawn(cliCommand, enhancedArgs, {
-              stdio: 'pipe',
+              stdio: ['pipe', 'pipe', 'pipe'],
               cwd: process.cwd(),
               env: {
                 ...cleanEnv,
@@ -370,6 +384,9 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
                 TERM: 'xterm-256color', // Enable full terminal features
                 COLUMNS: '120', // Set terminal width for proper formatting
                 LINES: '30', // Set terminal height
+                // Force TTY detection for CLI tools
+                CI: 'false', // Disable CI mode
+                STORYBOOK_MODE: 'true', // Enable Storybook mode
               },
               // Create a new process group to enable killing all child processes
               detached: true,
