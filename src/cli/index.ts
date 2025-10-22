@@ -588,6 +588,28 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const isStorybookMode = Boolean(options.storybook || process.env.STORYBOOK_MODE === 'true');
   const effectiveIsCI = isStorybookMode ? false : isCIEnvironment && !isDockerEnvironment;
 
+  // Debug color environment in Storybook mode
+  if (isStorybookMode) {
+    console.log('[DEBUG] Storybook mode detected - Color environment:');
+    console.log(`  FORCE_COLOR: ${process.env.FORCE_COLOR}`);
+    console.log(`  TERM: ${process.env.TERM}`);
+    console.log(`  COLORTERM: ${process.env.COLORTERM}`);
+    console.log(`  NO_COLOR: ${process.env.NO_COLOR}`);
+    console.log(`  CI: ${process.env.CI}`);
+    console.log(`  process.stdout.isTTY: ${process.stdout.isTTY}`);
+    console.log(`  effectiveIsCI: ${effectiveIsCI}`);
+
+    // Test chalk color output
+    const chalk = (await import('chalk')).default;
+    console.log('[DEBUG] Chalk color test:');
+    console.log(
+      `  ${chalk.red('RED')} ${chalk.green('GREEN')} ${chalk.blue('BLUE')} ${chalk.yellow('YELLOW')}`,
+    );
+    console.log(
+      `  ${chalk.cyan('CYAN')} ${chalk.magenta('MAGENTA')} ${chalk.bold('BOLD')} ${chalk.dim('DIM')}`,
+    );
+  }
+
   // Optionally install Playwright browsers/deps for CI convenience
   // Only install if the --install-browsers flag was explicitly provided
   if (process.argv.includes('--install-browsers')) {
