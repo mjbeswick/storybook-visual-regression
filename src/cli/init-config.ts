@@ -76,8 +76,8 @@ const jsonConfigTemplate = `{
   "waitTimeout": 30000,
   "overlayTimeout": 5000,
   "webserverTimeout": 120000,
-  "stabilizeInterval": 150,
-  "stabilizeAttempts": 20,
+  "stabilizeInterval": 0,
+  "stabilizeAttempts": 0,
   "finalSettle": 500,
   "resourceSettle": 100,
   "waitUntil": "networkidle",
@@ -93,11 +93,7 @@ const jsonConfigTemplate = `{
 
 export type ConfigFormat = 'js' | 'ts' | 'json';
 
-export function initConfig(
-  cwd: string,
-  format: ConfigFormat = 'js',
-  force: boolean = false,
-): void {
+export function initConfig(cwd: string, format: ConfigFormat = 'js', force: boolean = false): void {
   const fileNames: Record<ConfigFormat, string> = {
     js: 'svr.config.js',
     ts: 'svr.config.ts',
@@ -131,9 +127,10 @@ export function initConfig(
     console.log();
   } catch (error) {
     console.error(
-      chalk.red(`Failed to create config file: ${error instanceof Error ? error.message : String(error)}`),
+      chalk.red(
+        `Failed to create config file: ${error instanceof Error ? error.message : String(error)}`,
+      ),
     );
     process.exit(1);
   }
 }
-

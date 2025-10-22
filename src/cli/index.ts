@@ -501,6 +501,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const projectRoot = join(__dirname, '..', '..');
 
   const config = await createConfigFromOptions(options, originalCwd);
+  // Load user config to provide defaults for runtime options when CLI flags are not provided
+  const userConfig = await loadUserConfig(originalCwd, options.config);
   const storybookCommand = config.storybookCommand;
 
   const parsePatterns = (value?: string): string[] =>
@@ -517,30 +519,43 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     return Number.isFinite(parsed) ? parsed : fallback;
   };
 
-  const includePatterns = parsePatterns(options.include);
-  const excludePatterns = parsePatterns(options.exclude);
-  const grepPattern = options.grep?.trim() || undefined;
-  const navTimeout = parseNumber(options.navTimeout, 10_000);
-  const waitTimeout = parseNumber(options.waitTimeout, 30_000);
-  const overlayTimeout = parseNumber(options.overlayTimeout, 5_000);
-  const stabilizeInterval = parseNumber(options.stabilizeInterval, 150);
-  const stabilizeAttempts = parseNumber(options.stabilizeAttempts, 20);
-  const finalSettle = parseNumber(options.finalSettle, 500);
-  const resourceSettle = parseNumber(options.resourceSettle, 100);
+  const includePatterns = parsePatterns(
+    options.include ?? (userConfig.include ? userConfig.include.join(',') : undefined),
+  );
+  const excludePatterns = parsePatterns(
+    options.exclude ?? (userConfig.exclude ? userConfig.exclude.join(',') : undefined),
+  );
+  const grepPattern = (options.grep ?? userConfig.grep)?.trim() || undefined;
+  const navTimeout = parseNumber(options.navTimeout, userConfig.navTimeout ?? 10_000);
+  const waitTimeout = parseNumber(options.waitTimeout, userConfig.waitTimeout ?? 30_000);
+  const overlayTimeout = parseNumber(options.overlayTimeout, userConfig.overlayTimeout ?? 5_000);
+  const stabilizeInterval = parseNumber(
+    options.stabilizeInterval,
+    userConfig.stabilizeInterval ?? 150,
+  );
+  const stabilizeAttempts = parseNumber(
+    options.stabilizeAttempts,
+    userConfig.stabilizeAttempts ?? 20,
+  );
+  const finalSettle = parseNumber(options.finalSettle, userConfig.finalSettle ?? 500);
+  const resourceSettle = parseNumber(options.resourceSettle, userConfig.resourceSettle ?? 100);
   const waitUntilCandidates = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
-  const waitUntilInput = (options.waitUntil || '').toLowerCase();
+  const waitUntilInput = (options.waitUntil || userConfig.waitUntil || '').toLowerCase();
   const waitUntilValue = waitUntilCandidates.has(waitUntilInput)
     ? (waitUntilInput as 'load' | 'domcontentloaded' | 'networkidle' | 'commit')
     : 'networkidle';
-  const notFoundRetryDelay = parseNumber(options.notFoundRetryDelay, 200);
-  const debugEnabled = Boolean(options.debug);
+  const notFoundRetryDelay = parseNumber(
+    options.notFoundRetryDelay,
+    userConfig.notFoundRetryDelay ?? 200,
+  );
+  const debugEnabled = Boolean(options.debug ?? userConfig.debug);
   const updateSnapshots = Boolean(options.updateSnapshots);
-  const hideTimeEstimates = Boolean(options.hideTimeEstimates);
-  const hideSpinners = Boolean(options.hideSpinners);
-  const printUrls = Boolean(options.printUrls);
-  const missingOnly = Boolean(options.missingOnly);
+  const hideTimeEstimates = Boolean(options.hideTimeEstimates ?? userConfig.hideTimeEstimates);
+  const hideSpinners = Boolean(options.hideSpinners ?? userConfig.hideSpinners);
+  const printUrls = Boolean(options.printUrls ?? userConfig.printUrls);
+  const missingOnly = Boolean(options.missingOnly ?? userConfig.missingOnly);
   const clean = Boolean(options.clean);
-  const notFoundCheck = Boolean(options.notFoundCheck);
+  const notFoundCheck = Boolean(options.notFoundCheck ?? userConfig.notFoundCheck);
   const isCIEnvironment = !process.stdout.isTTY;
   // Override CI detection for Storybook mode - we want rich terminal output in the addon
   const isStorybookMode = Boolean(options.storybook);
@@ -816,8 +831,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       ];
       const resolvedFilteredReporter = filteredReporterCandidates.find((p) => existsSync(p));
       reporterArg = resolvedFilteredReporter;
-    } else if ((options as CliOptions).reporter) {
-      reporterArg = String((options as CliOptions).reporter);
+    } else if ((options as CliOptions).reporter || userConfig.reporter) {
+      reporterArg = String((options as CliOptions).reporter ?? userConfig.reporter);
     } else if (debugEnabled) {
       reporterArg = 'line';
     } else if (resolvedCustomReporter) {

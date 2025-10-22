@@ -349,13 +349,11 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
                 .replace(/^-i\s-t\s/, '')
                 .replace(/\s-it$/, '')
                 .replace(/\s-i\s-t$/, '');
-              
-              // Add -T flag to explicitly disable TTY allocation (shorter form of --no-tty)
-              if (!processedCommand.includes('-T') && !processedCommand.includes('--no-tty')) {
-                processedCommand = processedCommand.replace('docker run', 'docker run -T');
-              }
+
+              // Do not inject -T/--no-tty; leave TTY behavior to the host Docker version
             }
             const fullCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
+            console.log(`[VR Addon] Executing command: ${fullCommand}`);
             child = exec(fullCommand, {
               cwd: process.cwd(),
               env: {
