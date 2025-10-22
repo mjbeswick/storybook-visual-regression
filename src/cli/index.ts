@@ -527,7 +527,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const storybookCommand = config.storybookCommand;
 
   // Load user config for CLI-specific options (without logging to avoid duplication)
-  const userConfig = await loadUserConfig(originalCwd, options.config, false);
+  const userConfig = await loadUserConfig(originalCwd, options.config, true);
 
   const parsePatterns = (value?: string): string[] =>
     value
