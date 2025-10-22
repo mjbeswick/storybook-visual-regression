@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import path, { dirname, join } from 'path';
 import { loadUserConfig, saveUserConfig, getDefaultConfigPath } from './config-loader.js';
 import type { RuntimeOptions } from '../runtime/runtime-options.js';
+import { readFileSync } from 'fs';
 
 // Utility function to replace host.docker.internal with localhost for better accessibility in Docker environments
 function replaceDockerHostInUrl(url: string): string {
@@ -26,12 +27,18 @@ function replaceDockerHostInUrl(url: string): string {
   return url;
 }
 
+// Read version from package.json
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJsonPath = join(__dirname, '../../package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+
 const program = new Command();
 
 program
   .name('storybook-visual-regression')
   .description('Visual regression testing tool for Storybook')
-  .version('1.14.0')
+  .version(packageJson.version)
   .option('--config <path>', 'Path to config file')
   .option('-u, --url <url>', 'Storybook server URL', 'http://localhost:9009')
   .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
@@ -517,9 +524,10 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const projectRoot = join(__dirname, '..', '..');
 
   const config = await createConfigFromOptions(options, originalCwd);
-  // Load user config to provide defaults for runtime options when CLI flags are not provided
-  const userConfig = await loadUserConfig(originalCwd, options.config);
   const storybookCommand = config.storybookCommand;
+
+  // Load user config for CLI-specific options (without logging to avoid duplication)
+  const userConfig = await loadUserConfig(originalCwd, options.config, false);
 
   const parsePatterns = (value?: string): string[] =>
     value
@@ -573,12 +581,12 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const clean = Boolean(options.clean);
   const notFoundCheck = Boolean(options.notFoundCheck ?? userConfig.notFoundCheck);
   const isCIEnvironment = !process.stdout.isTTY;
-  // Override CI detection for Storybook mode - we want rich terminal output in the addon
-  const isStorybookMode = Boolean(options.storybook);
-  const effectiveIsCI = isStorybookMode ? false : isCIEnvironment;
+  // Override CI detection for Docker environments - we want rich terminal output in Docker
   const isDockerEnvironment = Boolean(
     process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
   );
+  const isStorybookMode = Boolean(options.storybook);
+  const effectiveIsCI = isStorybookMode ? false : isCIEnvironment && !isDockerEnvironment;
 
   // Optionally install Playwright browsers/deps for CI convenience
   // Only install if the --install-browsers flag was explicitly provided
@@ -695,7 +703,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       });
 
       if (response.ok) {
-        console.log(`🔍 Storybook is already running, skipping webserver startup`);
+        console.log(`👍 Storybook is already running, skipping webserver startup`);
         finalStorybookCommand = undefined;
       } else {
         console.log(`🔍 Storybook not accessible (${response.status}), will start webserver`);

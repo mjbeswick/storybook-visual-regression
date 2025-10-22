@@ -11,8 +11,16 @@ RUN apt-get update \
   && node -v \
   && npm -v
 
-# Install storybook-visual-regression globally
-RUN npm install -g storybook-visual-regression@latest
+# Copy project files and install locally
+COPY package.json /usr/local/lib/node_modules/storybook-visual-regression/
+COPY dist /usr/local/lib/node_modules/storybook-visual-regression/dist
+COPY README.md /usr/local/lib/node_modules/storybook-visual-regression/
+COPY LICENSE /usr/local/lib/node_modules/storybook-visual-regression/
+
+# Install dependencies and create global symlink
+RUN cd /usr/local/lib/node_modules/storybook-visual-regression && npm install --production --ignore-scripts \
+  && ln -sf /usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js /usr/local/bin/storybook-visual-regression \
+  && chmod +x /usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js
 
 # Install Playwright browsers to ensure they're available
 RUN npx playwright install chromium
@@ -24,5 +32,5 @@ WORKDIR /app
 USER pwuser
 
 # Default entrypoint to run the CLI
-ENTRYPOINT ["dumb-init", "--", "npx", "storybook-visual-regression"]
+ENTRYPOINT ["dumb-init", "--", "node", "/usr/local/lib/node_modules/storybook-visual-regression/dist/cli/index.js"]
 CMD ["--help"]

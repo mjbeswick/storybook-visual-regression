@@ -16,8 +16,8 @@ import { dirname, resolve, sep } from 'path';
 //   moveCursor as rlMoveCursor,
 // } from 'node:readline';
 // Disable ora import to prevent TTY errors
-// import ora from 'ora';
-// import type { Ora } from 'ora';
+import ora from 'ora';
+import type { Ora } from 'ora';
 import { tryLoadRuntimeOptions } from '../runtime/runtime-options.js';
 
 // Utility function to replace host.docker.internal with localhost for better accessibility in Docker environments
@@ -62,7 +62,7 @@ class FilteredReporter implements Reporter {
   private lastDurations: number[] = []; // rolling window across all workers (fallback)
   private perWorkerDurations: Record<number, number[]> = {}; // rolling window per worker
   private recentAllDurations: number[] = []; // for percentile/outlier capping
-  private spinner: any | null = null; // Disabled to prevent TTY errors
+  private spinner: Ora | null = null; // Re-enabled for Docker environments
   private spinnerStream: SpinnerStream | null = null;
   private spinnerOriginalIsTTY: boolean | undefined;
   private spinnerOriginalCursorTo?: SpinnerStream['cursorTo'];
@@ -266,50 +266,57 @@ class FilteredReporter implements Reporter {
     // Header line for tests and workers, followed by a newline as expected by tests
     console.log(`Running ${this.totalTests} tests using ${this.workers} workers...\n`);
 
-    // Disable spinners entirely to prevent TTY errors
-    /*
-    if (this.showSpinners && process.stdout.isTTY) {
-      // Force TTY detection for ora spinner to work in Storybook addon
-      // Only enable spinners if we actually have a TTY
+    // Enable spinners for Docker environments and when explicitly enabled
+    if (this.showSpinners) {
+      // Force TTY detection for ora spinner to work in Docker environments
       this.spinnerStream = process.stdout as SpinnerStream;
       this.spinnerOriginalIsTTY = this.spinnerStream.isTTY;
       this.spinnerOriginalCursorTo = this.spinnerStream.cursorTo;
       this.spinnerOriginalClearLine = this.spinnerStream.clearLine;
       this.spinnerOriginalMoveCursor = this.spinnerStream.moveCursor;
+
+      // Force TTY mode for Docker environments
       this.spinnerStream.isTTY = true;
 
       const stream = this.spinnerStream;
 
       if (typeof stream.cursorTo !== 'function') {
-        stream.cursorTo = ((
-          x: number,
-          yOrCallback?: number | (() => void),
-          callback?: () => void,
-        ) => {
-          // No-op function to prevent TTY errors
-          if (typeof yOrCallback === 'function') {
-            yOrCallback();
-          } else if (typeof callback === 'function') {
-            callback();
+        stream.cursorTo = ((x: number, y?: number) => {
+          if (typeof y === 'number') {
+            process.stdout.write(`\x1b[${y + 1};${x + 1}H`);
+          } else {
+            process.stdout.write(`\x1b[${x + 1}G`);
           }
+          return true;
         }) as SpinnerStream['cursorTo'];
       }
 
       if (typeof stream.clearLine !== 'function') {
-        stream.clearLine = ((dir: 0 | 1 | -1, callback?: () => void) => {
-          // No-op function to prevent TTY errors
-          if (typeof callback === 'function') {
-            callback();
+        stream.clearLine = ((dir: number) => {
+          if (dir < 0) {
+            process.stdout.write('\x1b[1K');
+          } else if (dir > 0) {
+            process.stdout.write('\x1b[0K');
+          } else {
+            process.stdout.write('\x1b[2K');
           }
+          return true;
         }) as SpinnerStream['clearLine'];
       }
 
       if (typeof stream.moveCursor !== 'function') {
-        stream.moveCursor = ((dx: number, dy: number, callback?: () => void) => {
-          // No-op function to prevent TTY errors
-          if (typeof callback === 'function') {
-            callback();
+        stream.moveCursor = ((dx: number, dy: number) => {
+          if (dx < 0) {
+            process.stdout.write(`\x1b[${Math.abs(dx)}D`);
+          } else if (dx > 0) {
+            process.stdout.write(`\x1b[${dx}C`);
           }
+          if (dy < 0) {
+            process.stdout.write(`\x1b[${Math.abs(dy)}A`);
+          } else if (dy > 0) {
+            process.stdout.write(`\x1b[${dy}B`);
+          }
+          return true;
         }) as SpinnerStream['moveCursor'];
       }
 
@@ -319,7 +326,6 @@ class FilteredReporter implements Reporter {
         stream: this.spinnerStream,
       }).start();
     }
-    */
   }
 
   onStdOut(_chunk: string | Buffer, _test?: TestCase, _result?: TestResult): void {

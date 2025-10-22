@@ -123,7 +123,11 @@ export async function loadConfigFile(configPath: string): Promise<UserConfig> {
 /**
  * Load user config from file or return empty config
  */
-export async function loadUserConfig(cwd: string, explicitPath?: string): Promise<UserConfig> {
+export async function loadUserConfig(
+  cwd: string,
+  explicitPath?: string,
+  silent = false,
+): Promise<UserConfig> {
   // If explicit path provided, use it
   if (explicitPath) {
     const resolvedPath = join(cwd, explicitPath);
@@ -136,7 +140,9 @@ export async function loadUserConfig(cwd: string, explicitPath?: string): Promis
   // Try to discover config file; prefers visual-regression/config.json
   const discoveredPath = await discoverConfigFile(cwd);
   if (discoveredPath) {
-    console.log(`📝 Using config file: ${discoveredPath}`);
+    if (!silent) {
+      console.log(`📝 Using config file: ${discoveredPath}`);
+    }
     return loadConfigFile(discoveredPath);
   }
 
@@ -193,9 +199,9 @@ export function saveUserConfig(cwd: string, config: UserConfig): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  
+
   const json = JSON.stringify(toSave, null, 2);
-  
+
   // Only save if the content has actually changed
   let existingContent = '';
   if (existsSync(filePath)) {
@@ -206,7 +212,7 @@ export function saveUserConfig(cwd: string, config: UserConfig): void {
       existingContent = '';
     }
   }
-  
+
   if (json !== existingContent) {
     writeFileSync(filePath, json, 'utf8');
     console.log(`📝 Saved config: ${filePath}`);
