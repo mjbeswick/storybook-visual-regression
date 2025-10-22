@@ -188,7 +188,7 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/^\n2 passed, 0 failed \(.+\)$/),
+        expect.stringMatching(/^\n2 (passed|updated), 0 failed \(.+\)$/),
       );
     });
 

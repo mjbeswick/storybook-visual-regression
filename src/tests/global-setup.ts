@@ -87,9 +87,7 @@ async function cleanOrphanedSnapshots(
   indexData: StorybookIndex,
   runtimeOptions: ReturnType<typeof loadRuntimeOptions>,
 ): Promise<void> {
-  if (!runtimeOptions.storybookMode) {
-    console.log('');
-  }
+  console.log('');
   console.log(chalk.bold('🗑️  Cleaning orphaned snapshots'));
 
   const entries = indexData.entries || {};
@@ -212,7 +210,7 @@ async function globalSetup(_config: FullConfig): Promise<void> {
   const projectCwd = runtimeOptions.originalCwd;
 
   console.log('');
-  console.log(chalk.bold('👀 Storybook discovery')); // section header
+  console.log(chalk.bold('🕵️‍♂️ Storybook discovery')); // section header
   console.log(`  ${chalk.dim('•')} Target URL: ${chalk.cyan(baseURL)}`);
 
   let indexData: StorybookIndex | null = null;

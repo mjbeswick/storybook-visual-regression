@@ -580,8 +580,13 @@ class FilteredReporter implements Reporter {
     // Summary line expected by tests, prefixed with a newline
     const totalExecuted =
       this.passed + this.failed + this.skipped + this.timedOut + this.interrupted;
+
+    // Use "updated" instead of "passed" when in update mode
+    const isUpdateMode = this.runtimeOptions?.updateSnapshots ?? false;
+    const passedText = isUpdateMode ? 'updated' : 'passed';
+
     console.log(
-      `\n${this.passed} passed, ${this.failed} failed${this.skipped > 0 ? `, ${this.skipped} skipped` : ''}${this.timedOut > 0 ? `, ${this.timedOut} timed out` : ''}${this.interrupted > 0 ? `, ${this.interrupted} interrupted` : ''} ${chalk.gray(`(${formattedDuration})`)}`,
+      `\n${this.passed} ${passedText}, ${this.failed} failed${this.skipped > 0 ? `, ${this.skipped} skipped` : ''}${this.timedOut > 0 ? `, ${this.timedOut} timed out` : ''}${this.interrupted > 0 ? `, ${this.interrupted} interrupted` : ''} ${chalk.gray(`(${formattedDuration})`)}`,
     );
 
     // Show discrepancy if total executed doesn't match total tests
