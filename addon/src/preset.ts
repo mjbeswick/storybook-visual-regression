@@ -1,5 +1,5 @@
-import { startApiServer } from './server';
-import { loadAddonConfig } from './config';
+import { startApiServer } from './server.js';
+import { loadAddonConfig } from './config.js';
 
 let serverStarted = false;
 
@@ -9,7 +9,7 @@ export interface AddonOptions {
 }
 
 export function managerEntries(entry: string[] = []) {
-  return [...entry, require.resolve('./manager')];
+  return [...entry, require.resolve('./manager.js')];
 }
 
 export function previewAnnotations(entry: string[] = [], options: AddonOptions = {}) {
@@ -27,5 +27,5 @@ export function previewAnnotations(entry: string[] = [], options: AddonOptions =
     }
   }
 
-  return [...entry, require.resolve('./preview')];
+  return [...entry, require.resolve('./preview.js')];
 }
