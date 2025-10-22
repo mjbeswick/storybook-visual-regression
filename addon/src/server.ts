@@ -396,13 +396,6 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
             }
             const fullCommand = processedCommand;
             console.log(`[VR Addon] Executing command: ${fullCommand}`);
-            console.log(`[VR Addon] Environment variables:`, {
-              FORCE_COLOR: '3',
-              TERM: 'xterm-256color',
-              STORYBOOK_MODE: 'true',
-              CI: 'false',
-              COLORTERM: 'truecolor',
-            });
             child = exec(fullCommand, {
               cwd: process.cwd(),
               env: {
@@ -498,7 +491,7 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
             res.end();
           });
 
-          child.on('close', () => {
+          child.on('close', (code, signal) => {
             // Clean up the process
             activeProcesses.delete(processId);
 

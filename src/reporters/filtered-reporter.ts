@@ -7,6 +7,11 @@ import {
   TestResult,
 } from '@playwright/test/reporter';
 import chalk from 'chalk';
+
+// Force colors in Docker and Storybook environments
+if (process.env.DOCKER_CONTAINER || process.env.CONTAINER || process.env.STORYBOOK_MODE === 'true' || process.env.FORCE_COLOR) {
+  chalk.level = 3; // Force highest color level (16M colors)
+}
 import { existsSync, rmSync, statSync, readdirSync, unlinkSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 // Disable readline operations to prevent TTY errors
