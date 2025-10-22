@@ -358,8 +358,28 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
 
               console.log(`[VR Addon] Original command: ${cliCommand}`);
               console.log(`[VR Addon] Processed command: ${processedCommand}`);
+
+              // For Docker commands, inject arguments before the final command
+              // Find the last part of the command (the actual CLI command)
+              const parts = processedCommand.split(' ');
+              const lastPart = parts[parts.length - 1];
+
+              // If the last part is a URL or doesn't look like a command, append arguments
+              if (lastPart.startsWith('http') || lastPart.includes('://')) {
+                // URL is the last part, append arguments
+                processedCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
+              } else {
+                // Command is the last part, inject arguments before it
+                const commandIndex = processedCommand.lastIndexOf(lastPart);
+                const beforeCommand = processedCommand.substring(0, commandIndex);
+                const afterCommand = processedCommand.substring(commandIndex);
+                processedCommand = `${beforeCommand}${enhancedArgs.join(' ')} ${afterCommand}`;
+              }
+            } else {
+              // For non-Docker commands, append arguments normally
+              processedCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
             }
-            const fullCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
+            const fullCommand = processedCommand;
             console.log(`[VR Addon] Executing command: ${fullCommand}`);
             child = exec(fullCommand, {
               cwd: process.cwd(),
