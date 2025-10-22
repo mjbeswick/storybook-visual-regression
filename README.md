@@ -359,7 +359,27 @@ By default the tool fetches `index.json` from the running dev server at `<url>:<
 
 #### Cross-Platform Font Rendering
 
-**Important**: If you create snapshots on macOS but run tests on Linux (GitHub Actions), you may encounter font rendering differences. Use these configurations:
+**Important**: If you create snapshots on macOS but run tests on Linux (GitHub Actions), you may encounter font rendering differences. This happens because different operating systems use different font rendering engines:
+
+- **Linux**: FreeType with different font smoothing
+- **macOS**: Core Text with different font rendering
+- **Windows**: DirectWrite with different font rendering
+
+**Recommended Solution: Use Docker for Consistency**
+
+The easiest way to ensure consistent font rendering across all platforms is to use Docker:
+
+```bash
+# Build the Docker image
+docker build -t storybook-visual-regression .
+
+# Use Docker for all visual regression tests
+docker run --rm -v $(pwd):/app storybook-visual-regression
+```
+
+This ensures identical font rendering across macOS, Windows, and Linux.
+
+**Alternative: Use CI-specific configurations**
 
 **Option 1: Use CI-specific config file**
 
@@ -478,7 +498,7 @@ npx storybook-visual-regression test \
 - **Test timeouts** → The tool auto-calculates test timeout based on all wait operations. If stories still timeout, increase `--nav-timeout` and `--wait-timeout`.
 - **Stories load instantly in browser but timeout in tests** → The tool automatically handles this by using resource-based loading detection. If needed, increase `--resource-settle` to give resources more time to finish.
 - **Fonts not loading properly** → Increase `--nav-timeout` or `--resource-settle` to give fonts more time. The tool explicitly waits for fonts using `document.fonts.ready`.
-- **Font rendering differences between macOS and Linux** → Use `--threshold 0.5` and `--max-diff-pixels 200` for CI environments. Create snapshots on the same OS as your CI, or use the provided CI config files.
+- **Font rendering differences between macOS and Linux** → Use Docker for consistency: `docker run --rm -v $(pwd):/app storybook-visual-regression`. Alternatively, use `--threshold 0.5` and `--max-diff-pixels 200` for CI environments, or create snapshots on the same OS as your CI.
 - **Exiting early** → Increase or disable `--max-failures` (set `<= 0`).
 - **Storybook server stops during tests** → Use `--max-failures 0` to prevent early termination, or check for port conflicts.
 - **Verbose failure output** → Use `--quiet` flag to suppress detailed error messages and see only test progress.

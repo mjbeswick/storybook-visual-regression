@@ -379,30 +379,30 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
 
           child.stdout?.on('data', (data) => {
             const chunk = data.toString();
-            
+
             // Replace host.docker.internal with localhost in URLs for better accessibility
             const processedChunk = chunk.replace(/host\.docker\.internal/g, 'localhost');
-            
+
             // Log when URL replacement happens for debugging
             if (processedChunk !== chunk) {
               console.log('[VR Addon] Replaced host.docker.internal with localhost in output');
             }
-            
+
             // Stream raw terminal output directly (no JSON wrapping)
             res.write(processedChunk);
           });
 
           child.stderr?.on('data', (data) => {
             const chunk = data.toString();
-            
+
             // Replace host.docker.internal with localhost in URLs for better accessibility
             const processedChunk = chunk.replace(/host\.docker\.internal/g, 'localhost');
-            
+
             // Log when URL replacement happens for debugging
             if (processedChunk !== chunk) {
               console.log('[VR Addon] Replaced host.docker.internal with localhost in stderr');
             }
-            
+
             // Stream stderr directly as well
             res.write(processedChunk);
           });

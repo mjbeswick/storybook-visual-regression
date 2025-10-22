@@ -15,6 +15,107 @@ import type { RuntimeOptions } from '../runtime/runtime-options.js';
 
 const program = new Command();
 
+program
+  .name('storybook-visual-regression')
+  .description('Visual regression testing tool for Storybook')
+  .version('1.14.0')
+  .option('--config <path>', 'Path to config file')
+  .option('-u, --url <url>', 'Storybook server URL', 'http://localhost:9009')
+  .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
+  .option('-w, --workers <number>', 'Number of parallel workers', '12')
+  .option('-c, --command <command>', 'Command to start Storybook server')
+  .option(
+    '--webserver-timeout <ms>',
+    'Playwright webServer startup timeout in milliseconds',
+    '120000',
+  )
+  .option('--retries <number>', 'Number of retries on failure', '0')
+  .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '10')
+  .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
+  .option('--locale <locale>', 'Browser locale', 'en-GB')
+  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
+  .option('--quiet', 'Suppress verbose failure output')
+  .option('--debug', 'Enable debug logging')
+  .option('--storybook', 'Output results as JSON for Storybook addon consumption', false)
+  .option('--print-urls', 'Show story URLs inline with test results')
+  .option('--hide-time-estimates', 'Hide time estimates in progress display')
+  .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
+  .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
+  .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
+  .option('--max-diff-pixels <number>', 'Maximum number of pixels that can differ', '0')
+  .option('--full-page', 'Capture full-page screenshots (boolean)')
+  // Timing and stability options (ms / counts)
+  .option(
+    '--nav-timeout <ms>',
+    'Maximum time to wait for page navigation (page.goto). Increase for slow-loading stories or networks.',
+    '10000',
+  )
+  .option(
+    '--wait-timeout <ms>',
+    'Maximum time for wait operations (selectors, resource loading). Increase for stories with many resources.',
+    '10000',
+  )
+  .option(
+    '--overlay-timeout <ms>',
+    "Maximum time to wait for Storybook's 'preparing' overlays to hide before force-hiding them.",
+    '5000',
+  )
+  .option(
+    '--stabilize-interval <ms>',
+    'Interval between visual stability checks to ensure content has stopped changing.',
+    '200',
+  )
+  .option(
+    '--stabilize-attempts <n>',
+    'Number of stability checks to perform. Increase for animated/dynamic stories.',
+    '20',
+  )
+  .option(
+    '--final-settle <ms>',
+    'Final delay after all readiness checks pass before taking screenshot. Increase for late animations.',
+    '100',
+  )
+  .option(
+    '--resource-settle <ms>',
+    'Time after a resource finishes loading before considering all resources settled. Increase for slow networks.',
+    '100',
+  )
+  .option(
+    '--wait-until <state>',
+    "Navigation strategy: 'domcontentloaded' (fastest), 'networkidle' (default, stable), 'load' (wait for all resources), 'commit' (earliest).",
+    'networkidle',
+  )
+  .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
+  .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
+  .option('--grep <pattern>', 'Filter stories by regex pattern')
+  .option(
+    '--install-browsers [browser]',
+    'Install Playwright browsers before running (chromium|firefox|webkit|all)',
+    'chromium',
+  )
+  .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
+  .option('--not-found-check', 'Enable detection and retry for "Not Found" / 404 pages')
+  .option('--not-found-retry-delay <ms>', 'Delay between "Not Found" retries', '200')
+  .option('--update', 'Update visual regression snapshots (create new baselines)')
+  .option(
+    '--missing-only',
+    'Only create snapshots that do not already exist (skip existing baselines)',
+  )
+  .action(async (options) => {
+    const cliOptions = options as CliOptions;
+
+    // Handle update mode
+    if (cliOptions.update) {
+      cliOptions.updateSnapshots = true;
+      // Set clean to true by default for update mode
+      if (cliOptions.clean === undefined) {
+        cliOptions.clean = true;
+      }
+    }
+
+    await runTests(cliOptions);
+  });
+
 type CliOptions = {
   config?: string;
   url?: string;
@@ -358,10 +459,7 @@ async function _waitForStorybookServer(url: string, timeout: number): Promise<vo
   );
 }
 
-program
-  .name('storybook-visual-regression')
-  .description('Visual regression testing tool for Storybook')
-  .version('1.0.0');
+// Removed duplicate program metadata registration to avoid conflicting --version option
 
 // Init command - create default config file
 // init command removed
@@ -845,106 +943,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     }
   }
 }
-
-program
-  .command('test')
-  .description('Run visual regression tests')
-  .option('--config <path>', 'Path to config file')
-  .option('-u, --url <url>', 'Storybook server URL', 'http://localhost:9009')
-  .option('-o, --output <dir>', 'Output directory for results', 'visual-regression')
-  .option('-w, --workers <number>', 'Number of parallel workers', '12')
-  .option('-c, --command <command>', 'Command to start Storybook server')
-  .option(
-    '--webserver-timeout <ms>',
-    'Playwright webServer startup timeout in milliseconds',
-    '120000',
-  )
-  .option('--retries <number>', 'Number of retries on failure', '0')
-  .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '10')
-  .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
-  .option('--locale <locale>', 'Browser locale', 'en-GB')
-  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
-  .option('--quiet', 'Suppress verbose failure output')
-  .option('--debug', 'Enable debug logging')
-  .option('--storybook', 'Output results as JSON for Storybook addon consumption', false)
-  .option('--print-urls', 'Show story URLs inline with test results')
-  .option('--hide-time-estimates', 'Hide time estimates in progress display')
-  .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
-  .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
-  .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
-  .option('--max-diff-pixels <number>', 'Maximum number of pixels that can differ', '0')
-  .option('--full-page', 'Capture full-page screenshots (boolean)')
-  // Timing and stability options (ms / counts)
-  .option(
-    '--nav-timeout <ms>',
-    'Maximum time to wait for page navigation (page.goto). Increase for slow-loading stories or networks.',
-    '10000',
-  )
-  .option(
-    '--wait-timeout <ms>',
-    'Maximum time for wait operations (selectors, resource loading). Increase for stories with many resources.',
-    '10000',
-  )
-  .option(
-    '--overlay-timeout <ms>',
-    "Maximum time to wait for Storybook's 'preparing' overlays to hide before force-hiding them.",
-    '5000',
-  )
-  .option(
-    '--stabilize-interval <ms>',
-    'Interval between visual stability checks to ensure content has stopped changing.',
-    '200',
-  )
-  .option(
-    '--stabilize-attempts <n>',
-    'Number of stability checks to perform. Increase for animated/dynamic stories.',
-    '20',
-  )
-  .option(
-    '--final-settle <ms>',
-    'Final delay after all readiness checks pass before taking screenshot. Increase for late animations.',
-    '100',
-  )
-  .option(
-    '--resource-settle <ms>',
-    'Time after a resource finishes loading before considering all resources settled. Increase for slow networks.',
-    '100',
-  )
-  .option(
-    '--wait-until <state>',
-    "Navigation strategy: 'domcontentloaded' (fastest), 'networkidle' (default, stable), 'load' (wait for all resources), 'commit' (earliest).",
-    'networkidle',
-  )
-  .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
-  .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
-  .option('--grep <pattern>', 'Filter stories by regex pattern')
-  .option(
-    '--install-browsers [browser]',
-    'Install Playwright browsers before running (chromium|firefox|webkit|all)',
-    'chromium',
-  )
-  .option('--install-deps', 'Install system dependencies for browsers (Linux CI)')
-  .option('--not-found-check', 'Enable detection and retry for "Not Found" / 404 pages')
-  .option('--not-found-retry-delay <ms>', 'Delay between "Not Found" retries', '200')
-  .option('--update', 'Update visual regression snapshots (create new baselines)')
-  .option(
-    '--missing-only',
-    'Only create snapshots that do not already exist (skip existing baselines)',
-  )
-  .action(async (options) => {
-    const cliOptions = options as CliOptions;
-    
-    // Handle update mode
-    if (cliOptions.update) {
-      cliOptions.updateSnapshots = true;
-      // Set clean to true by default for update mode
-      if (cliOptions.clean === undefined) {
-        cliOptions.clean = true;
-      }
-    }
-    
-    await runTests(cliOptions);
-  });
 
 program
   .command('install-browsers')
