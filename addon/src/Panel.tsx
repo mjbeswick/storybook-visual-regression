@@ -35,8 +35,8 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     // Font size: 14px, Padding: 8px on each side (16px total)
     // More conservative font dimensions to prevent overflow
     const fontWidth = 9.0; // Slightly larger to prevent horizontal overflow
-    const fontHeight = 20.1; // Slightly larger to prevent vertical overflow
-    const padding = 20; // Increased padding for safety margin
+    const fontHeight = 21; // Slightly larger to prevent vertical overflow
+    const padding = 16; // Increased padding for safety margin
 
     const availableWidth = width - padding;
     const availableHeight = height - padding;
