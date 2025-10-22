@@ -776,7 +776,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const runtimeOptionsPath = join(projectRoot, 'dist', 'runtime-options.json');
   mkdirSync(path.dirname(runtimeOptionsPath), { recursive: true });
   writeFileSync(runtimeOptionsPath, JSON.stringify(runtimeOptions, null, 2), 'utf8');
-  
+
   console.log('');
   console.log(chalk.bold('🚀 Starting Playwright visual regression tests...'));
   if (isDockerEnvironment) {
@@ -799,7 +799,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     );
     console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
   }
-  
+
   if (!options.storybook) {
     console.log('');
   }
@@ -891,7 +891,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
     await child;
 
-    console.log('');
     console.log('');
     if (options.updateSnapshots) {
       console.log(chalk.green('🎉 Visual regression tests updated successfully'));

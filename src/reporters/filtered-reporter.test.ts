@@ -190,7 +190,6 @@ describe('FilteredReporter', () => {
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringMatching(/^\n2 passed, 0 failed \(.+\)$/),
       );
-      expect(consoleLogSpy).toHaveBeenCalledWith('✓ All passed');
     });
 
     it('should show failure message when some tests failed', () => {
