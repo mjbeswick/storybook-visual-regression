@@ -366,11 +366,16 @@ async function createConfigFromOptions(
 
   // Merge configs: CLI options > user config > detected config > defaults
   // Priority: CLI flags override user config file, which overrides detected config
-  const workersOpt = parseNumberOption(options.workers) ?? userConfig.workers;
-  const retriesOpt = parseNumberOption(options.retries) ?? userConfig.retries;
-  const serverTimeoutOpt =
-    parseNumberOption(options.webserverTimeout) ?? userConfig.webserverTimeout;
-  const maxFailuresOpt = parseNumberOption(options.maxFailures) ?? userConfig.maxFailures;
+  const workersOpt = hasArg('--workers', '-w')
+    ? parseNumberOption(options.workers)
+    : userConfig.workers;
+  const retriesOpt = hasArg('--retries') ? parseNumberOption(options.retries) : userConfig.retries;
+  const serverTimeoutOpt = hasArg('--webserver-timeout')
+    ? parseNumberOption(options.webserverTimeout)
+    : userConfig.webserverTimeout;
+  const maxFailuresOpt = hasArg('--max-failures')
+    ? parseNumberOption(options.maxFailures)
+    : userConfig.maxFailures;
 
   // Handle browser selection
   const browserOpt = options.browser;
