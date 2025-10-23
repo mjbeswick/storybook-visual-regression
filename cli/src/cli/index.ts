@@ -10,7 +10,7 @@ import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
 import { execa } from 'execa';
 import { fileURLToPath } from 'url';
 import path, { dirname, join } from 'path';
-import { loadUserConfig, saveUserConfig, getDefaultConfigPath } from './config-loader.js';
+import { loadUserConfig, saveUserConfig, getDefaultConfigPath, discoverConfigFile } from './config-loader.js';
 import type { RuntimeOptions } from '../runtime/runtime-options.js';
 import { readFileSync } from 'fs';
 
@@ -193,7 +193,14 @@ async function createConfigFromOptions(
 ): Promise<VisualRegressionConfig> {
   // Load user config file (if exists)
   const userConfig = await loadUserConfig(cwd, options.config);
-  // Persist overrides back to visual-regression/config.json when flags are explicitly provided
+  
+  // Track which config path was used for saving
+  const configPathUsed = options.config || (await discoverConfigFile(cwd));
+  
+  // If explicit config path provided, use it for saving even if it doesn't exist yet
+  const saveConfigPath = options.config || configPathUsed;
+  
+  // Persist overrides back to config file when flags are explicitly provided
   const argvJoined = process.argv.slice(2).join(' ');
   const hasArg = (...flags: string[]) =>
     flags.some((f) => new RegExp(`(\\s|^)${f}(\\s|=)`).test(argvJoined));
@@ -258,12 +265,14 @@ async function createConfigFromOptions(
   setIf(hasArg('--include'), 'include', parseList(options.include));
   setIf(hasArg('--exclude'), 'exclude', parseList(options.exclude));
 
-  const defaultConfigPath = getDefaultConfigPath(cwd);
-  if (didUpdate && options.saveConfig) {
-    saveUserConfig(cwd, updatedUserConfig as VisualRegressionConfig);
-  } else if (!existsSync(defaultConfigPath) && options.saveConfig) {
-    // No config file exists and no explicit overrides were provided: seed a config.json
-    const seed: Record<string, unknown> = {};
+  // Handle config saving
+  if (options.saveConfig) {
+    if (didUpdate) {
+      // Save the updated config with CLI overrides
+      saveUserConfig(cwd, updatedUserConfig as VisualRegressionConfig, saveConfigPath || undefined);
+    } else if (!configPathUsed && !options.config) {
+      // No config file exists and no explicit overrides were provided: seed a config.json
+      const seed: Record<string, unknown> = {};
     // Populate with discovered/detected reasonable defaults
     seed.url = options.url ?? 'http://localhost';
     seed.command = options.command;
@@ -306,7 +315,8 @@ async function createConfigFromOptions(
       : undefined;
     // Remove undefineds before saving
     const cleaned = Object.fromEntries(Object.entries(seed).filter(([, v]) => v !== undefined));
-    saveUserConfig(cwd, cleaned as VisualRegressionConfig);
+    saveUserConfig(cwd, cleaned as VisualRegressionConfig, saveConfigPath || undefined);
+    }
   }
 
   const defaultConfig = createDefaultConfig();
@@ -364,28 +374,33 @@ async function createConfigFromOptions(
     return Number.isFinite(n) && !Number.isNaN(n) ? n : undefined;
   };
 
-  // Merge configs: CLI options > user config > detected config > defaults
-  // Priority: CLI flags override user config file, which overrides detected config
+  // Merge configs: CLI options > user config > CLI defaults > detected config
+  // Priority: CLI flags override user config file, which overrides CLI defaults, which override detected config
   const workersOpt = hasArg('--workers', '-w')
     ? parseNumberOption(options.workers)
-    : userConfig.workers;
-  const retriesOpt = hasArg('--retries') ? parseNumberOption(options.retries) : userConfig.retries;
+    : userConfig.workers ?? parseNumberOption(options.workers);
+  const retriesOpt = hasArg('--retries') 
+    ? parseNumberOption(options.retries) 
+    : userConfig.retries ?? parseNumberOption(options.retries);
   const serverTimeoutOpt = hasArg('--webserver-timeout')
     ? parseNumberOption(options.webserverTimeout)
-    : userConfig.webserverTimeout;
+    : userConfig.webserverTimeout ?? parseNumberOption(options.webserverTimeout);
   const maxFailuresOpt = hasArg('--max-failures')
     ? parseNumberOption(options.maxFailures)
-    : userConfig.maxFailures;
+    : userConfig.maxFailures ?? parseNumberOption(options.maxFailures);
 
   // Handle browser selection
   const browserOpt = options.browser;
   const allowedBrowsers = new Set(['chromium', 'firefox', 'webkit']);
-  const browser =
-    browserOpt && allowedBrowsers.has(browserOpt)
-      ? (browserOpt as 'chromium' | 'firefox' | 'webkit')
-      : detectedConfig.browser;
+  const browser = browserOpt && allowedBrowsers.has(browserOpt)
+    ? (browserOpt as 'chromium' | 'firefox' | 'webkit')
+    : userConfig.browser && allowedBrowsers.has(userConfig.browser)
+    ? (userConfig.browser as 'chromium' | 'firefox' | 'webkit')
+    : detectedConfig.browser;
 
-  const outputOpt = options.output ?? userConfig.output;
+  const outputOpt = hasArg('--output', '-o') 
+    ? options.output 
+    : userConfig.output ?? options.output;
   const outputRoot = outputOpt
     ? path.isAbsolute(outputOpt)
       ? outputOpt
@@ -400,30 +415,39 @@ async function createConfigFromOptions(
     }
   }
 
-  // Parse threshold and maxDiffPixels options
-  const thresholdOpt = options.threshold ? parseFloat(options.threshold) : undefined;
-  const maxDiffPixelsOpt = parseNumberOption(options.maxDiffPixels);
-  const fullPageOpt = typeof userConfig.fullPage === 'boolean' ? userConfig.fullPage : undefined;
+  // Parse threshold and maxDiffPixels options with proper precedence
+  const thresholdOpt = hasArg('--threshold') 
+    ? (options.threshold ? parseFloat(options.threshold) : undefined)
+    : userConfig.threshold ?? (options.threshold ? parseFloat(options.threshold) : undefined);
+  const maxDiffPixelsOpt = hasArg('--max-diff-pixels')
+    ? parseNumberOption(options.maxDiffPixels)
+    : userConfig.maxDiffPixels ?? parseNumberOption(options.maxDiffPixels);
+  const fullPageOpt = hasArg('--full-page')
+    ? options.fullPage
+    : userConfig.fullPage ?? options.fullPage;
 
   return {
     ...detectedConfig,
     storybookUrl,
-    storybookCommand: options.command ?? userConfig.command ?? detectedConfig.storybookCommand,
+    storybookCommand: hasArg('--command', '-c') 
+      ? options.command 
+      : userConfig.command ?? options.command ?? detectedConfig.storybookCommand,
     workers: workersOpt ?? detectedConfig.workers,
     retries: retriesOpt ?? detectedConfig.retries,
     timeout: detectedConfig.timeout,
     serverTimeout: serverTimeoutOpt ?? detectedConfig.serverTimeout,
     maxFailures: maxFailuresOpt ?? detectedConfig.maxFailures,
     headless: detectedConfig.headless,
-    timezone: options.timezone || detectedConfig.timezone,
-    locale: options.locale || detectedConfig.locale,
+    timezone: (hasArg('--timezone') 
+      ? options.timezone 
+      : userConfig.timezone ?? options.timezone) ?? detectedConfig.timezone,
+    locale: (hasArg('--locale') 
+      ? options.locale 
+      : userConfig.locale ?? options.locale) ?? detectedConfig.locale,
     browser,
     threshold: thresholdOpt ?? detectedConfig.threshold,
     maxDiffPixels: maxDiffPixelsOpt ?? detectedConfig.maxDiffPixels,
-    fullPage:
-      typeof options.fullPage === 'boolean'
-        ? options.fullPage
-        : (fullPageOpt ?? detectedConfig.fullPage),
+    fullPage: fullPageOpt ?? detectedConfig.fullPage,
     snapshotPath: snapshotsDir,
     resultsPath: resultsDir,
   };

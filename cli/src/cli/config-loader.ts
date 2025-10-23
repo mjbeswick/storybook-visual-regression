@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { createDefaultConfig } from '../config/defaultConfig.js';
 import { pathToFileURL } from 'url';
+import * as path from 'path';
 
 export type UserConfig = {
   // Storybook configuration
@@ -52,6 +53,8 @@ export type UserConfig = {
   reporter?: string;
   // Screenshot
   fullPage?: boolean;
+  threshold?: number;
+  maxDiffPixels?: number;
 };
 
 /**
@@ -132,7 +135,8 @@ export async function loadUserConfig(
   if (explicitPath) {
     const resolvedPath = join(cwd, explicitPath);
     if (!existsSync(resolvedPath)) {
-      throw new Error(`Config file not found: ${resolvedPath}`);
+      // Return empty config if file doesn't exist - it will be created later if --save-config is used
+      return {};
     }
     return loadConfigFile(resolvedPath);
   }
@@ -192,10 +196,29 @@ function pruneDefaults(config: UserConfig): UserConfig {
   return Object.fromEntries(prunedEntries) as UserConfig;
 }
 
-export function saveUserConfig(cwd: string, config: UserConfig): void {
+export function saveUserConfig(cwd: string, config: UserConfig, configPath?: string): void {
   const toSave = pruneDefaults(config);
-  const filePath = getDefaultConfigPath(cwd);
-  const dir = join(cwd, 'visual-regression');
+  
+  // Determine the save path
+  let filePath: string;
+  if (configPath) {
+    // If configPath is provided, resolve it relative to cwd
+    if (path.isAbsolute(configPath)) {
+      filePath = configPath;
+    } else if (configPath.includes('/') || configPath.includes('\\')) {
+      // Relative path - save relative to cwd
+      filePath = join(cwd, configPath);
+    } else {
+      // Just a filename - save in visual-regression directory
+      filePath = join(cwd, 'visual-regression', configPath);
+    }
+  } else {
+    // Default path
+    filePath = getDefaultConfigPath(cwd);
+  }
+  
+  // Ensure the directory exists
+  const dir = path.dirname(filePath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
