@@ -265,10 +265,6 @@ async function globalSetup(_config: FullConfig): Promise<void> {
   if (runtimeOptions.clean && runtimeOptions.updateSnapshots) {
     await cleanOrphanedSnapshots(indexData, runtimeOptions);
   }
-
-  if (!runtimeOptions.storybookMode) {
-    console.log('');
-  }
 }
 
 export default globalSetup;
