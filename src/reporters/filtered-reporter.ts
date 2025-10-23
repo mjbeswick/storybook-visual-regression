@@ -9,7 +9,12 @@ import {
 import chalk from 'chalk';
 
 // Force colors in Docker and Storybook environments
-if (process.env.DOCKER_CONTAINER || process.env.CONTAINER || process.env.STORYBOOK_MODE === 'true' || process.env.FORCE_COLOR) {
+if (
+  process.env.DOCKER_CONTAINER ||
+  process.env.CONTAINER ||
+  process.env.STORYBOOK_MODE === 'true' ||
+  process.env.FORCE_COLOR
+) {
   chalk.level = 3; // Force highest color level (16M colors)
 }
 import { existsSync, rmSync, statSync, readdirSync, unlinkSync } from 'fs';
@@ -428,14 +433,14 @@ class FilteredReporter implements Reporter {
     const testDuration = this.formatDuration(rawDuration);
 
     // Color the time units with the same color as the number but lighter
-    const durationText = ` ${testDuration.replace(
+    const durationText = ` (${testDuration.replace(
       /(\d+(?:\.\d+)?)([a-zA-Z]+)/g,
       (match, number, unit) => {
         const baseColor =
           rawDuration > 10000 ? chalk.red : rawDuration > 5000 ? chalk.yellow : chalk.green;
         return `${baseColor(number)}${baseColor.dim(unit)}`;
       },
-    )}`;
+    )})`;
 
     // Create progress label with percentage and optional time estimate
     const percentage = Math.round((this.completed / this.totalTests) * 100);
@@ -640,11 +645,11 @@ class FilteredReporter implements Reporter {
             console.log(chalk.gray(`   📸 ${failure.diffPath}`));
           }
           if (failure.error) {
-            console.log(chalk.yellow(`   ❌ ${failure.error}`));
+            // Filter out call log section from error messages
+            const cleanError = failure.error.replace(/\nCall log:[\s\S]*$/, '');
+            console.log(chalk.yellow(`   ❌ ${cleanError}`));
           }
         });
-
-        console.log(chalk.dim(`\n💡 Tip: Use --print-urls to see URLs inline with test results`));
       }
     }
   }

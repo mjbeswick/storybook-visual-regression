@@ -2,7 +2,18 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 
-async function waitForStorybookIndex(baseURL, timeout = 30000) {
+type StorybookEntry = {
+  id: string;
+  title: string;
+  name: string;
+  type: 'story' | 'docs';
+};
+
+type StorybookIndex = {
+  entries: Record<string, StorybookEntry>;
+};
+
+async function waitForStorybookIndex(baseURL: string, timeout = 30000): Promise<StorybookIndex> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
@@ -14,7 +25,7 @@ async function waitForStorybookIndex(baseURL, timeout = 30000) {
         const contentType = res.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
           const data = await res.json();
-          return data;
+          return data as StorybookIndex;
         }
       }
     } catch (error) {
@@ -27,10 +38,10 @@ async function waitForStorybookIndex(baseURL, timeout = 30000) {
   throw new Error('Storybook index.json not available after timeout');
 }
 
-async function getStories(baseURL) {
+async function getStories(baseURL: string): Promise<StorybookEntry[]> {
   const data = await waitForStorybookIndex(baseURL);
   const entries = data.entries || {};
-  return Object.values(entries).filter((e) => e && e.type === 'story');
+  return Object.values(entries).filter((e): e is StorybookEntry => e && e.type === 'story');
 }
 
 test.describe('Storybook Visual Regression Tests', () => {

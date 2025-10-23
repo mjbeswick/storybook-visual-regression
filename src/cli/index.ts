@@ -809,10 +809,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     console.log(`${chalk.dim('  •')} Working directory: ${chalk.cyan(originalCwd)}`);
   }
 
-  if (!options.storybook) {
-    console.log('');
-  }
-
   try {
     const playwrightArgs = ['playwright', 'test'];
 
@@ -902,7 +898,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
     console.log('');
     if (options.updateSnapshots) {
-      console.log(chalk.green('🎉 Visual regression tests updated successfully'));
+      console.log(chalk.green('🎉 Visual regression snapshots updated successfully'));
     } else {
       console.log(chalk.green('🎉 Visual regression tests completed successfully'));
     }
@@ -922,7 +918,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       }
     }
   } catch (unknownError: unknown) {
-    console.log('');
     console.log('');
     // Only show error message if it's not an aborted execution
     // Exit code 130 typically indicates SIGINT (Ctrl+C) - user interruption
@@ -988,7 +983,6 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       }
     }
 
-    console.log('');
     // Only exit with error code for critical failures, not warnings
     if (isNonCriticalError) {
       process.exit(0); // Success

@@ -1,5 +1,5 @@
 {
-  "name": "storybook-visual-regression",
+  "name": "@storybook-visual-regression/cli",
   "version": "1.0.2",
   "description": "A comprehensive visual regression testing tool for any Storybook project",
   "main": "dist/cli/index.js",
