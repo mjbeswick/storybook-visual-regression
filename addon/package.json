@@ -1,6 +1,6 @@
 {
   "name": "@storybook-visual-regression/addon",
-  "version": "1.2.4",
+  "version": "1.2.6",
   "description": "Fully functional Storybook addon for visual regression testing with built-in API server",
   "main": "dist/preset.js",
   "types": "dist/preset.d.ts",
@@ -18,21 +18,13 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@storybook/blocks": "^7.0.0 || ^8.0.0 || ^9.0.0",
     "@storybook/components": "^7.0.0 || ^8.0.0 || ^9.0.0",
     "@storybook/icons": "^1.0.0",
     "@storybook/manager-api": "^7.0.0 || ^8.0.0 || ^9.0.0",
-    "@storybook/preview-api": "^7.0.0 || ^8.0.0 || ^9.0.0",
-    "@storybook/theming": "^7.0.0 || ^8.0.0 || ^9.0.0",
-    "@storybook/types": "^7.0.0 || ^8.0.0 || ^9.0.0",
-    "storybook": "^7.0.0 || ^8.0.0 || ^9.0.0",
     "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0",
     "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
   },
   "peerDependenciesMeta": {
-    "@storybook/blocks": {
-      "optional": true
-    },
     "@storybook/components": {
       "optional": true
     },
@@ -40,18 +32,6 @@
       "optional": true
     },
     "@storybook/manager-api": {
-      "optional": true
-    },
-    "@storybook/preview-api": {
-      "optional": true
-    },
-    "@storybook/theming": {
-      "optional": true
-    },
-    "@storybook/types": {
-      "optional": true
-    },
-    "storybook": {
       "optional": true
     },
     "react": {
