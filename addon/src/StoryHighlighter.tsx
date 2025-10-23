@@ -53,7 +53,7 @@ export const StoryHighlighter: React.FC<StoryHighlighterProps> = ({ failedStorie
         'button[id], a[href], [role="menuitem"], [role="button"], [data-testid*="story"], [data-testid*="item"]',
       );
 
-      for (const element of allStoryElements) {
+      for (const element of Array.from(allStoryElements)) {
         const href = element.getAttribute('href') || '';
         const textContent = element.textContent || '';
         const id = element.getAttribute('id') || '';

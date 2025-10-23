@@ -316,6 +316,9 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
 
           // Add --storybook flag to ensure filtered reporter with time estimates is used
           args.push('--storybook');
+          
+          // Add the correct Storybook URL (default to port 6006 for demo)
+          args.push('--url', 'http://localhost:6006');
 
           // Generate unique process ID and track it
           const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

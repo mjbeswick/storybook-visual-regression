@@ -169,7 +169,7 @@ const initializeAddon = async () => {
             }
 
             // Upsert current failures and emit events
-            for (const result of bestById.values()) {
+            for (const result of Array.from(bestById.values())) {
               failedStories.set(result.storyId, {
                 storyId: result.storyId,
                 storyName: result.storyName,
