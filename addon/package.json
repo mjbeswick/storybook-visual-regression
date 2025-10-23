@@ -1,6 +1,6 @@
 {
   "name": "@storybook-visual-regression/addon",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Fully functional Storybook addon for visual regression testing with built-in API server",
   "main": "dist/preset.js",
   "types": "dist/preset.d.ts",
@@ -25,17 +25,11 @@
     "@storybook/preview-api": "^7.0.0 || ^8.0.0 || ^9.0.0",
     "@storybook/theming": "^7.0.0 || ^8.0.0 || ^9.0.0",
     "@storybook/types": "^7.0.0 || ^8.0.0 || ^9.0.0",
+    "storybook": "^7.0.0 || ^8.0.0 || ^9.0.0",
     "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0",
     "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
-    "@storybook/blocks": "^8.0.0 || ^9.0.0",
-    "@storybook/components": "^8.0.0 || ^9.0.0",
-    "@storybook/icons": "^1.2.0",
-    "@storybook/manager-api": "^8.0.0 || ^9.0.0",
-    "@storybook/preview-api": "^8.0.0 || ^9.0.0",
-    "@storybook/theming": "^8.0.0 || ^9.0.0",
-    "@storybook/types": "^8.0.0 || ^9.0.0",
     "@types/node": "^20.0.0",
     "@types/react": "^18.0.0",
     "nodemon": "^3.1.10",
