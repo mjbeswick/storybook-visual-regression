@@ -1,5 +1,8 @@
 import { startApiServer } from './server';
 import { loadAddonConfig } from './config';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 let serverStarted = false;
 
