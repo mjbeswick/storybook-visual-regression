@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "nodemon",
-    "postbuild": "cp src/*.module.css dist/"
+    "postbuild": "cp src/*.module.css dist/",
+    "clean": "rm -rf dist"
   },
   "peerDependencies": {
     "@storybook/blocks": "^7.0.0 || ^8.0.0 || ^9.0.0",
