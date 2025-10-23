@@ -1,6 +1,6 @@
 {
   "name": "@storybook-visual-regression/addon",
-  "version": "1.2.10",
+  "version": "1.2.11",
   "description": "Fully functional Storybook addon for visual regression testing with built-in API server",
   "main": "dist/preset.js",
   "types": "dist/preset.d.ts",
@@ -16,30 +16,6 @@
     "dev": "nodemon",
     "postbuild": "cp src/*.module.css dist/",
     "clean": "rm -rf dist"
-  },
-  "peerDependencies": {
-    "@storybook/components": "^7.0.0 || ^8.0.0 || ^9.0.0",
-    "@storybook/icons": "^1.0.0",
-    "@storybook/manager-api": "^7.0.0 || ^8.0.0 || ^9.0.0",
-    "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0",
-    "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@storybook/components": {
-      "optional": true
-    },
-    "@storybook/icons": {
-      "optional": true
-    },
-    "@storybook/manager-api": {
-      "optional": true
-    },
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
