@@ -1,5 +1,5 @@
-import { startApiServer } from './server';
-import { loadAddonConfig } from './config';
+import { startApiServer } from './server.js';
+import { loadAddonConfig } from './config.js';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
