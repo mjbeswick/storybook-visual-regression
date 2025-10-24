@@ -52,8 +52,11 @@ export type VisualRegressionConfig = {
   retries: number;
   timeout: number;
   serverTimeout: number;
-  // Fail-fast: stop after this many failures (<=0 disables)
-  maxFailures: number;
+  // Fail-fast: stop after this many failures
+  // - undefined: Don't quit on any failures (run all tests)
+  // - 0: Stop on first failure
+  // - number: Stop after N failures
+  maxFailures?: number;
 
   // Story filtering
   includeStories?: string[];

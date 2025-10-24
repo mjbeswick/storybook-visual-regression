@@ -79,7 +79,26 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
 
     const handleCancelTest = () => {
-      setState((prev) => ({ ...prev, isRunning: false }));
+      console.log('[VR Addon] Cancel test event received');
+      // Call the server to stop all running tests
+      fetch('http://localhost:6007/stop', { method: 'POST' })
+        .then(async (response) => {
+          if (response.ok) {
+            const result = await response.json();
+            console.log('[VR Addon] Stop response:', result);
+            // Set running to false to update UI
+            setState((prev) => ({ ...prev, isRunning: false }));
+          } else {
+            console.log('[VR Addon] Stop request failed:', response.status);
+            // Still set running to false even if request fails
+            setState((prev) => ({ ...prev, isRunning: false }));
+          }
+        })
+        .catch((error) => {
+          console.log('[VR Addon] Stop request error:', error);
+          // Still set running to false even if request fails
+          setState((prev) => ({ ...prev, isRunning: false }));
+        });
     };
 
     channel.on(EVENTS.TEST_STARTED, handleTestStarted);
@@ -100,15 +119,23 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, [api]);
 
   const cancelTest = () => {
+    console.log('[VR Addon] Cancel test requested');
     // Call the server to stop all running tests
     fetch('http://localhost:6007/stop', { method: 'POST' })
       .then(async (response) => {
         if (response.ok) {
+          const result = await response.json();
+          console.log('[VR Addon] Stop response:', result);
           // Immediately set running to false to update UI
+          setState((prev) => ({ ...prev, isRunning: false }));
+        } else {
+          console.log('[VR Addon] Stop request failed:', response.status);
+          // Still set running to false even if request fails
           setState((prev) => ({ ...prev, isRunning: false }));
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.log('[VR Addon] Stop request error:', error);
         // Still set running to false even if request fails
         setState((prev) => ({ ...prev, isRunning: false }));
       });

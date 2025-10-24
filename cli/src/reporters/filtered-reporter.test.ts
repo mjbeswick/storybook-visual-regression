@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+// Enable colors before importing FilteredReporter
+process.env.FORCE_COLOR = '1';
 import FilteredReporter from './filtered-reporter.js';
+import chalk from 'chalk';
 import type {
   FullConfig,
   FullResult,
@@ -73,7 +76,9 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 (100ms)');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[32m\u001b[1m✔\u001b[22m\u001b[39m Test 1 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
     });
 
     it('should log failed tests with X mark', () => {
@@ -89,7 +94,9 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 1 (100ms)');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[31m\u001b[1m✘\u001b[22m\u001b[39m Test 1 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
     });
 
     it('should track test counts correctly', () => {
@@ -116,8 +123,12 @@ describe('FilteredReporter', () => {
       reporter.onTestEnd(test1, passedResult);
       reporter.onTestEnd(test2, failedResult);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 (100ms)');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 2 (100ms)');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[32m\u001b[1m✔\u001b[22m\u001b[39m Test 1 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[31m\u001b[1m✘\u001b[22m\u001b[39m Test 2 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
     });
 
     it('should log skipped tests with dash', () => {
@@ -133,7 +144,9 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  - Test 1 (100ms)');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[33m\u001b[1m-\u001b[22m\u001b[39m Test 1 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
     });
 
     it('should log timed out tests with clock', () => {
@@ -149,7 +162,9 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ⏰ Test 1 (100ms)');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[31m\u001b[1m⏰\u001b[22m\u001b[39m Test 1 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
     });
 
     it('should log interrupted tests with stop sign', () => {
@@ -165,12 +180,27 @@ describe('FilteredReporter', () => {
 
       reporter.onTestEnd(test, result);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ⏹ Test 1 (100ms)');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[31m\u001b[1m⏹\u001b[22m\u001b[39m Test 1 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
     });
   });
 
   describe('onEnd', () => {
     it('should show success message when all tests passed', () => {
+      // Initialize the reporter with proper test count
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () => [{ title: 'Test 1' } as TestCase, { title: 'Test 2' } as TestCase],
+      } as Suite;
+
+      reporter.onBegin(config, rootSuite);
+
       // Simulate some passed tests
       const test1: TestCase = { title: 'Test 1' } as TestCase;
       const test2: TestCase = { title: 'Test 2' } as TestCase;
@@ -188,11 +218,24 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/^\n2 (passed|updated), 0 failed \(.+\)$/),
+        expect.stringMatching(/^\n2 (passed|updated), 0 failed .*\(.+\)/),
       );
     });
 
     it('should show failure message when some tests failed', () => {
+      // Initialize the reporter with proper test count
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () => [{ title: 'Test 1' } as TestCase, { title: 'Test 2' } as TestCase],
+      } as Suite;
+
+      reporter.onBegin(config, rootSuite);
+
       // Simulate mixed results
       const test1: TestCase = { title: 'Test 1' } as TestCase;
       const test2: TestCase = { title: 'Test 2' } as TestCase;
@@ -211,12 +254,31 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/^\n1 passed, 1 failed \(.+\)$/),
+        expect.stringMatching(/^\n1 passed, 1 failed .*\(.+\)/),
       );
-      expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(chalk.red.bold('✘ Some tests failed'));
     });
 
     it('should show all test statuses in summary', () => {
+      // Initialize the reporter with proper test count
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () => [
+          { title: 'Test 1' } as TestCase,
+          { title: 'Test 2' } as TestCase,
+          { title: 'Test 3' } as TestCase,
+          { title: 'Test 4' } as TestCase,
+          { title: 'Test 5' } as TestCase,
+        ],
+      } as Suite;
+
+      reporter.onBegin(config, rootSuite);
+
       // Simulate all types of test results
       const test1: TestCase = { title: 'Test 1' } as TestCase;
       const test2: TestCase = { title: 'Test 2' } as TestCase;
@@ -240,13 +302,26 @@ describe('FilteredReporter', () => {
 
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringMatching(
-          /^\n1 passed, 1 failed, 1 skipped, 1 timed out, 1 interrupted \(.+\)$/,
+          /^\n1 passed, 1 failed, 1 skipped, 1 timed out, 1 interrupted .*\(.+\)/,
         ),
       );
-      expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(chalk.red.bold('✘ Some tests failed'));
     });
 
     it('should handle no tests run', () => {
+      // Initialize the reporter with zero tests
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () => [],
+      } as Suite;
+
+      reporter.onBegin(config, rootSuite);
+
       const result: FullResult = {
         status: 'passed',
         startTime: new Date(),
@@ -256,7 +331,7 @@ describe('FilteredReporter', () => {
       reporter.onEnd(result);
 
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/^\n0 passed, 0 failed \(.+\)$/),
+        expect.stringMatching(/^\n0 passed, 0 failed .*\(.+\)/),
       );
     });
   });
@@ -429,6 +504,100 @@ describe('FilteredReporter', () => {
     });
   });
 
+  describe('Retry Handling', () => {
+    it('should not count retry attempts as separate test executions', () => {
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () => [{ title: 'Test 1' } as TestCase],
+      } as Suite;
+
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
+
+      // Simulate a test that fails and retries 3 times, then passes
+      const failedResult1: TestResult = {
+        status: 'failed',
+        duration: 100,
+        retry: undefined, // First attempt
+      } as TestResult;
+
+      const failedResult2: TestResult = {
+        status: 'failed',
+        duration: 100,
+        retry: 1, // First retry
+      } as TestResult;
+
+      const failedResult3: TestResult = {
+        status: 'failed',
+        duration: 100,
+        retry: 2, // Second retry
+      } as TestResult;
+
+      const passedResult: TestResult = {
+        status: 'passed',
+        duration: 100,
+        retry: 3, // Third retry (success)
+      } as TestResult;
+
+      const finalResult: FullResult = {
+        status: 'passed',
+        startTime: new Date(),
+        duration: 400,
+      } as FullResult;
+
+      reporter.onBegin(config, rootSuite);
+      reporter.onTestEnd(test, failedResult1);
+      reporter.onTestEnd(test, failedResult2);
+      reporter.onTestEnd(test, failedResult3);
+      reporter.onTestEnd(test, passedResult);
+      reporter.onEnd(finalResult);
+
+      // Should only count 1 test execution, not 4
+      expect(consoleLogSpy).toHaveBeenCalledWith('Running 1 tests using 1 workers...\n');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^\n1 passed, 0 failed .*\(.+\)/),
+      );
+    });
+
+    it('should show retry attempts in test output but not count them', () => {
+      const config: FullConfig = {
+        projects: [],
+        workers: 1,
+      } as unknown as FullConfig;
+
+      const rootSuite: Suite = {
+        title: 'Root',
+        allTests: () => [{ title: 'Test 1' } as TestCase],
+      } as Suite;
+
+      const test: TestCase = {
+        title: 'Test 1',
+        parent: { title: 'Suite' } as Suite,
+      } as TestCase;
+
+      const failedResult: TestResult = {
+        status: 'failed',
+        duration: 100,
+        retry: 1, // First retry
+      } as TestResult;
+
+      reporter.onBegin(config, rootSuite);
+      reporter.onTestEnd(test, failedResult);
+
+      // Should show retry attempt in output
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[31m\u001b[1m✘\u001b[22m\u001b[39m Test 1 (attempt 2) (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
+    });
+  });
+
   describe('Integration', () => {
     it('should work end-to-end with multiple tests', () => {
       const config: FullConfig = {
@@ -473,12 +642,16 @@ describe('FilteredReporter', () => {
       reporter.onEnd(finalResult);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('Running 2 tests using 2 workers...\n');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✔ Test 1 (100ms)');
-      expect(consoleLogSpy).toHaveBeenCalledWith('  ✘ Test 2 (100ms)');
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/^\n1 passed, 1 failed \(.+\)$/),
+        '  \u001b[32m\u001b[1m✔\u001b[22m\u001b[39m Test 1 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
       );
-      expect(consoleLogSpy).toHaveBeenCalledWith('✘ Some tests failed');
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        '  \u001b[31m\u001b[1m✘\u001b[22m\u001b[39m Test 2 (\u001b[32m100\u001b[39m\u001b[32m\u001b[2mms\u001b[22m\u001b[39m)',
+      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^\n1 passed, 1 failed .*\(.+\)/),
+      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(chalk.red.bold('✘ Some tests failed'));
     });
 
     it('should handle large number of tests', () => {

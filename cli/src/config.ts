@@ -49,7 +49,7 @@ export function createPlaywrightConfig(
     fullyParallel: true,
     retries: userConfig.retries,
     workers: userConfig.workers,
-    maxFailures: userConfig.maxFailures,
+    ...(userConfig.maxFailures !== undefined && { maxFailures: userConfig.maxFailures }),
     reporter: 'list',
     updateSnapshots: updateMode ? 'all' : 'none',
     timeout: testTimeout, // Set per-test timeout to prevent "Test timeout exceeded" errors

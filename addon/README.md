@@ -45,6 +45,15 @@ A fully functional Storybook addon that integrates visual regression testing dir
 - **Baseline validation** - Review diffs before accepting new baselines
 - **Version control integration** - Baselines are stored as regular files for easy version control
 
+### 🚨 **Error Handling & Debugging**
+
+- **Comprehensive error detection** - Catches story loading failures, network errors, and visual mismatches
+- **Error screenshots** - Automatically captures error states when stories fail to load
+- **Visual error indicators** - Clear ⚠️ indicators for stories with loading failures
+- **Error context display** - Shows error messages and debugging information
+- **Graceful failure handling** - Continues testing other stories when individual stories fail
+- **Debug logging** - Detailed console output for troubleshooting test failures
+
 ### 🎨 **Beautiful UI Integration**
 
 - **Seamless Storybook integration** - Native Storybook UI components and styling
@@ -748,9 +757,9 @@ The addon can be extended with:
   ```bash
   # In your config file
   {
-    "navTimeout": 30000,
     "waitTimeout": 60000,
-    "webserverTimeout": 180000
+    "webserverTimeout": 180000,
+    "mutationTimeout": 2000
   }
   ```
 - **Memory issues**: Reduce worker count for large test suites

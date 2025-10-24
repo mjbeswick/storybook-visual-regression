@@ -15,6 +15,8 @@ export type TestResult = {
   diffPath?: string;
   actualPath?: string;
   expectedPath?: string;
+  errorPath?: string;
+  errorType?: 'screenshot_mismatch' | 'loading_failure' | 'network_error' | 'other_error';
 };
 
 export type FailedResult = {
@@ -23,4 +25,6 @@ export type FailedResult = {
   diffImagePath?: string;
   actualImagePath?: string;
   expectedImagePath?: string;
+  errorImagePath?: string;
+  errorType?: 'screenshot_mismatch' | 'loading_failure' | 'network_error' | 'other_error';
 };

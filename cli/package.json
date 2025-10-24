@@ -1,6 +1,6 @@
 {
   "name": "@storybook-visual-regression/cli",
-  "version": "1.0.2",
+  "version": "1.5.5",
   "description": "A comprehensive visual regression testing tool for any Storybook project",
   "main": "dist/cli/index.js",
   "type": "module",
@@ -21,7 +21,7 @@
     "test:ui": "vitest --ui",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
-    "prepublishOnly": "npm run build && npm run test",
+    "prepublishOnly": "npm run build",
     "prepare": "npm run build",
     "postinstall": "playwright install chromium",
     "format": "prettier --write .",

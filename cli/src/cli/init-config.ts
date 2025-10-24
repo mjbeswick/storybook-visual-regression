@@ -27,14 +27,13 @@ export default {
   locale: 'en-GB',
 
   // Performance tuning - adjust these for faster/more stable tests
-  navTimeout: 10000,        // Navigation timeout (ms)
   waitTimeout: 30000,       // Wait-for-element timeout (ms)
   overlayTimeout: 5000,     // Storybook overlay timeout (ms)
   webserverTimeout: 120000, // Webserver startup timeout (ms)
-  stabilizeInterval: 150,   // Interval between stability checks (ms)
-  stabilizeAttempts: 20,    // Number of stability checks
   finalSettle: 500,         // Final settle delay after readiness (ms)
-  resourceSettle: 100,      // Time to wait after resource loads before considering all resources settled (ms)
+  snapshotRetries: 1,       // Number of times to retry taking screenshot (count)
+  snapshotDelay: 0,         // Delay before taking screenshot (ms)
+  mutationTimeout: 100,         // Time to wait after last DOM mutation before considering page stable (ms)
   
   // Wait strategy: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
   // 'domcontentloaded' is faster, 'load' is most thorough (default)
@@ -72,14 +71,13 @@ const jsonConfigTemplate = `{
   "browser": "chromium",
   "timezone": "Europe/London",
   "locale": "en-GB",
-  "navTimeout": 10000,
   "waitTimeout": 30000,
   "overlayTimeout": 5000,
   "webserverTimeout": 120000,
-  "stabilizeInterval": 0,
-  "stabilizeAttempts": 0,
   "finalSettle": 500,
-  "resourceSettle": 100,
+  "snapshotRetries": 1,
+  "snapshotDelay": 0,
+  "mutationTimeout": 100,
   "waitUntil": "load",
   "quiet": false,
   "debug": false,

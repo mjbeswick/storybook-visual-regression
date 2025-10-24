@@ -7,10 +7,16 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import type { VisualRegressionConfig } from '../types/index.js';
 import { createDefaultConfig } from '../config/defaultConfig.js';
 import { StorybookConfigDetector } from '../core/StorybookConfigDetector.js';
+import { StorybookDiscovery } from '../core/StorybookDiscovery.js';
 import { execa } from 'execa';
 import { fileURLToPath } from 'url';
 import path, { dirname, join } from 'path';
-import { loadUserConfig, saveUserConfig, getDefaultConfigPath, discoverConfigFile } from './config-loader.js';
+import {
+  loadUserConfig,
+  saveUserConfig,
+  getDefaultConfigPath,
+  discoverConfigFile,
+} from './config-loader.js';
 import type { RuntimeOptions } from '../runtime/runtime-options.js';
 import { readFileSync } from 'fs';
 
@@ -50,7 +56,11 @@ program
     '120000',
   )
   .option('--retries <number>', 'Number of retries on failure', '0')
-  .option('--max-failures <number>', 'Stop after N failures (<=0 disables)', '10')
+  .option(
+    '--max-failures <number>',
+    'Stop after N failures. 0=stop on first failure, undefined=run all tests',
+    '10',
+  )
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
@@ -66,47 +76,27 @@ program
   .option('--full-page', 'Capture full-page screenshots (boolean)')
   // Timing and stability options (ms / counts)
   .option(
-    '--nav-timeout <ms>',
-    'Maximum time to wait for page navigation (page.goto). Increase for slow-loading stories or networks.',
-    '10000',
-  )
-  .option(
-    '--wait-timeout <ms>',
-    'Maximum time for wait operations (selectors, resource loading). Increase for stories with many resources.',
-    '10000',
-  )
-  .option(
     '--overlay-timeout <ms>',
     "Maximum time to wait for Storybook's 'preparing' overlays to hide before force-hiding them.",
     '5000',
   )
   .option(
-    '--stabilize-interval <ms>',
-    'Interval between visual stability checks to ensure content has stopped changing.',
-    '200',
+    '--test-timeout <ms>',
+    'Playwright test timeout: maximum time allowed for each individual test to complete. Overrides automatic calculation based on other timeouts.',
   )
   .option(
-    '--stabilize-attempts <n>',
-    'Number of stability checks to perform. Increase for animated/dynamic stories.',
-    '20',
+    '--snapshot-retries <count>',
+    'Number of times to retry taking screenshot if it fails. Default is 1 (no retries).',
   )
   .option(
-    '--final-settle <ms>',
-    'Final delay after all readiness checks pass before taking screenshot. Increase for late animations.',
+    '--snapshot-delay <ms>',
+    'Delay before taking screenshot: wait this long after all stabilization checks before capturing the snapshot. Useful for stories that need extra time to fully render.',
+  )
+  .option(
+    '--mutation-timeout <ms>',
+    'DOM stabilization timeout: wait this long after the last DOM mutation before taking screenshot. Uses MutationObserver to reset timeout on each mutation - tests complete as soon as DOM stabilizes (no mutations for this duration).',
     '100',
   )
-  .option(
-    '--resource-settle <ms>',
-    'Time after a resource finishes loading before considering all resources settled. Increase for slow networks.',
-    '100',
-  )
-  .option(
-    '--wait-until <state>',
-    "Navigation strategy: 'domcontentloaded' (fastest), 'networkidle' (stable), 'load' (default, wait for all resources), 'commit' (earliest).",
-    'load',
-  )
-  .option('--include <patterns>', 'Include stories matching patterns (comma-separated)')
-  .option('--exclude <patterns>', 'Exclude stories matching patterns (comma-separated)')
   .option('--grep <pattern>', 'Filter stories by regex pattern')
   .option(
     '--install-browsers [browser]',
@@ -166,13 +156,12 @@ type CliOptions = {
   maxDiffPixels?: string;
   fullPage?: boolean;
   // Timeouts and stability tuning
-  navTimeout?: string; // ms
   waitTimeout?: string; // ms
   overlayTimeout?: string; // ms
-  stabilizeInterval?: string; // ms
-  stabilizeAttempts?: string; // count
-  finalSettle?: string; // ms
-  resourceSettle?: string; // ms
+  testTimeout?: string; // ms
+  snapshotRetries?: string; // count
+  snapshotDelay?: string; // ms
+  mutationTimeout?: string; // ms
   waitUntil?: string; // 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
   // Not found check configuration
   notFoundCheck?: boolean;
@@ -193,13 +182,13 @@ async function createConfigFromOptions(
 ): Promise<VisualRegressionConfig> {
   // Load user config file (if exists)
   const userConfig = await loadUserConfig(cwd, options.config);
-  
+
   // Track which config path was used for saving
   const configPathUsed = options.config || (await discoverConfigFile(cwd));
-  
+
   // If explicit config path provided, use it for saving even if it doesn't exist yet
   const saveConfigPath = options.config || configPathUsed;
-  
+
   // Persist overrides back to config file when flags are explicitly provided
   const argvJoined = process.argv.slice(2).join(' ');
   const hasArg = (...flags: string[]) =>
@@ -232,14 +221,13 @@ async function createConfigFromOptions(
   setIf(hasArg('--workers', '-w'), 'workers', num(options.workers));
   setIf(hasArg('--retries'), 'retries', num(options.retries));
   setIf(hasArg('--max-failures'), 'maxFailures', num(options.maxFailures));
-  setIf(hasArg('--nav-timeout'), 'navTimeout', num(options.navTimeout));
   setIf(hasArg('--wait-timeout'), 'waitTimeout', num(options.waitTimeout));
   setIf(hasArg('--overlay-timeout'), 'overlayTimeout', num(options.overlayTimeout));
+  setIf(hasArg('--test-timeout'), 'testTimeout', num(options.testTimeout));
+  setIf(hasArg('--snapshot-retries'), 'snapshotRetries', num(options.snapshotRetries));
+  setIf(hasArg('--snapshot-delay'), 'snapshotDelay', num(options.snapshotDelay));
   setIf(hasArg('--webserver-timeout'), 'webserverTimeout', num(options.webserverTimeout));
-  setIf(hasArg('--stabilize-interval'), 'stabilizeInterval', num(options.stabilizeInterval));
-  setIf(hasArg('--stabilize-attempts'), 'stabilizeAttempts', num(options.stabilizeAttempts));
-  setIf(hasArg('--final-settle'), 'finalSettle', num(options.finalSettle));
-  setIf(hasArg('--resource-settle'), 'resourceSettle', num(options.resourceSettle));
+  setIf(hasArg('--mutation-timeout'), 'mutationTimeout', num(options.mutationTimeout));
   setIf(hasArg('--threshold'), 'threshold', floatNum(options.threshold));
   setIf(hasArg('--max-diff-pixels'), 'maxDiffPixels', num(options.maxDiffPixels));
 
@@ -273,49 +261,50 @@ async function createConfigFromOptions(
     } else if (!configPathUsed && !options.config) {
       // No config file exists and no explicit overrides were provided: seed a config.json
       const seed: Record<string, unknown> = {};
-    // Populate with discovered/detected reasonable defaults
-    seed.url = options.url ?? 'http://localhost';
-    seed.command = options.command;
-    seed.workers = options.workers ? parseInt(options.workers, 10) : undefined;
-    seed.retries = options.retries ? parseInt(options.retries, 10) : undefined;
-    seed.maxFailures = options.maxFailures ? parseInt(options.maxFailures, 10) : undefined;
-    seed.output = options.output ?? 'visual-regression';
-    seed.browser = options.browser;
-    seed.timezone = options.timezone;
-    seed.locale = options.locale;
-    seed.navTimeout = options.navTimeout ? parseInt(options.navTimeout, 10) : undefined;
-    seed.waitTimeout = options.waitTimeout ? parseInt(options.waitTimeout, 10) : undefined;
-    seed.overlayTimeout = options.overlayTimeout ? parseInt(options.overlayTimeout, 10) : undefined;
-    seed.webserverTimeout = options.webserverTimeout
-      ? parseInt(options.webserverTimeout, 10)
-      : undefined;
-    seed.stabilizeInterval = options.stabilizeInterval
-      ? parseInt(options.stabilizeInterval, 10)
-      : undefined;
-    seed.stabilizeAttempts = options.stabilizeAttempts
-      ? parseInt(options.stabilizeAttempts, 10)
-      : undefined;
-    seed.finalSettle = options.finalSettle ? parseInt(options.finalSettle, 10) : undefined;
-    seed.resourceSettle = options.resourceSettle ? parseInt(options.resourceSettle, 10) : undefined;
-    seed.waitUntil = options.waitUntil;
-    seed.threshold = options.threshold ? parseFloat(options.threshold) : undefined;
-    seed.maxDiffPixels = options.maxDiffPixels ? parseInt(options.maxDiffPixels, 10) : undefined;
-    seed.fullPage = typeof options.fullPage === 'boolean' ? options.fullPage : undefined;
-    seed.include = options.include
-      ? options.include
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : undefined;
-    seed.exclude = options.exclude
-      ? options.exclude
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : undefined;
-    // Remove undefineds before saving
-    const cleaned = Object.fromEntries(Object.entries(seed).filter(([, v]) => v !== undefined));
-    saveUserConfig(cwd, cleaned as VisualRegressionConfig, saveConfigPath || undefined);
+      // Populate with discovered/detected reasonable defaults
+      seed.url = options.url ?? 'http://localhost';
+      seed.command = options.command;
+      seed.workers = options.workers ? parseInt(options.workers, 10) : undefined;
+      seed.retries = options.retries ? parseInt(options.retries, 10) : undefined;
+      seed.maxFailures = options.maxFailures ? parseInt(options.maxFailures, 10) : undefined;
+      seed.output = options.output ?? 'visual-regression';
+      seed.browser = options.browser;
+      seed.timezone = options.timezone;
+      seed.locale = options.locale;
+      seed.waitTimeout = options.waitTimeout ? parseInt(options.waitTimeout, 10) : undefined;
+      seed.overlayTimeout = options.overlayTimeout
+        ? parseInt(options.overlayTimeout, 10)
+        : undefined;
+      seed.testTimeout = options.testTimeout ? parseInt(options.testTimeout, 10) : undefined;
+      seed.snapshotRetries = options.snapshotRetries
+        ? parseInt(options.snapshotRetries, 10)
+        : undefined;
+      seed.snapshotDelay = options.snapshotDelay ? parseInt(options.snapshotDelay, 10) : undefined;
+      seed.webserverTimeout = options.webserverTimeout
+        ? parseInt(options.webserverTimeout, 10)
+        : undefined;
+      seed.mutationTimeout = options.mutationTimeout
+        ? parseInt(options.mutationTimeout, 10)
+        : undefined;
+      seed.waitUntil = options.waitUntil;
+      seed.threshold = options.threshold ? parseFloat(options.threshold) : undefined;
+      seed.maxDiffPixels = options.maxDiffPixels ? parseInt(options.maxDiffPixels, 10) : undefined;
+      seed.fullPage = typeof options.fullPage === 'boolean' ? options.fullPage : undefined;
+      seed.include = options.include
+        ? options.include
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+      seed.exclude = options.exclude
+        ? options.exclude
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+      // Remove undefineds before saving
+      const cleaned = Object.fromEntries(Object.entries(seed).filter(([, v]) => v !== undefined));
+      saveUserConfig(cwd, cleaned as VisualRegressionConfig, saveConfigPath || undefined);
     }
   }
 
@@ -378,29 +367,30 @@ async function createConfigFromOptions(
   // Priority: CLI flags override user config file, which overrides CLI defaults, which override detected config
   const workersOpt = hasArg('--workers', '-w')
     ? parseNumberOption(options.workers)
-    : userConfig.workers ?? parseNumberOption(options.workers);
-  const retriesOpt = hasArg('--retries') 
-    ? parseNumberOption(options.retries) 
-    : userConfig.retries ?? parseNumberOption(options.retries);
+    : (userConfig.workers ?? parseNumberOption(options.workers));
+  const retriesOpt = hasArg('--retries')
+    ? parseNumberOption(options.retries)
+    : (userConfig.retries ?? parseNumberOption(options.retries));
   const serverTimeoutOpt = hasArg('--webserver-timeout')
     ? parseNumberOption(options.webserverTimeout)
-    : userConfig.webserverTimeout ?? parseNumberOption(options.webserverTimeout);
+    : (userConfig.webserverTimeout ?? parseNumberOption(options.webserverTimeout));
   const maxFailuresOpt = hasArg('--max-failures')
     ? parseNumberOption(options.maxFailures)
-    : userConfig.maxFailures ?? parseNumberOption(options.maxFailures);
+    : (userConfig.maxFailures ?? parseNumberOption(options.maxFailures));
 
   // Handle browser selection
   const browserOpt = options.browser;
   const allowedBrowsers = new Set(['chromium', 'firefox', 'webkit']);
-  const browser = browserOpt && allowedBrowsers.has(browserOpt)
-    ? (browserOpt as 'chromium' | 'firefox' | 'webkit')
-    : userConfig.browser && allowedBrowsers.has(userConfig.browser)
-    ? (userConfig.browser as 'chromium' | 'firefox' | 'webkit')
-    : detectedConfig.browser;
+  const browser =
+    browserOpt && allowedBrowsers.has(browserOpt)
+      ? (browserOpt as 'chromium' | 'firefox' | 'webkit')
+      : userConfig.browser && allowedBrowsers.has(userConfig.browser)
+        ? (userConfig.browser as 'chromium' | 'firefox' | 'webkit')
+        : detectedConfig.browser;
 
-  const outputOpt = hasArg('--output', '-o') 
-    ? options.output 
-    : userConfig.output ?? options.output;
+  const outputOpt = hasArg('--output', '-o')
+    ? options.output
+    : (userConfig.output ?? options.output);
   const outputRoot = outputOpt
     ? path.isAbsolute(outputOpt)
       ? outputOpt
@@ -416,38 +406,46 @@ async function createConfigFromOptions(
   }
 
   // Parse threshold and maxDiffPixels options with proper precedence
-  const thresholdOpt = hasArg('--threshold') 
-    ? (options.threshold ? parseFloat(options.threshold) : undefined)
-    : userConfig.threshold ?? (options.threshold ? parseFloat(options.threshold) : undefined);
+  const thresholdOpt = hasArg('--threshold')
+    ? options.threshold
+      ? parseFloat(options.threshold)
+      : undefined
+    : (userConfig.threshold ?? (options.threshold ? parseFloat(options.threshold) : undefined));
   const maxDiffPixelsOpt = hasArg('--max-diff-pixels')
     ? parseNumberOption(options.maxDiffPixels)
-    : userConfig.maxDiffPixels ?? parseNumberOption(options.maxDiffPixels);
+    : (userConfig.maxDiffPixels ?? parseNumberOption(options.maxDiffPixels));
   const fullPageOpt = hasArg('--full-page')
     ? options.fullPage
-    : userConfig.fullPage ?? options.fullPage;
+    : (userConfig.fullPage ?? options.fullPage);
+
+  // Viewport configuration
+  const viewportSizesOpt = userConfig.viewportSizes ?? detectedConfig.viewportSizes;
+  const defaultViewportOpt = userConfig.defaultViewport ?? detectedConfig.defaultViewport;
 
   return {
     ...detectedConfig,
     storybookUrl,
-    storybookCommand: hasArg('--command', '-c') 
-      ? options.command 
-      : userConfig.command ?? options.command ?? detectedConfig.storybookCommand,
+    storybookCommand: hasArg('--command', '-c')
+      ? options.command
+      : (userConfig.command ?? options.command ?? detectedConfig.storybookCommand),
     workers: workersOpt ?? detectedConfig.workers,
     retries: retriesOpt ?? detectedConfig.retries,
     timeout: detectedConfig.timeout,
     serverTimeout: serverTimeoutOpt ?? detectedConfig.serverTimeout,
     maxFailures: maxFailuresOpt ?? detectedConfig.maxFailures,
     headless: detectedConfig.headless,
-    timezone: (hasArg('--timezone') 
-      ? options.timezone 
-      : userConfig.timezone ?? options.timezone) ?? detectedConfig.timezone,
-    locale: (hasArg('--locale') 
-      ? options.locale 
-      : userConfig.locale ?? options.locale) ?? detectedConfig.locale,
+    timezone:
+      (hasArg('--timezone') ? options.timezone : (userConfig.timezone ?? options.timezone)) ??
+      detectedConfig.timezone,
+    locale:
+      (hasArg('--locale') ? options.locale : (userConfig.locale ?? options.locale)) ??
+      detectedConfig.locale,
     browser,
     threshold: thresholdOpt ?? detectedConfig.threshold,
     maxDiffPixels: maxDiffPixelsOpt ?? detectedConfig.maxDiffPixels,
     fullPage: fullPageOpt ?? detectedConfig.fullPage,
+    viewportSizes: viewportSizesOpt,
+    defaultViewport: defaultViewportOpt,
     snapshotPath: snapshotsDir,
     resultsPath: resultsDir,
   };
@@ -579,19 +577,14 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     options.exclude ?? (userConfig.exclude ? userConfig.exclude.join(',') : undefined),
   );
   const grepPattern = (options.grep ?? userConfig.grep)?.trim() || undefined;
-  const navTimeout = parseNumber(options.navTimeout, userConfig.navTimeout ?? 10_000);
   const waitTimeout = parseNumber(options.waitTimeout, userConfig.waitTimeout ?? 30_000);
   const overlayTimeout = parseNumber(options.overlayTimeout, userConfig.overlayTimeout ?? 5_000);
-  const stabilizeInterval = parseNumber(
-    options.stabilizeInterval,
-    userConfig.stabilizeInterval ?? 0,
-  );
-  const stabilizeAttempts = parseNumber(
-    options.stabilizeAttempts,
-    userConfig.stabilizeAttempts ?? 0,
-  );
-  const finalSettle = parseNumber(options.finalSettle, userConfig.finalSettle ?? 500);
-  const resourceSettle = parseNumber(options.resourceSettle, userConfig.resourceSettle ?? 100);
+  const testTimeout = options.testTimeout
+    ? parseInt(options.testTimeout, 10)
+    : userConfig.testTimeout;
+  const snapshotRetries = parseNumber(options.snapshotRetries, userConfig.snapshotRetries ?? 1);
+  const snapshotDelay = parseNumber(options.snapshotDelay, userConfig.snapshotDelay ?? 0);
+  const mutationTimeout = parseNumber(options.mutationTimeout, userConfig.mutationTimeout ?? 100);
   const waitUntilCandidates = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
   const waitUntilInput = (options.waitUntil || userConfig.waitUntil || '').toLowerCase();
   const waitUntilValue = waitUntilCandidates.has(waitUntilInput)
@@ -602,6 +595,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     userConfig.notFoundRetryDelay ?? 200,
   );
   const debugEnabled = Boolean(options.debug ?? userConfig.debug);
+
   const updateSnapshots = Boolean(options.updateSnapshots);
   const hideTimeEstimates = Boolean(options.hideTimeEstimates ?? userConfig.hideTimeEstimates);
   const hideSpinners = Boolean(options.hideSpinners ?? userConfig.hideSpinners);
@@ -765,35 +759,61 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   // Calculate test timeout: sum of all possible waits + buffer
   // This prevents "Test timeout exceeded while setting up 'page'" errors
   const calculatedTestTimeout =
-    navTimeout * 2 + // Initial navigation + possible retry (e.g., 'load' -> 'networkidle')
+    10000 + // Initial navigation timeout (Playwright default)
     10000 + // Explicit font loading wait
     waitTimeout + // Wait for #storybook-root
     overlayTimeout + // Wait for overlays
-    stabilizeInterval * stabilizeAttempts + // Stabilization attempts
-    finalSettle + // Final settle time
     10000 + // Additional waits in waitForLoadingSpinners
     5000 + // Additional checks (error page, content visibility)
     20000; // Buffer for screenshot capture and other operations
 
-  // Apply 1.5x safety multiplier for edge cases and use a minimum of 60 seconds
-  const testTimeout = Math.max(Math.ceil(calculatedTestTimeout * 1.5), 60000);
+  // Use user-provided testTimeout if specified, otherwise use calculated timeout + 30s buffer
+  const finalTestTimeout = testTimeout || Math.max(Math.ceil(calculatedTestTimeout + 30000), 30000);
 
-  const outputDir = path.dirname(runtimeConfig.resultsPath);
+  // Discover viewport configurations from Storybook if enabled
+  let finalRuntimeConfig = runtimeConfig;
+  if (runtimeConfig.discoverViewports) {
+    console.log('Discovering viewport configurations from Storybook...');
+    try {
+      const discovery = new StorybookDiscovery(runtimeConfig);
+      const discoveredViewports = await discovery.discoverViewportConfigurations();
+      if (discoveredViewports && Object.keys(discoveredViewports.viewportSizes).length > 0) {
+        finalRuntimeConfig = {
+          ...runtimeConfig,
+          viewportSizes: discoveredViewports.viewportSizes,
+          defaultViewport: discoveredViewports.defaultViewport || runtimeConfig.defaultViewport,
+        };
+        console.log(
+          `Discovered ${Object.keys(discoveredViewports.viewportSizes).length} viewport configurations:`,
+          Object.keys(discoveredViewports.viewportSizes).join(', '),
+        );
+      } else {
+        console.log('No viewport configurations discovered from Storybook');
+      }
+    } catch (error) {
+      console.log(
+        'Could not discover viewport configurations:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  } else {
+    console.log('Viewport discovery is disabled');
+  }
+
+  const outputDir = path.dirname(finalRuntimeConfig.resultsPath);
   const runtimeOptions: RuntimeOptions = {
     originalCwd,
-    storybookUrl: runtimeConfig.storybookUrl,
+    storybookUrl: finalRuntimeConfig.storybookUrl,
     outputDir,
-    visualRegression: runtimeConfig,
+    visualRegression: finalRuntimeConfig,
     include: includePatterns,
     exclude: excludePatterns,
     grep: grepPattern,
-    navTimeout,
     waitTimeout,
     overlayTimeout,
-    stabilizeInterval,
-    stabilizeAttempts,
-    finalSettle,
-    resourceSettle,
+    snapshotRetries,
+    snapshotDelay,
+    mutationTimeout,
     waitUntil: waitUntilValue,
     missingOnly,
     clean,
@@ -806,7 +826,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     printUrls,
     isCI: effectiveIsCI,
     isDocker: isDockerEnvironment,
-    testTimeout,
+    testTimeout: finalTestTimeout,
     fullPage: runtimeConfig.fullPage,
     storybookMode: isStorybookMode,
   };
@@ -863,7 +883,15 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
 
     playwrightArgs.push('--workers', String(runtimeConfig.workers));
     playwrightArgs.push('--retries', String(runtimeConfig.retries));
-    playwrightArgs.push('--max-failures', String(runtimeConfig.maxFailures));
+
+    // Handle maxFailures special cases:
+    // - 0: Stop on first failure (use maxFailures: 1)
+    // - undefined: Don't quit on any failures (don't pass --max-failures)
+    // - other values: Use as-is
+    if (runtimeConfig.maxFailures !== undefined) {
+      const maxFailuresValue = runtimeConfig.maxFailures === 0 ? 1 : runtimeConfig.maxFailures;
+      playwrightArgs.push('--max-failures', String(maxFailuresValue));
+    }
 
     // Resolve our minimal reporter path (used by default and in quiet mode)
     const customReporterCandidates = [
@@ -918,12 +946,65 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         npm_config_progress: 'false',
         npm_config_audit: 'false',
         npm_config_fund: 'false',
+        // Prevent Playwright from handling SIGINT to avoid duplicate messages
+        PLAYWRIGHT_SKIP_SIGINT_HANDLER: 'true',
+        // Pass runtime options to Playwright (string and number values)
+        ...Object.fromEntries(
+          Object.entries(runtimeConfig)
+            .filter(([, value]) => typeof value === 'string' || typeof value === 'number')
+            .map(([key, value]) => [key, String(value)]),
+        ),
       },
     });
 
-    // stdio inherited; no manual piping required
+    // Handle SIGINT (Ctrl+C) to properly kill Playwright workers
+    let sigIntHandled = false;
+    const handleSigInt = async () => {
+      // Prevent duplicate handling
+      if (sigIntHandled) {
+        return;
+      }
+      sigIntHandled = true;
 
-    await child;
+      console.log(chalk.yellow('\n🛑 Received SIGINT (Ctrl+C), stopping tests...'));
+
+      try {
+        if (child && !child.killed && child.pid) {
+          // First try graceful termination
+          child.kill('SIGTERM');
+
+          // Wait a bit for graceful termination
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+
+          // If still running, force kill
+          if (!child.killed) {
+            child.kill('SIGKILL');
+          }
+        }
+      } catch {
+        // Silently handle errors during termination
+      }
+
+      process.exit(130); // Standard exit code for SIGINT
+    };
+
+    // Register signal handlers
+    process.on('SIGINT', handleSigInt);
+    process.on('SIGTERM', handleSigInt);
+
+    // Clean up signal handlers when process completes
+    const cleanup = () => {
+      process.off('SIGINT', handleSigInt);
+      process.off('SIGTERM', handleSigInt);
+    };
+
+    try {
+      await child;
+      cleanup();
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
 
     console.log('');
     if (options.updateSnapshots) {

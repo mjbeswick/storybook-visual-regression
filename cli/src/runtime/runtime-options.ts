@@ -11,13 +11,12 @@ export type RuntimeOptions = {
   include: string[];
   exclude: string[];
   grep?: string;
-  navTimeout: number;
   waitTimeout: number;
   overlayTimeout: number;
-  stabilizeInterval: number;
-  stabilizeAttempts: number;
-  finalSettle: number;
-  resourceSettle: number;
+  testTimeout: number;
+  snapshotRetries: number;
+  snapshotDelay: number;
+  mutationTimeout: number;
   waitUntil: 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
   missingOnly: boolean;
   clean: boolean;
@@ -30,7 +29,6 @@ export type RuntimeOptions = {
   printUrls: boolean;
   isCI: boolean;
   isDocker: boolean;
-  testTimeout: number;
   fullPage?: boolean;
   storybookMode: boolean;
 };

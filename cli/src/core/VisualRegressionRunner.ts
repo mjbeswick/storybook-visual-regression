@@ -42,11 +42,14 @@ export class VisualRegressionRunner {
     if (this.config.discoverViewports) {
       console.log('Discovering viewport configurations from Storybook...');
       const discoveredViewports = await discovery.discoverViewportConfigurations();
-      if (discoveredViewports && Object.keys(discoveredViewports).length > 0) {
-        this.config.viewportSizes = discoveredViewports;
+      if (discoveredViewports && Object.keys(discoveredViewports.viewportSizes).length > 0) {
+        this.config.viewportSizes = discoveredViewports.viewportSizes;
+        if (discoveredViewports.defaultViewport) {
+          this.config.defaultViewport = discoveredViewports.defaultViewport;
+        }
         console.log(
-          `Discovered ${Object.keys(discoveredViewports).length} viewport configurations:`,
-          Object.keys(discoveredViewports).join(', '),
+          `Discovered ${Object.keys(discoveredViewports.viewportSizes).length} viewport configurations:`,
+          Object.keys(discoveredViewports.viewportSizes).join(', '),
         );
       }
     }
@@ -58,75 +61,103 @@ export class VisualRegressionRunner {
     let failures = 0;
     let stopRequested = false;
 
-    const storiesQueue = [...filteredStories];
-    const workerCount = Math.max(1, this.config.workers ?? 1);
+    // Handle SIGINT (Ctrl+C) to stop tests gracefully
+    const handleSigInt = () => {
+      console.log(chalk.yellow('\n🛑 Received SIGINT (Ctrl+C), stopping tests...'));
+      stopRequested = true;
+    };
 
-    const runWorker = async (): Promise<void> => {
-      while (!stopRequested) {
-        const story = storiesQueue.shift();
-        if (!story) break;
-        try {
-          const result = await this.testStory(story);
-          results.push(result);
-          // Print list-style line with duration
-          if (result.passed) {
-            console.log(
-              `${chalk.green('✓')} ${result.storyTitle} (${
-                result.storyId
-              }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
-            );
-          } else {
-            console.log(
-              `${chalk.red('✗')} ${result.storyTitle} (${
-                result.storyId
-              }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
-            );
-            if (result.error) {
-              console.log(chalk.gray(`    ${result.error}`));
+    // Register signal handlers
+    process.on('SIGINT', handleSigInt);
+    process.on('SIGTERM', handleSigInt);
+
+    // Clean up signal handlers when tests complete
+    const cleanup = () => {
+      process.off('SIGINT', handleSigInt);
+      process.off('SIGTERM', handleSigInt);
+    };
+
+    try {
+      const storiesQueue = [...filteredStories];
+      const workerCount = Math.max(1, this.config.workers ?? 1);
+
+      const runWorker = async (): Promise<void> => {
+        while (!stopRequested) {
+          const story = storiesQueue.shift();
+          if (!story) break;
+          try {
+            const result = await this.testStory(story);
+            results.push(result);
+            // Print list-style line with duration
+            if (result.passed) {
+              console.log(
+                `${chalk.green('✓')} ${result.storyTitle} (${
+                  result.storyId
+                }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
+              );
+            } else {
+              console.log(
+                `${chalk.red('✗')} ${result.storyTitle} (${
+                  result.storyId
+                }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
+              );
+              if (result.error) {
+                console.log(chalk.gray(`    ${result.error}`));
+              }
             }
-          }
-          if (!result.passed) {
+            if (!result.passed) {
+              failures += 1;
+            }
+          } catch (error) {
+            const failedResult: TestResult = {
+              storyId: story.id,
+              storyTitle: story.title ?? story.id,
+              passed: false,
+              error: error instanceof Error ? error.message : 'Unknown error',
+              durationMs: 0,
+            };
+            results.push(failedResult);
+            console.log(
+              `${chalk.red('✗')} ${failedResult.storyTitle} (${
+                failedResult.storyId
+              }) ${chalk.gray('— ' + formatDuration(failedResult.durationMs))}`,
+            );
+            if (failedResult.error) {
+              console.log(chalk.gray(`    ${failedResult.error}`));
+            }
             failures += 1;
           }
-        } catch (error) {
-          const failedResult: TestResult = {
-            storyId: story.id,
-            storyTitle: story.title ?? story.id,
-            passed: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            durationMs: 0,
-          };
-          results.push(failedResult);
-          console.log(
-            `${chalk.red('✗')} ${failedResult.storyTitle} (${
-              failedResult.storyId
-            }) ${chalk.gray('— ' + formatDuration(failedResult.durationMs))}`,
-          );
-          if (failedResult.error) {
-            console.log(chalk.gray(`    ${failedResult.error}`));
+
+          if (
+            this.config.maxFailures !== undefined &&
+            this.config.maxFailures > 0 &&
+            failures >= this.config.maxFailures
+          ) {
+            stopRequested = true;
+            break;
           }
-          failures += 1;
         }
+      };
 
-        if (this.config.maxFailures > 0 && failures >= this.config.maxFailures) {
-          stopRequested = true;
-          break;
-        }
+      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+
+      if (
+        this.config.maxFailures !== undefined &&
+        this.config.maxFailures > 0 &&
+        failures >= this.config.maxFailures
+      ) {
+        console.log(`Reached max failures (${this.config.maxFailures}). Stopping early.`);
       }
-    };
 
-    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
-
-    if (this.config.maxFailures > 0 && failures >= this.config.maxFailures) {
-      console.log(`Reached max failures (${this.config.maxFailures}). Stopping early.`);
+      return {
+        total: results.length,
+        passed: results.filter((r) => r.passed).length,
+        failed: results.filter((r) => !r.passed).length,
+        results,
+      };
+    } finally {
+      cleanup();
     }
-
-    return {
-      total: results.length,
-      passed: results.filter((r) => r.passed).length,
-      failed: results.filter((r) => !r.passed).length,
-      results,
-    };
   }
 
   private async testStory(story: StorybookEntry): Promise<TestResult> {

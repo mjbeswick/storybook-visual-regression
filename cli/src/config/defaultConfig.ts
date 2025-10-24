@@ -36,8 +36,9 @@ export function createDefaultConfig(): VisualRegressionConfig {
     timeout: 30000,
     serverTimeout: 120000,
 
-    // Fail-fast - allow more failures before stopping
-    maxFailures: 10, // Increased from 1 to prevent early termination
+    // maxFailures: undefined means don't quit on any failures (run all tests)
+    // Set to 0 to stop on first failure, or a number to stop after N failures
+    // maxFailures: undefined, // Don't quit on any failures by default
 
     // Story filtering
     includeStories: [],

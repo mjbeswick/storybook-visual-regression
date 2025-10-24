@@ -64,6 +64,10 @@ class FilteredReporter implements Reporter {
   private skipped = 0;
   private timedOut = 0;
   private interrupted = 0;
+  private testFinalStatuses = new Map<
+    string,
+    'passed' | 'failed' | 'skipped' | 'timedOut' | 'interrupted'
+  >();
   private resultsRoot: string | null = null;
   private totalTests = 0;
   private completed = 0;
@@ -140,7 +144,7 @@ class FilteredReporter implements Reporter {
     } else {
       // Very early stage - use simple elapsed time approach
       const elapsedMs = Math.max(1, Date.now() - this.startedAtMs);
-      avgTestDuration = elapsedMs / this.completed;
+      avgTestDuration = this.completed > 0 ? elapsedMs / this.completed : 5000; // Default 5s if no tests completed yet
       confidence = 'low';
     }
 
@@ -348,6 +352,11 @@ class FilteredReporter implements Reporter {
   }
 
   onTestEnd(test: TestCase, result: TestResult): void {
+    const testId = test.title;
+
+    // Track the final status of each test (last result wins)
+    this.testFinalStatuses.set(testId, result.status);
+
     const displayTitle = test.title.replace(/^snapshots-/, '');
     const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:9009').replace(
       /\/$/,
@@ -395,7 +404,11 @@ class FilteredReporter implements Reporter {
       : formattedTitle;
 
     // Update progress stats for ETA calculation
-    this.completed += 1;
+    // Only count unique tests, not retry attempts
+    // retry is undefined for the first attempt, and 0, 1, 2... for subsequent attempts
+    if (result.retry === undefined) {
+      this.completed += 1;
+    }
     const remaining = Math.max(0, this.totalTests - this.completed);
     const rawDuration = Math.max(1, result.duration || 0);
 
@@ -443,8 +456,10 @@ class FilteredReporter implements Reporter {
     )})`;
 
     // Create progress label with percentage and optional time estimate
-    const percentage = Math.round((this.completed / this.totalTests) * 100);
-    let progressLabel = `${chalk.cyan(String(this.completed))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))} ${chalk.gray(`(${percentage}%)`)}`;
+    // Use the actual completed count (excluding retries) for progress calculation
+    const actualCompleted = this.completed;
+    const percentage = Math.round((actualCompleted / this.totalTests) * 100);
+    let progressLabel = `${chalk.cyan(String(actualCompleted))} ${chalk.dim('of')} ${chalk.cyan(String(this.totalTests))} ${chalk.gray(`(${percentage}%)`)}`;
 
     // Show time estimates with confidence indicators
     if (this.showTimeEstimates && remaining > 0) {
@@ -472,7 +487,6 @@ class FilteredReporter implements Reporter {
 
     if (result.status === 'failed') {
       this.failures.push(test);
-      this.failed++;
 
       // Find the diff image path
       let diffPath: string | undefined;
@@ -507,7 +521,6 @@ class FilteredReporter implements Reporter {
         this.removePathIfExists(attachment.path);
       }
     } else if (result.status === 'passed') {
-      this.passed++;
       if (this.spinner) {
         this.spinner.stop();
         this.spinner.clear();
@@ -527,7 +540,6 @@ class FilteredReporter implements Reporter {
         this.safeRemoveEmptyDirsUp(attachmentDir, root);
       }
     } else if (result.status === 'skipped') {
-      this.skipped++;
       if (this.spinner) {
         this.spinner.stop();
         this.spinner.clear();
@@ -545,7 +557,6 @@ class FilteredReporter implements Reporter {
       }
     } else if (result.status === 'timedOut') {
       this.failures.push(test);
-      this.timedOut++;
 
       // Store timeout details
       const errorMessage = result.error?.message || result.error?.toString() || 'Test timeout';
@@ -562,7 +573,6 @@ class FilteredReporter implements Reporter {
       }
       // Keep artifacts for timed out tests (they might be useful for debugging)
     } else if (result.status === 'interrupted') {
-      this.interrupted++;
       if (this.spinner) {
         this.spinner.stop();
         this.spinner.clear();
@@ -587,16 +597,43 @@ class FilteredReporter implements Reporter {
     const totalDuration = Date.now() - this.startedAtMs;
     const formattedDuration = this.formatDuration(totalDuration);
 
+    // Calculate final counts based on final status of each test
+    let finalPassed = 0;
+    let finalFailed = 0;
+    let finalSkipped = 0;
+    let finalTimedOut = 0;
+    let finalInterrupted = 0;
+
+    for (const status of this.testFinalStatuses.values()) {
+      switch (status) {
+        case 'passed':
+          finalPassed++;
+          break;
+        case 'failed':
+          finalFailed++;
+          break;
+        case 'skipped':
+          finalSkipped++;
+          break;
+        case 'timedOut':
+          finalTimedOut++;
+          break;
+        case 'interrupted':
+          finalInterrupted++;
+          break;
+      }
+    }
+
     // Summary line expected by tests, prefixed with a newline
     const totalExecuted =
-      this.passed + this.failed + this.skipped + this.timedOut + this.interrupted;
+      finalPassed + finalFailed + finalSkipped + finalTimedOut + finalInterrupted;
 
     // Use "updated" instead of "passed" when in update mode
     const isUpdateMode = this.runtimeOptions?.updateSnapshots ?? false;
     const passedText = isUpdateMode ? 'updated' : 'passed';
 
     console.log(
-      `\n${this.passed} ${passedText}, ${this.failed} failed${this.skipped > 0 ? `, ${this.skipped} skipped` : ''}${this.timedOut > 0 ? `, ${this.timedOut} timed out` : ''}${this.interrupted > 0 ? `, ${this.interrupted} interrupted` : ''} ${chalk.gray(`(${formattedDuration})`)}`,
+      `\n${finalPassed} ${passedText}, ${finalFailed} failed${finalSkipped > 0 ? `, ${finalSkipped} skipped` : ''}${finalTimedOut > 0 ? `, ${finalTimedOut} timed out` : ''}${finalInterrupted > 0 ? `, ${finalInterrupted} interrupted` : ''} ${chalk.gray(`(${formattedDuration})`)}`,
     );
 
     // Show discrepancy if total executed doesn't match total tests
@@ -609,7 +646,7 @@ class FilteredReporter implements Reporter {
     // Handle different test execution outcomes
     if (result.status === 'interrupted' || result.status === 'timedout') {
       console.log(chalk.yellow.bold('⚠ Test execution aborted'));
-    } else if (this.failed > 0 || this.timedOut > 0 || this.interrupted > 0) {
+    } else if (finalFailed > 0 || finalTimedOut > 0 || finalInterrupted > 0) {
       console.log(chalk.red.bold('✘ Some tests failed'));
 
       // Show failure summary with URLs and diff paths if there are failures

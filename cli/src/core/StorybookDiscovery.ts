@@ -118,13 +118,19 @@ export class StorybookDiscovery {
     return this.config.defaultViewport;
   }
 
-  async discoverViewportConfigurations(): Promise<ViewportConfig> {
+  async discoverViewportConfigurations(): Promise<{
+    viewportSizes: ViewportConfig;
+    defaultViewport?: string;
+  }> {
     try {
       // Try to get viewport configurations from running Storybook
       const viewportConfig = await this.getViewportConfigFromStorybook();
       if (viewportConfig && Object.keys(viewportConfig).length > 0) {
-        console.log('Successfully loaded viewport configurations from Storybook');
-        return viewportConfig;
+        const validatedConfig = this.validateViewportConfig(viewportConfig);
+        if (validatedConfig) {
+          console.log('Successfully loaded viewport configurations from Storybook');
+          return { viewportSizes: validatedConfig };
+        }
       }
     } catch (_error) {
       console.log(
@@ -137,8 +143,13 @@ export class StorybookDiscovery {
     try {
       const viewportConfig = this.getViewportConfigFromFiles();
       if (viewportConfig && Object.keys(viewportConfig).length > 0) {
-        console.log('Successfully loaded viewport configurations from Storybook config files');
-        return viewportConfig;
+        const validatedConfig = this.validateViewportConfig(viewportConfig);
+        if (validatedConfig) {
+          console.log('Successfully loaded viewport configurations from Storybook config files');
+          // Extract default viewport if it was stored in the config
+          const defaultViewport = (viewportConfig as any).__defaultViewport;
+          return { viewportSizes: validatedConfig, defaultViewport };
+        }
       }
     } catch (_error) {
       console.log(
@@ -149,7 +160,32 @@ export class StorybookDiscovery {
 
     // Final fallback to default configurations
     console.log('Using default viewport configurations');
-    return this.config.viewportSizes;
+    return { viewportSizes: this.config.viewportSizes };
+  }
+
+  /**
+   * Validate viewport configuration to ensure all sizes are valid
+   */
+  private validateViewportConfig(config: ViewportConfig): ViewportConfig | null {
+    const validated: ViewportConfig = {};
+    let hasValidConfigs = false;
+
+    for (const [key, size] of Object.entries(config)) {
+      if (size && typeof size.width === 'number' && typeof size.height === 'number') {
+        if (size.width > 0 && size.height > 0) {
+          validated[key] = size;
+          hasValidConfigs = true;
+        } else {
+          console.warn(
+            `Skipping invalid viewport '${key}': dimensions must be positive (${size.width}x${size.height})`,
+          );
+        }
+      } else {
+        console.warn(`Skipping invalid viewport '${key}': missing or invalid dimensions`);
+      }
+    }
+
+    return hasValidConfigs ? validated : null;
   }
 
   // Returns specific viewport config for a story if found, otherwise the defaults
@@ -270,6 +306,15 @@ export class StorybookDiscovery {
       join(process.cwd(), 'storybook/main.js'),
       join(process.cwd(), 'storybook/main.ts'),
       join(process.cwd(), 'storybook/main.mjs'),
+      // Also check preview files where viewport configurations are often defined
+      join(process.cwd(), '.storybook/preview.js'),
+      join(process.cwd(), '.storybook/preview.ts'),
+      join(process.cwd(), '.storybook/preview.tsx'),
+      join(process.cwd(), '.storybook/preview.mjs'),
+      join(process.cwd(), 'storybook/preview.js'),
+      join(process.cwd(), 'storybook/preview.ts'),
+      join(process.cwd(), 'storybook/preview.tsx'),
+      join(process.cwd(), 'storybook/preview.mjs'),
     ];
 
     for (const configPath of possibleConfigPaths) {
@@ -280,7 +325,7 @@ export class StorybookDiscovery {
           if (viewportConfig) {
             return viewportConfig;
           }
-        } catch (_error) {
+        } catch (error) {
           // Continue to next file
         }
       }
@@ -318,7 +363,82 @@ export class StorybookDiscovery {
 
   private parseViewportConfigFromFile(configContent: string): ViewportConfig | null {
     // Parse viewport configurations from Storybook config files
-    // Look for viewport addon configurations
+    // Look for viewport addon configurations in different formats
+
+    // First, look for initialGlobals.viewport.value to determine the default viewport
+    const defaultViewportMatch = configContent.match(
+      /initialGlobals:\s*\{[\s\S]*?viewport:\s*\{\s*value:\s*['"](\w+)['"][\s\S]*?\}/,
+    );
+    const defaultViewport = defaultViewportMatch ? defaultViewportMatch[1] : null;
+
+    // Format 1: viewport: { options: { ... } }
+    // Look for the viewport options section specifically
+    // Make sure we're matching viewport that directly contains options, not value
+    // Look for the specific pattern: viewport: { options: { ... } }
+    // Use greedy match to capture all viewport configurations
+    const optionsMatch = configContent.match(/viewport:\s*\{\s*options:\s*\{([\s\S]+)\s*\},?\s*\}/);
+    const viewportOptionsMatch = optionsMatch ? [optionsMatch[0], optionsMatch[1]] : null;
+    if (viewportOptionsMatch) {
+      const config: ViewportConfig = {};
+      const optionsSection = viewportOptionsMatch[1];
+
+      // Look for viewport definitions like:
+      // attended: { name: 'Attended', styles: { width: '1360px', height: '768px' } }
+      // Handle both single-line and multi-line formats
+      const viewportDefinitions = optionsSection.match(
+        /(\w+):\s*\{[\s\S]*?styles:\s*\{[\s\S]*?width:\s*['"](\d+)px['"][\s\S]*?height:\s*['"](\d+)px['"][\s\S]*?\}/g,
+      );
+
+      // Alternative approach: look for individual viewport definitions
+      if (!viewportDefinitions) {
+        // Look for patterns like: width: '1024px' and height: '768px' directly
+        const widthMatches = optionsSection.match(/width:\s*['"](\d+)px['"]/g);
+        const heightMatches = optionsSection.match(/height:\s*['"](\d+)px['"]/g);
+
+        if (widthMatches && heightMatches && widthMatches.length === heightMatches.length) {
+          // Find viewport names by looking backwards from width matches
+          for (let i = 0; i < widthMatches.length; i++) {
+            const widthMatch = widthMatches[i];
+            const heightMatch = heightMatches[i];
+            const width = parseInt(widthMatch.match(/width:\s*['"](\d+)px['"]/)![1]);
+            const height = parseInt(heightMatch.match(/height:\s*['"](\d+)px['"]/)![1]);
+
+            // Find the viewport name by looking backwards from the width match
+            const beforeWidth = optionsSection.substring(0, optionsSection.indexOf(widthMatch));
+            const nameMatch = beforeWidth.match(/(\w+):\s*\{[\s\S]*$/);
+            if (nameMatch) {
+              const name = nameMatch[1];
+              config[name] = { width, height };
+            }
+          }
+        }
+      }
+
+      if (viewportDefinitions) {
+        for (const definition of viewportDefinitions) {
+          const match = definition.match(
+            /(\w+):\s*\{[\s\S]*?width:\s*['"](\d+)px['"][\s\S]*?height:\s*['"](\d+)px['"]/,
+          );
+          if (match) {
+            const [, name, width, height] = match;
+            config[name] = {
+              width: parseInt(width),
+              height: parseInt(height),
+            };
+          }
+        }
+      }
+
+      if (Object.keys(config).length > 0) {
+        // Store the default viewport in the config object for later use
+        if (defaultViewport) {
+          (config as any).__defaultViewport = defaultViewport;
+        }
+        return config;
+      }
+    }
+
+    // Format 2: viewport.*?configurations.*?\{([^}]+)\} (original format)
     const viewportMatch = configContent.match(/viewport.*?configurations.*?\{([^}]+)\}/s);
     if (viewportMatch) {
       const config: ViewportConfig = {};
@@ -335,7 +455,7 @@ export class StorybookDiscovery {
       if (viewportDefinitions) {
         for (const definition of viewportDefinitions) {
           const match = definition.match(
-            /(\w+):\s*\{[^}]*width:\s*['"](\d+)px['"][^}]*height:\s*['"](\d+)px['"]/,
+            /(\w+):\s*\{[\s\S]*?width:\s*['"](\d+)px['"][\s\S]*?height:\s*['"](\d+)px['"]/,
           );
           if (match) {
             const [, name, width, height] = match;

@@ -16,12 +16,12 @@ function getApiUrl(): string {
     const storyStore = (window as any).__STORYBOOK_STORY_STORE__;
     const globalParams = storyStore?.getGlobalParameters?.();
     const addonConfig = globalParams?.visualRegressionAddon;
-    
+
     if (addonConfig?.port) {
       return getApiBaseUrl(addonConfig.port);
     }
   }
-  
+
   // Fallback to default
   return getApiBaseUrl(6007);
 }
@@ -55,6 +55,8 @@ type FailedStoryData = {
   diffImagePath?: string;
   actualImagePath?: string;
   expectedImagePath?: string;
+  errorImagePath?: string;
+  errorType?: string;
   error?: string;
 };
 const failedStories: Map<string, FailedStoryData> = new Map();
@@ -100,6 +102,8 @@ const initializeAddon = async () => {
           diffImagePath: result.diffImagePath,
           actualImagePath: result.actualImagePath,
           expectedImagePath: result.expectedImagePath,
+          errorImagePath: result.errorImagePath,
+          errorType: result.errorType,
         });
 
         // Also emit TEST_RESULT events for existing failed results so Tool component can access them
@@ -110,6 +114,8 @@ const initializeAddon = async () => {
           diffPath: result.diffImagePath,
           actualPath: result.actualImagePath,
           expectedPath: result.expectedImagePath,
+          errorPath: result.errorImagePath,
+          errorType: result.errorType,
         });
       });
 
@@ -134,6 +140,8 @@ const initializeAddon = async () => {
               diffImagePath?: string;
               actualImagePath?: string;
               expectedImagePath?: string;
+              errorImagePath?: string;
+              errorType?: string;
             }>;
 
             // Deduplicate by storyId – keep the entry with the highest retry index
@@ -177,6 +185,8 @@ const initializeAddon = async () => {
                 diffImagePath: result.diffImagePath,
                 actualImagePath: result.actualImagePath,
                 expectedImagePath: result.expectedImagePath,
+                errorImagePath: result.errorImagePath,
+                errorType: result.errorType,
               });
 
               channel.emit(EVENTS.TEST_RESULT, {
@@ -186,6 +196,8 @@ const initializeAddon = async () => {
                 diffPath: result.diffImagePath,
                 actualPath: result.actualImagePath,
                 expectedPath: result.expectedImagePath,
+                errorPath: result.errorImagePath,
+                errorType: result.errorType,
               });
             }
           }
@@ -216,7 +228,7 @@ const initializeAddon = async () => {
     const storyId = data as string;
     if (failedStories.has(storyId)) {
       const storyData = failedStories.get(storyId);
-      if (storyData && storyData.diffImagePath) {
+      if (storyData && (storyData.diffImagePath || storyData.errorImagePath)) {
         // Show diff overlay for failed story
         window.postMessage(
           {
@@ -225,6 +237,8 @@ const initializeAddon = async () => {
             diffImagePath: storyData.diffImagePath,
             actualImagePath: storyData.actualImagePath,
             expectedImagePath: storyData.expectedImagePath,
+            errorImagePath: storyData.errorImagePath,
+            errorType: storyData.errorType,
           },
           '*',
         );

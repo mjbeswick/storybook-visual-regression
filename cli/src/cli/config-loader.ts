@@ -21,15 +21,18 @@ export type UserConfig = {
   timezone?: string;
   locale?: string;
 
+  // Viewport configuration
+  viewportSizes?: Record<string, { width: number; height: number }>;
+  defaultViewport?: string;
+
   // Timeouts (in milliseconds)
-  navTimeout?: number;
   waitTimeout?: number;
   overlayTimeout?: number;
   webserverTimeout?: number;
-  stabilizeInterval?: number;
-  stabilizeAttempts?: number;
-  finalSettle?: number;
-  resourceSettle?: number;
+  testTimeout?: number;
+  snapshotRetries?: number;
+  snapshotDelay?: number;
+  mutationTimeout?: number;
   notFoundRetryDelay?: number;
 
   // Wait strategy
@@ -198,7 +201,7 @@ function pruneDefaults(config: UserConfig): UserConfig {
 
 export function saveUserConfig(cwd: string, config: UserConfig, configPath?: string): void {
   const toSave = pruneDefaults(config);
-  
+
   // Determine the save path
   let filePath: string;
   if (configPath) {
@@ -216,7 +219,7 @@ export function saveUserConfig(cwd: string, config: UserConfig, configPath?: str
     // Default path
     filePath = getDefaultConfigPath(cwd);
   }
-  
+
   // Ensure the directory exists
   const dir = path.dirname(filePath);
   if (!existsSync(dir)) {

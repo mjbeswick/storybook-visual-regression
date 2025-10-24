@@ -17,10 +17,23 @@ type FailedResult = {
   diffImagePath?: string;
   actualImagePath?: string;
   expectedImagePath?: string;
+  errorImagePath?: string;
+  errorType?: 'screenshot_mismatch' | 'loading_failure' | 'network_error' | 'other_error';
 };
 
 let server: Server | null = null;
-const activeProcesses = new Map<string, ReturnType<typeof spawn>>(); // Track active CLI processes
+const activeProcesses = new Map<
+  string,
+  {
+    process: ChildProcess;
+    command: string;
+    startTime: number;
+  }
+>();
+
+// Debounce mechanism to prevent multiple rapid stop requests
+let stopRequestTimeout: NodeJS.Timeout | null = null;
+let isStopInProgress = false; // Track active CLI processes with metadata
 
 // Helper function to ensure visual-regression directory structure exists
 async function ensureVisualRegressionDirs(): Promise<void> {
@@ -138,50 +151,119 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
 
     // Stop all running tests endpoint
     if (pathname === '/stop' && req.method === 'POST') {
+      // Debounce rapid stop requests
+      if (isStopInProgress) {
+        console.log(`[VR Addon] Stop request already in progress, ignoring duplicate`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            status: 'ok',
+            message: 'Stop request already in progress',
+            stoppedCount: 0,
+          }),
+        );
+        return;
+      }
+
+      console.log(`[VR Addon] Stop request received. Active processes: ${activeProcesses.size}`);
+
+      // Prevent multiple simultaneous stop requests
+      if (activeProcesses.size === 0) {
+        console.log(`[VR Addon] No active processes to stop`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            status: 'ok',
+            message: 'No active processes to stop',
+            stoppedCount: 0,
+          }),
+        );
+        return;
+      }
+
+      isStopInProgress = true;
+
       let stoppedCount = 0;
 
-      const stopPromises = Array.from(activeProcesses.entries()).map(async ([, childProcess]) => {
-        try {
-          if (childProcess && !childProcess.killed && childProcess.pid) {
-            // First try graceful termination of the entire process group
+      try {
+        const stopPromises = Array.from(activeProcesses.entries()).map(
+          async ([processId, processInfo]) => {
             try {
-              // On Unix systems, kill the entire process group using negative PID
-              process.kill(-childProcess.pid, 'SIGTERM');
-            } catch {
-              // If process group kill fails, fall back to individual process kill
-              childProcess.kill('SIGTERM');
-            }
+              const childProcess = processInfo.process;
+              if (childProcess && !childProcess.killed && childProcess.pid) {
+                console.log(
+                  `[VR Addon] Stopping process ${processId} (PID: ${childProcess.pid}) - Command: ${processInfo.command}`,
+                );
 
-            // Wait a bit for graceful termination
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+                // Simple, elegant killing: kill the process group
+                try {
+                  // Kill the entire process group (includes all child processes)
+                  process.kill(-childProcess.pid, 'SIGTERM');
+                  console.log(`[VR Addon] Sent SIGTERM to process group ${childProcess.pid}`);
 
-            // Check if process is still running
-            if (!childProcess.killed) {
-              try {
-                // Try to kill the entire process group with SIGKILL
-                process.kill(-childProcess.pid, 'SIGKILL');
-              } catch {
-                // Fall back to individual process kill
-                childProcess.kill('SIGKILL');
+                  // Wait for graceful termination
+                  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+                  // Force kill if still running
+                  if (!childProcess.killed) {
+                    process.kill(-childProcess.pid, 'SIGKILL');
+                    console.log(`[VR Addon] Sent SIGKILL to process group ${childProcess.pid}`);
+                  }
+                } catch (error) {
+                  // ESRCH (No such process) is expected when process is already dead
+                  if (error instanceof Error && (error as any).code === 'ESRCH') {
+                    console.log(`[VR Addon] Process group ${childProcess.pid} already terminated`);
+                  } else {
+                    console.log(`[VR Addon] Failed to kill process group:`, error);
+                  }
+
+                  // Fallback to direct process kill
+                  try {
+                    childProcess.kill('SIGKILL');
+                  } catch (fallbackError) {
+                    // ESRCH is expected here too
+                    if (fallbackError instanceof Error && (fallbackError as any).code === 'ESRCH') {
+                      console.log(`[VR Addon] Process ${childProcess.pid} already terminated`);
+                    } else {
+                      console.log(`[VR Addon] Fallback kill also failed:`, fallbackError);
+                    }
+                  }
+                }
+
+                if (childProcess.killed) {
+                  stoppedCount++;
+                  console.log(`[VR Addon] Successfully stopped process ${processId}`);
+                } else {
+                  console.log(`[VR Addon] Process ${processId} cleanup completed`);
+                  // Count as stopped even if we couldn't verify the kill
+                  stoppedCount++;
+                }
+
+                // Always remove from tracking after kill attempt
+                activeProcesses.delete(processId);
+              } else {
+                // Process was already killed or doesn't exist, just clean up
+                activeProcesses.delete(processId);
+                stoppedCount++;
               }
-
-              // Wait a bit more for force kill
-              await new Promise((resolve) => setTimeout(resolve, 1000));
+            } catch (error) {
+              console.log(`[VR Addon] Error stopping process ${processId}:`, error);
+              // Still remove from tracking to prevent memory leaks
+              activeProcesses.delete(processId);
             }
+          },
+        );
 
-            if (childProcess.killed) {
-              stoppedCount++;
-            }
-          }
-        } catch {
-          // ignore process stopping errors
-        }
-      });
+        // Wait for all stop operations to complete
+        await Promise.all(stopPromises);
 
-      // Wait for all stop operations to complete
-      await Promise.all(stopPromises);
-
-      activeProcesses.clear();
+        console.log(`[VR Addon] Stop operation completed. Stopped ${stoppedCount} processes`);
+      } catch (error) {
+        console.log(`[VR Addon] Error during stop operation:`, error);
+      } finally {
+        // Always reset the stop in progress flag
+        isStopInProgress = false;
+      }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
@@ -316,9 +398,6 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
 
           // Add --storybook flag to ensure filtered reporter with time estimates is used
           args.push('--storybook');
-          
-          // Add the correct Storybook URL (default to port 6006 for demo)
-          args.push('--url', 'http://localhost:6006');
 
           // Generate unique process ID and track it
           const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -399,28 +478,41 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
             }
             const fullCommand = processedCommand;
             console.log(`[VR Addon] Executing command: ${fullCommand}`);
-            child = exec(fullCommand, {
+
+            // Simple, elegant solution: spawn with process group
+            const parts = fullCommand.split(' ');
+            const executable = parts[0];
+            const args = parts.slice(1);
+
+            child = spawn(executable, args, {
               cwd: process.cwd(),
               env: {
                 ...cleanEnv,
-                FORCE_COLOR: '3', // Force chalk to output ANSI color codes (level 3 = full color)
-                TERM: 'xterm-256color', // Enable full terminal features
-                COLUMNS: '120', // Set terminal width for proper formatting
-                LINES: '30', // Set terminal height
-                DOCKER_TTY: 'false', // Prevent Docker from trying to allocate TTY
-                // Force TTY detection for CLI tools
-                CI: 'false', // Disable CI mode
-                STORYBOOK_MODE: 'true', // Enable Storybook mode
-                // Additional color forcing
-                COLORTERM: 'truecolor', // Enable true color support
-                NO_COLOR: undefined, // Ensure NO_COLOR is not set
+                FORCE_COLOR: '3',
+                TERM: 'xterm-256color',
+                COLUMNS: '120',
+                LINES: '30',
+                DOCKER_TTY: 'false',
+                CI: 'false',
+                STORYBOOK_MODE: 'true',
+                COLORTERM: 'truecolor',
+                NO_COLOR: undefined,
               },
+              stdio: ['pipe', 'pipe', 'pipe'],
+              detached: true, // Create new process group
             });
+
+            // Track the process with command information
+            const processInfo = {
+              process: child,
+              command: fullCommand,
+              startTime: Date.now(),
+            };
+            activeProcesses.set(processId, processInfo);
           } else {
             // Simple command - direct execution
-            console.log(
-              `[VR Addon] Executing simple command: ${cliCommand} ${enhancedArgs.join(' ')}`,
-            );
+            const simpleCommand = `${cliCommand} ${enhancedArgs.join(' ')}`;
+            console.log(`[VR Addon] Executing simple command: ${simpleCommand}`);
             child = spawn(cliCommand, enhancedArgs, {
               stdio: ['pipe', 'pipe', 'pipe'],
               cwd: process.cwd(),
@@ -437,13 +529,18 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
                 COLORTERM: 'truecolor', // Enable true color support
                 NO_COLOR: undefined, // Ensure NO_COLOR is not set
               },
-              // Create a new process group to enable killing all child processes
-              detached: true,
+              // Don't detach the process so we can kill it properly
+              detached: false,
             });
-          }
 
-          // Track the process
-          activeProcesses.set(processId, child);
+            // Track the process with command information
+            const processInfo = {
+              process: child,
+              command: simpleCommand,
+              startTime: Date.now(),
+            };
+            activeProcesses.set(processId, processInfo);
+          }
 
           child.stdout?.on('data', (data) => {
             const chunk = data.toString();
@@ -595,6 +692,28 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
               diffImagePath,
               actualImagePath,
               expectedImagePath,
+              errorType: 'screenshot_mismatch',
+            });
+          }
+        } else if (stats.isFile() && entry.endsWith('-error.png')) {
+          // This is an error screenshot file created by the CLI for failed tests
+          // Extract story ID from filename
+          const errorMatch = entry.match(/(.+?)-error\.png$/);
+          if (errorMatch) {
+            const storyId = errorMatch[1];
+            const storyName = getStoryNameFromId(storyId);
+
+            // Determine error type based on filename or other heuristics
+            let errorType: 'loading_failure' | 'network_error' | 'other_error' = 'other_error';
+
+            // You could add more sophisticated error type detection here
+            // For now, we'll classify all error screenshots as 'other_error'
+
+            failedResults.push({
+              storyId,
+              storyName,
+              errorImagePath: entryPath,
+              errorType,
             });
           }
         }

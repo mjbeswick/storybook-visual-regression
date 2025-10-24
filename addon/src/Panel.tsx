@@ -355,32 +355,61 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
   // Using Storybook's built-in Button styles via @storybook/components
 
-  const showDiffInIframe = (result: { storyId: string; storyName?: string; diffPath?: string }) => {
-    if (!result.diffPath) return;
+  const showDiffInIframe = (result: {
+    storyId: string;
+    storyName?: string;
+    diffPath?: string;
+    errorPath?: string;
+    errorType?: string;
+  }) => {
+    const imagePath = result.diffPath || result.errorPath;
+    if (!imagePath) return;
+
     const iframe = document.getElementById('storybook-preview-iframe') as HTMLIFrameElement;
     if (!iframe) return;
 
     // Build URL the addon server serves
-    let relativePath = result.diffPath;
-    const visualRegressionIndex = result.diffPath.indexOf('/visual-regression/');
+    let relativePath = imagePath;
+    const visualRegressionIndex = imagePath.indexOf('/visual-regression/');
     if (visualRegressionIndex !== -1) {
-      relativePath = result.diffPath.substring(
-        visualRegressionIndex + '/visual-regression/'.length,
-      );
+      relativePath = imagePath.substring(visualRegressionIndex + '/visual-regression/'.length);
     }
     const imageUrl = `http://localhost:6007/image/${encodeURIComponent(relativePath)}`;
 
+    // Determine the title and styling based on error type
+    let title = `diff image for ${result.storyName || result.storyId}`;
+    let backgroundColor = '#0b1020';
+
+    if (result.errorPath) {
+      switch (result.errorType) {
+        case 'loading_failure':
+          title = `Error screenshot for ${result.storyName || result.storyId} (Loading Failure)`;
+          backgroundColor = '#2d1b1b'; // Dark red background
+          break;
+        case 'network_error':
+          title = `Error screenshot for ${result.storyName || result.storyId} (Network Error)`;
+          backgroundColor = '#1b2d2d'; // Dark blue background
+          break;
+        default:
+          title = `Error screenshot for ${result.storyName || result.storyId}`;
+          backgroundColor = '#2d2d1b'; // Dark yellow background
+          break;
+      }
+    }
+
     const htmlContent = `<!DOCTYPE html><html><head><style>
-      body{margin:0;padding:0;background:#0b1020;display:flex;justify-content:center;align-items:center;min-height:100vh}
+      body{margin:0;padding:0;background:${backgroundColor};display:flex;justify-content:center;align-items:center;min-height:100vh}
       img{max-width:100%;max-height:100vh;object-fit:contain}
+      .error-label{position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.7);color:white;padding:5px 10px;border-radius:3px;font-family:monospace;font-size:12px}
     </style></head><body>
-      <img src="${imageUrl}" alt="diff image for ${result.storyName || result.storyId}"/>
+      ${result.errorPath ? '<div class="error-label">ERROR SCREENSHOT</div>' : ''}
+      <img src="${imageUrl}" alt="${title}"/>
     </body></html>`;
 
     iframe.srcdoc = htmlContent;
 
-    // Emit event to notify Tool component that diff is being shown
-    emit(EVENTS.DIFF_SHOWN, { storyId: result.storyId, type: 'diff' });
+    // Emit event to notify Tool component that diff/error is being shown
+    emit(EVENTS.DIFF_SHOWN, { storyId: result.storyId, type: result.errorPath ? 'error' : 'diff' });
   };
 
   return (
@@ -469,8 +498,21 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                                 setTimeout(() => showDiffInIframe(result), 300);
                               }}
                               className={styles.linkButton}
+                              title={
+                                result.errorPath
+                                  ? `Error: ${result.error || 'Story failed to load'}`
+                                  : 'View diff image'
+                              }
                             >
                               {result.storyName}
+                              {result.errorPath && (
+                                <span
+                                  className={styles.errorIndicator}
+                                  title="Error screenshot available"
+                                >
+                                  ⚠️
+                                </span>
+                              )}
                             </button>
                           </li>
                         ))}

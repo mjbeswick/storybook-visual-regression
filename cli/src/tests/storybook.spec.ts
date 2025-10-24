@@ -7,12 +7,19 @@ import { loadRuntimeOptions } from '../runtime/runtime-options.js';
 
 const runtimeOptions = loadRuntimeOptions();
 
+// Default viewport sizes - these will be overridden by discovered configurations
 const defaultViewportSizes: Record<string, { width: number; height: number }> = {
   mobile: { width: 375, height: 667 },
   tablet: { width: 768, height: 1024 },
   desktop: { width: 1024, height: 768 },
 };
 const defaultViewportKey = 'desktop';
+
+// Get viewport configurations from runtime options (discovered from Storybook)
+const discoveredViewportSizes =
+  runtimeOptions.visualRegression?.viewportSizes || defaultViewportSizes;
+const effectiveDefaultViewport =
+  runtimeOptions.visualRegression?.defaultViewport || defaultViewportKey;
 
 const storybookUrl = runtimeOptions.storybookUrl;
 const projectRoot = runtimeOptions.originalCwd;
@@ -22,6 +29,22 @@ const includePatterns = runtimeOptions.include;
 const excludePatterns = runtimeOptions.exclude;
 const grepPattern = runtimeOptions.grep;
 const debugEnabled = runtimeOptions.debug;
+
+// Log viewport configuration for debugging
+if (debugEnabled) {
+  console.log('SVR: Available viewport configurations:', Object.keys(discoveredViewportSizes));
+  console.log('SVR: Default viewport:', effectiveDefaultViewport);
+  console.log('SVR: Viewport sizes:', discoveredViewportSizes);
+  console.log('SVR: Runtime options visual regression config:', runtimeOptions.visualRegression);
+  console.log(
+    'SVR: Runtime options viewportSizes:',
+    runtimeOptions.visualRegression?.viewportSizes,
+  );
+  console.log(
+    'SVR: Runtime options defaultViewport:',
+    runtimeOptions.visualRegression?.defaultViewport,
+  );
+}
 
 async function disableAnimations(page: Page): Promise<void> {
   // Respect reduced motion globally
@@ -36,16 +59,67 @@ async function disableAnimations(page: Page): Promise<void> {
   // Note: actual pausing/resetting of SVG SMIL animations is done after the story loads
 }
 
+/**
+ * Robustly set viewport size with validation and fallback handling
+ */
+async function setViewportSize(page: Page, viewportKey: string): Promise<void> {
+  const viewportSizes = discoveredViewportSizes;
+  const size = viewportSizes[viewportKey] || viewportSizes[effectiveDefaultViewport];
+
+  if (!size || typeof size.width !== 'number' || typeof size.height !== 'number') {
+    throw new Error(`Invalid viewport size for key '${viewportKey}': ${JSON.stringify(size)}`);
+  }
+
+  // Validate viewport dimensions
+  if (size.width <= 0 || size.height <= 0) {
+    throw new Error(`Viewport dimensions must be positive: ${size.width}x${size.height}`);
+  }
+
+  // Set viewport with retry logic
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (attempts < maxAttempts) {
+    try {
+      await page.setViewportSize(size);
+
+      // Verify the viewport was actually set
+      const actualSize = page.viewportSize();
+      if (actualSize && actualSize.width === size.width && actualSize.height === size.height) {
+        if (debugEnabled) {
+          console.log(`SVR: Viewport set to ${size.width}x${size.height} (${viewportKey})`);
+        }
+        return;
+      } else {
+        if (debugEnabled) {
+          console.log(
+            `SVR: Viewport verification failed. Expected: ${size.width}x${size.height}, Actual: ${actualSize?.width}x${actualSize?.height}`,
+          );
+        }
+        throw new Error(
+          `Viewport verification failed. Expected: ${size.width}x${size.height}, Actual: ${actualSize?.width}x${actualSize?.height}`,
+        );
+      }
+    } catch (error) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        throw new Error(
+          `Failed to set viewport after ${maxAttempts} attempts: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      // Wait a bit before retrying
+      await page.waitForTimeout(100);
+    }
+  }
+}
+
 type ReadyOptions = {
   overlayTimeout: number;
-  stabilizeInterval: number;
-  stabilizeAttempts: number;
 };
 
 async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void> {
   const overlayTimeout = opts?.overlayTimeout ?? runtimeOptions.overlayTimeout;
-  const stabilizeInterval = opts?.stabilizeInterval ?? runtimeOptions.stabilizeInterval;
-  const stabilizeAttempts = opts?.stabilizeAttempts ?? runtimeOptions.stabilizeAttempts;
   const debugEnabled = runtimeOptions.debug;
   // Make sure the canvas container exists
   const waitTimeout = runtimeOptions.waitTimeout;
@@ -90,18 +164,9 @@ async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void>
       return false;
     });
 
-  // Try to detect when story is visually ready, but don't block if it doesn't stabilize
-  let isReady = false;
-  for (let attempt = 0; attempt < stabilizeAttempts; attempt++) {
-    if (await isVisuallyReady()) {
-      isReady = true;
-      break;
-    }
-    await page.waitForTimeout(stabilizeInterval);
-  }
-
-  // If story didn't become visually ready, log warning but continue
-  // The story might be ready but our heuristic failed, or it might be blank intentionally
+  // Check if story is visually ready, but don't block if it doesn't stabilize
+  // The mutationTimeout logic will handle DOM stability more accurately
+  const isReady = await isVisuallyReady();
   if (!isReady && debugEnabled) {
     console.warn('Story did not become visually ready, but proceeding anyway');
   }
@@ -195,10 +260,7 @@ async function waitForLoadingSpinners(page: Page): Promise<void> {
   }
 
   // Add a small delay to ensure content is fully loaded and rendered (configurable)
-  const finalSettleMs = runtimeOptions.finalSettle;
-  if (finalSettleMs > 0) {
-    await page.waitForTimeout(finalSettleMs);
-  }
+  // Note: finalSettle removed as it's not needed for Storybook visual regression testing
 
   // Wait for page to stabilize (no layout changes) - be lenient to avoid test failures
   try {
@@ -450,25 +512,63 @@ test.describe('Visual Regression', () => {
   for (const storyId of filteredStoryIds) {
     const humanTitle = `${storyDisplayNames[storyId] || storyId} [${storyId}]`;
     test(humanTitle, async ({ page }, _testInfo) => {
-      let viewportKey = defaultViewportKey;
+      let viewportKey = effectiveDefaultViewport;
       const importPath = storyImportPaths[storyId];
 
+      // Try to detect story-specific viewport from source code
       if (importPath) {
         try {
           const storySource = readFileSync(join(projectRoot, importPath), 'utf8');
-          const match = storySource.match(
+
+          // Multiple regex patterns to catch different viewport configurations
+          const viewportPatterns = [
+            // Standard globals.viewport.value pattern
             /globals\s*:\s*\{[^}]*viewport\s*:\s*\{[^}]*value\s*:\s*['"](\w+)['"][^}]*\}[^}]*\}/,
-          );
-          if (match && match[1] && defaultViewportSizes[match[1]]) {
-            viewportKey = match[1];
+            // Alternative viewport configuration patterns
+            /viewport\s*:\s*['"](\w+)['"]/,
+            /viewports\s*:\s*\{[^}]*default\s*:\s*['"](\w+)['"][^}]*\}/,
+            // Parameters-based viewport
+            /parameters\s*:\s*\{[^}]*viewport\s*:\s*\{[^}]*defaultViewport\s*:\s*['"](\w+)['"][^}]*\}[^}]*\}/,
+          ];
+
+          for (const pattern of viewportPatterns) {
+            const match = storySource.match(pattern);
+            if (debugEnabled) {
+              console.log(`SVR: Pattern ${pattern} match result:`, match);
+            }
+            if (match && match[1] && discoveredViewportSizes[match[1]]) {
+              viewportKey = match[1];
+              if (debugEnabled) {
+                console.log(`SVR: Detected viewport '${viewportKey}' for story ${storyId}`);
+              }
+              break;
+            } else if (match && match[1]) {
+              if (debugEnabled) {
+                console.log(
+                  `SVR: Found viewport '${match[1]}' but not in available viewports:`,
+                  Object.keys(discoveredViewportSizes),
+                );
+              }
+            }
           }
-        } catch {
-          // Ignore read/parse errors and keep default viewport
+        } catch (error) {
+          if (debugEnabled) {
+            console.log(
+              `SVR: Could not read story source for ${storyId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          // Keep default viewport
         }
       }
 
-      const size = defaultViewportSizes[viewportKey] || defaultViewportSizes[defaultViewportKey];
-      await page.setViewportSize(size);
+      // Set viewport with robust error handling
+      try {
+        await setViewportSize(page, viewportKey);
+      } catch (error) {
+        throw new Error(
+          `Failed to set viewport for story ${storyId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       await disableAnimations(page);
 
       await page.clock.install({
@@ -488,11 +588,8 @@ test.describe('Visual Regression', () => {
       }
 
       try {
-        const navTimeout = runtimeOptions.navTimeout;
         const waitTimeout = runtimeOptions.waitTimeout;
         const overlayTimeout = runtimeOptions.overlayTimeout;
-        const stabilizeInterval = runtimeOptions.stabilizeInterval;
-        const stabilizeAttempts = runtimeOptions.stabilizeAttempts;
         const waitUntilOption = runtimeOptions.waitUntil;
 
         const operationStartTime = Date.now();
@@ -503,41 +600,71 @@ test.describe('Visual Regression', () => {
         // Navigate to the story with a simple domcontentloaded wait
         let resp = await page.goto(storyUrl, {
           waitUntil: 'domcontentloaded',
-          timeout: navTimeout,
         });
 
         if (debugEnabled) {
           console.log(`[${storyId}] Navigation completed in ${Date.now() - operationStartTime}ms`);
         }
 
-        // Wait for all resources to finish loading using Performance API
-        // This is simpler and more reliable than waitUntil: 'load'
-        const resourceWaitStart = Date.now();
-        const resourceSettleMs = runtimeOptions.resourceSettle;
-        try {
-          await page.waitForFunction(
-            (settleTime) => {
-              // Check if all resources have finished loading
-              const resources = performance.getEntriesByType(
-                'resource',
-              ) as PerformanceResourceTiming[];
-              const pendingResources = resources.filter(
-                (r) => !r.responseEnd || Date.now() - r.responseEnd < (settleTime as number),
-              );
-              return pendingResources.length === 0;
-            },
-            resourceSettleMs,
-            { timeout: waitTimeout },
-          );
-          if (debugEnabled) {
-            console.log(`[${storyId}] All resources loaded in ${Date.now() - resourceWaitStart}ms`);
-          }
-        } catch {
-          // Resources didn't all finish, but the page is likely ready anyway
+        // Wait for DOM to stabilize using MutationObserver
+        // This is more accurate than waiting for resources - it waits for actual DOM changes to stop
+        const mutationTimeoutStart = Date.now();
+        const mutationTimeoutMs = runtimeOptions.mutationTimeout;
+
+        if (mutationTimeoutMs > 0) {
           if (debugEnabled) {
             console.log(
-              `[${storyId}] Resource wait timed out after ${Date.now() - resourceWaitStart}ms, proceeding`,
+              `[${storyId}] Waiting for DOM to stabilize (${mutationTimeoutMs}ms after last mutation)`,
             );
+          }
+
+          try {
+            await page.waitForFunction(
+              (settleTime) => {
+                return new Promise((resolve) => {
+                  let timeoutId: NodeJS.Timeout;
+
+                  const observer = new MutationObserver(() => {
+                    // Clear existing timeout
+                    clearTimeout(timeoutId);
+
+                    // Set new timeout - DOM is stable when this timeout fires
+                    timeoutId = setTimeout(() => {
+                      observer.disconnect();
+                      resolve(true);
+                    }, settleTime as number);
+                  });
+
+                  // Start observing all DOM mutations
+                  observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    characterData: true,
+                    attributeOldValue: true,
+                    characterDataOldValue: true,
+                  });
+
+                  // Initial timeout in case there are no mutations
+                  timeoutId = setTimeout(() => {
+                    observer.disconnect();
+                    resolve(true);
+                  }, settleTime as number);
+                });
+              },
+              mutationTimeoutMs,
+              { timeout: waitTimeout },
+            );
+
+            if (debugEnabled) {
+              console.log(`[${storyId}] DOM stabilized in ${Date.now() - mutationTimeoutStart}ms`);
+            }
+          } catch {
+            if (debugEnabled) {
+              console.log(
+                `[${storyId}] DOM settle wait timed out after ${Date.now() - mutationTimeoutStart}ms, proceeding`,
+              );
+            }
           }
         }
 
@@ -562,7 +689,7 @@ test.describe('Visual Regression', () => {
           const altUrl = candidateUrls[1];
           if (storyUrl !== altUrl) {
             storyUrl = altUrl;
-            resp = await page.goto(storyUrl, { waitUntil: waitUntilOption, timeout: navTimeout });
+            resp = await page.goto(storyUrl, { waitUntil: waitUntilOption });
             if (debugEnabled) {
               console.log(`SVR: url (retry): ${storyUrl}`);
             }
@@ -589,7 +716,7 @@ test.describe('Visual Regression', () => {
         if (debugEnabled) {
           console.log(`[${storyId}] Waiting for story to be ready...`);
         }
-        await waitForStoryReady(page, { overlayTimeout, stabilizeInterval, stabilizeAttempts });
+        await waitForStoryReady(page, { overlayTimeout });
         if (debugEnabled) {
           console.log(`[${storyId}] Story ready in ${Date.now() - beforeReadyWait}ms`);
         }
@@ -688,77 +815,131 @@ test.describe('Visual Regression', () => {
         console.log(
           `About to take screenshot for ${storyId}, update mode: ${runtimeOptions.updateSnapshots}`,
         );
-        try {
-          // Verify page is still valid before attempting screenshot
-          if (page.isClosed()) {
-            throw new Error('Page was closed before screenshot could be taken');
-          }
 
-          await expect(page).toHaveScreenshot(snapshotPathParts, {
-            fullPage: Boolean(runtimeOptions.fullPage),
-          });
-        } catch (assertionError) {
-          // Check if this is a TypeError from buffer operations (usually after timeout)
-          const errorMessage =
-            assertionError instanceof Error ? assertionError.message : String(assertionError);
-          const isBufferError =
-            errorMessage.includes('The "data" argument must be of type string') ||
-            errorMessage.includes('Received undefined');
-
-          if (isBufferError) {
-            // This typically happens when the page times out or is in an invalid state
-            throw new Error(
-              `Failed to capture screenshot (page may have timed out or is in an invalid state): ${errorMessage}`,
-            );
-          }
-
-          // Check if we're in update mode - if so, let Playwright handle snapshot creation
-          const isUpdateMode = runtimeOptions.updateSnapshots;
-          console.log(`Screenshot failed for ${storyId}, isUpdateMode: ${isUpdateMode}`);
-
-          if (isUpdateMode) {
-            // In update mode, re-throw the original assertion error to let Playwright create the snapshot
-            throw assertionError;
-          }
-
-          // Check if the snapshot file exists
-          const snapshotExists = await import('fs').then((fs) =>
-            fs.promises
-              .access(snapshotPath)
-              .then(() => true)
-              .catch(() => false),
+        // Retry loop for taking screenshots
+        let lastError: Error | null = null;
+        if (runtimeOptions.snapshotRetries > 1 && debugEnabled) {
+          console.log(
+            `[${storyId}] Starting screenshot with ${runtimeOptions.snapshotRetries} retry attempts`,
           );
+        }
+        for (let attempt = 1; attempt <= runtimeOptions.snapshotRetries; attempt++) {
+          try {
+            // Apply snapshot delay before each attempt
+            if (runtimeOptions.snapshotDelay > 0) {
+              if (debugEnabled) {
+                console.log(
+                  `[${storyId}] Attempt ${attempt}/${runtimeOptions.snapshotRetries}: Waiting ${runtimeOptions.snapshotDelay}ms before taking screenshot`,
+                );
+              }
+              await page.waitForTimeout(runtimeOptions.snapshotDelay);
+            }
 
-          // Print a spaced, aligned failure block
-          const label = (k: string) => (k + ':').padEnd(10, ' ');
+            // Verify page is still valid before attempting screenshot
+            if (page.isClosed()) {
+              throw new Error('Page was closed before screenshot could be taken');
+            }
 
-          if (!snapshotExists) {
-            console.error('\n' + chalk.yellow('──────── Missing Snapshot ────────'));
-            console.error(chalk.yellow(`${label('Story')}${storyId}`));
-            console.error(chalk.yellow(`${label('URL')}${storyUrl}`));
-            console.error(chalk.yellow(`${label('Missing')}${snapshotPath}`));
-            console.error(chalk.yellow('──────────────────────────────────────'));
-            console.error(chalk.cyan('💡 To create the missing snapshot, run:'));
-            console.error(
-              chalk.cyan(`   storybook-visual-regression update --include "${storyId}"`),
-            );
-            console.error(chalk.yellow('──────────────────────────────────────\n'));
-            throw new Error(
-              `Snapshot doesn't exist for story '${storyId}'. Run 'storybook-visual-regression update --include "${storyId}"' to create it.`,
-            );
-          } else {
-            console.error('\n' + chalk.red('──────── Screenshot Mismatch ────────'));
-            console.error(chalk.red(`${label('Story')}${storyId}`));
-            console.error(chalk.red(`${label('URL')}${storyUrl}`));
-            console.error(chalk.red(`${label('Reason')}${errorMessage}`));
-            // Helpful paths
-            const resultsRoot = resultsDirectory;
-            console.error(chalk.red(`${label('Expected')}${snapshotPath}`));
-            console.error(chalk.red(`${label('Results')}${resultsRoot}`));
-            console.error(chalk.red('──────────────────────────────────────\n'));
-            throw new Error(
-              `Screenshot mismatch for story '${storyId}'. Snapshot: ${snapshotFileName}`,
-            );
+            await expect(page).toHaveScreenshot(snapshotPathParts, {
+              fullPage: Boolean(runtimeOptions.fullPage),
+            });
+
+            // If we get here, the screenshot was successful
+            if (attempt > 1) {
+              console.log(
+                `[${storyId}] ✅ Screenshot succeeded on attempt ${attempt}/${runtimeOptions.snapshotRetries}`,
+              );
+            }
+            break; // Exit the retry loop on success
+          } catch (assertionError) {
+            lastError =
+              assertionError instanceof Error ? assertionError : new Error(String(assertionError));
+
+            // Check if this is a TypeError from buffer operations (usually after timeout)
+            const errorMessage = lastError.message;
+            const isBufferError =
+              errorMessage.includes('The "data" argument must be of type string') ||
+              errorMessage.includes('Received undefined');
+
+            if (isBufferError) {
+              console.error(
+                chalk.red(
+                  `[${storyId}] Screenshot failed due to page state error (attempt ${attempt}/${runtimeOptions.snapshotRetries}):`,
+                ),
+              );
+              console.error(chalk.red('  Page may be in an invalid state or closed'));
+            } else if (attempt < runtimeOptions.snapshotRetries) {
+              console.error(
+                chalk.yellow(
+                  `[${storyId}] Screenshot failed on attempt ${attempt}/${runtimeOptions.snapshotRetries}, retrying...`,
+                ),
+              );
+              if (debugEnabled) {
+                console.error(chalk.dim(`  Error: ${errorMessage}`));
+              }
+              // Wait a bit before retrying
+              await page.waitForTimeout(1000);
+            } else {
+              // This is the last attempt, so we'll handle the error as before
+              console.error(
+                chalk.red(
+                  `[${storyId}] Screenshot failed after ${runtimeOptions.snapshotRetries} attempts`,
+                ),
+              );
+
+              if (isBufferError) {
+                // This typically happens when the page times out or is in an invalid state
+                throw new Error(
+                  `Failed to capture screenshot (page may have timed out or is in an invalid state): ${errorMessage}`,
+                );
+              }
+
+              // Check if we're in update mode - if so, let Playwright handle snapshot creation
+              const isUpdateMode = runtimeOptions.updateSnapshots;
+              console.log(`Screenshot failed for ${storyId}, isUpdateMode: ${isUpdateMode}`);
+
+              if (isUpdateMode) {
+                // In update mode, re-throw the original assertion error to let Playwright create the snapshot
+                throw assertionError;
+              }
+
+              // Check if the snapshot file exists
+              const snapshotExists = await import('fs').then((fs) =>
+                fs.promises
+                  .access(snapshotPath)
+                  .then(() => true)
+                  .catch(() => false),
+              );
+
+              // Print a spaced, aligned failure block
+
+              if (!snapshotExists) {
+                console.error(chalk.yellow(`\n❌ Missing Snapshot: ${storyId}`));
+                console.error(chalk.dim(`   URL: ${storyUrl}`));
+                console.error(chalk.dim(`   Expected: ${snapshotPath}`));
+                console.error(
+                  chalk.cyan(
+                    `\n💡 Create snapshot: storybook-visual-regression update --include "${storyId}"`,
+                  ),
+                );
+                throw new Error(
+                  `Snapshot doesn't exist for story '${storyId}'. Run 'storybook-visual-regression update --include "${storyId}"' to create it.`,
+                );
+              } else {
+                console.error(chalk.red(`\n❌ Screenshot Mismatch: ${storyId}`));
+                console.error(chalk.dim(`   URL: ${storyUrl}`));
+                console.error(chalk.dim(`   Reason: ${errorMessage}`));
+                console.error(chalk.dim(`   Expected: ${snapshotPath}`));
+                console.error(chalk.dim(`   Results: ${resultsDirectory}`));
+                console.error(
+                  chalk.cyan(
+                    `\n💡 Update snapshot: storybook-visual-regression update --include "${storyId}"`,
+                  ),
+                );
+              }
+
+              throw assertionError;
+            }
           }
         }
 
@@ -786,6 +967,24 @@ test.describe('Visual Regression', () => {
           chalk.red(`${label('Reason')}${error instanceof Error ? error.message : String(error)}`),
         );
         console.error(chalk.red('────────────────────────────\n'));
+
+        // Create error screenshot for failed tests that don't reach the screenshot stage
+        try {
+          if (!page.isClosed()) {
+            const errorScreenshotPath = join(resultsDirectory, `${storyId}-error.png`);
+            await page.screenshot({
+              path: errorScreenshotPath,
+              fullPage: Boolean(runtimeOptions.fullPage),
+            });
+            console.log(`Error screenshot saved: ${errorScreenshotPath}`);
+          }
+        } catch (screenshotError) {
+          // If we can't take an error screenshot, that's okay - the main error is more important
+          console.warn(
+            `Could not create error screenshot: ${screenshotError instanceof Error ? screenshotError.message : String(screenshotError)}`,
+          );
+        }
+
         throw error;
       }
     });
