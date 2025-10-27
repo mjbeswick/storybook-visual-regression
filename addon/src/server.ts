@@ -54,7 +54,7 @@ async function ensureVisualRegressionDirs(): Promise<void> {
 export function startApiServer(
   port = 6007,
   cliCommand = 'npx @storybook-visual-regression/cli',
-  storybookUrl = 'http://localhost:9009',
+  storybookUrl = 'http://localhost:6006',
 ): Server {
   if (server) {
     return server;
@@ -402,9 +402,6 @@ export function startApiServer(
             const escapedId = request.storyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             args.push('--grep', `^${escapedId}$`);
           }
-
-          // Add --storybook flag to ensure filtered reporter with time estimates is used
-          args.push('--storybook');
 
           // Generate unique process ID and track it
           const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

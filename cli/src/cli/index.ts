@@ -59,7 +59,6 @@ program
   .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
-  .option('--storybook', 'Output results as JSON for Storybook addon consumption', false)
   .option('--print-urls', 'Show story URLs inline with test results')
   .option('--hide-time-estimates', 'Hide time estimates in progress display')
   .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
@@ -133,7 +132,6 @@ type CliOptions = {
   locale?: string;
   maxFailures?: string;
   reporter?: string;
-  storybook?: boolean;
   quiet?: boolean;
   include?: string;
   exclude?: string;
@@ -626,7 +624,10 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const isDockerEnvironment = Boolean(
     process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
   );
-  const isStorybookMode = Boolean(options.storybook || process.env.STORYBOOK_MODE === 'true');
+  // Detect Storybook mode: when URL is provided without command (Storybook already running)
+  const isStorybookMode = Boolean(
+    (config.storybookUrl && !storybookCommand) || process.env.STORYBOOK_MODE === 'true',
+  );
   const effectiveIsCI = isStorybookMode ? false : isCIEnvironment && !isDockerEnvironment;
 
   // Force colors in Docker and Storybook environments
@@ -739,8 +740,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   let finalStorybookCommand = storybookLaunchCommand;
 
   // Check if Storybook is already running if we have a command
-  // Skip this check when using --storybook flag since Storybook is already running
-  if (storybookLaunchCommand && !options.storybook) {
+  // Skip this check when URL is provided without command (Storybook already running)
+  if (storybookLaunchCommand && storybookCommand) {
     const storybookIndexUrl = `${config.storybookUrl.replace(/\/$/, '')}/index.json`;
     console.log(
       `🔍 Checking if Storybook is already running at: ${replaceDockerHostInUrl(storybookIndexUrl)}`,
@@ -763,8 +764,8 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
         `🔍 Storybook not accessible (${error instanceof Error ? error.message : 'unknown error'}), will start webserver`,
       );
     }
-  } else if (options.storybook) {
-    // When using --storybook flag, assume Storybook is already running
+  } else if (isStorybookMode) {
+    // When URL is provided without command, assume Storybook is already running
     console.log(`📚 Running in Storybook mode`);
     finalStorybookCommand = undefined;
   }
@@ -874,7 +875,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   if (isDockerEnvironment) {
     console.log(`${chalk.dim('  •')} Running in Docker environment`);
   }
-  if (storybookCommand && !options.storybook) {
+  if (storybookCommand) {
     console.log(
       `${chalk.dim('  •')} Storybook command: ${chalk.cyan(storybookLaunchCommand)} (${chalk.dim(
         storybookCommand,
@@ -885,7 +886,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       console.log(`${chalk.dim('  •')} Docker mode: Extended timeout (5min), output ignored`);
     }
     console.log(`${chalk.dim('  •')} Waiting for Storybook output...`);
-  } else if (!options.storybook) {
+  } else {
     console.log(
       `${chalk.dim('  •')} Using existing Storybook server at ${chalk.cyan(replaceDockerHostInUrl(config.storybookUrl))}`,
     );
@@ -947,7 +948,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     let reporterArg: string | undefined;
     if (useSilentReporter) {
       reporterArg = resolvedSilentReporter;
-    } else if ((options as CliOptions).storybook) {
+    } else if (isStorybookMode) {
       // Use filtered reporter for Storybook mode - provides rich terminal output
       const filteredReporterCandidates = [
         join(projectRoot, 'dist', 'reporters', 'filtered-reporter.js'),
