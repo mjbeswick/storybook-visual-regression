@@ -7,7 +7,6 @@ const require = createRequire(import.meta.url);
 let serverStarted = false;
 
 export interface AddonOptions {
-  port?: number;
   cliCommand?: string;
   storybookUrl?: string;
 }
@@ -21,8 +20,8 @@ export function previewAnnotations(entry: string[] = [], options: AddonOptions =
   if (!serverStarted) {
     try {
       const defaultConfig = loadAddonConfig();
-      // Always use our default port, ignore Storybook's port to avoid conflicts
-      const port = defaultConfig.port;
+      // Use fixed port 6007 for the addon's API server
+      const port = 6007;
       const cliCommand = options.cliCommand || defaultConfig.cliCommand;
       const storybookUrl = options.storybookUrl || 'http://localhost:9009';
       startApiServer(port, cliCommand, storybookUrl);
