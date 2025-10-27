@@ -33,7 +33,7 @@ export default {
 npx storybook-visual-regression test \
   --command "npm run storybook" \
   --url http://localhost \
-  --port 9009 \
+  --port 6006 \
   --workers 4 \
   --threshold 0.5 \
   --max-diff-pixels 200 \

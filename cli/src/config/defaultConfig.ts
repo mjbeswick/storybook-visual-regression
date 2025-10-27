@@ -3,7 +3,7 @@ import type { VisualRegressionConfig } from '../types/index.js';
 export function createDefaultConfig(): VisualRegressionConfig {
   return {
     // Storybook server configuration
-    storybookUrl: 'http://localhost:9009',
+    storybookUrl: 'http://localhost:6006',
     storybookCommand: 'npm run storybook',
 
     // Test configuration

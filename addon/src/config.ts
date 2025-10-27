@@ -9,7 +9,7 @@ export interface ResolvedConfig {
 }
 
 const DEFAULT_CLI_COMMAND = 'npx @storybook-visual-regression/cli';
-const DEFAULT_STORYBOOK_URL = 'http://localhost:9009';
+const DEFAULT_STORYBOOK_URL = 'http://localhost:6006';
 
 export function loadAddonConfig(): ResolvedConfig {
   // Always use explicit defaults; avoid env-based drift or port conflicts

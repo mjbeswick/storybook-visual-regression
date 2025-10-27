@@ -169,7 +169,7 @@ Options are applied in this priority order (highest to lowest):
 
 ```json
 {
-  "url": "http://localhost:9009",
+  "url": "http://localhost:6006",
   "command": "npm run storybook",
   "workers": 12,
   "retries": 3,

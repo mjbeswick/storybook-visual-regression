@@ -359,7 +359,7 @@ class FilteredReporter implements Reporter {
     this.testFinalStatuses.set(testId, result.status);
 
     const displayTitle = test.title.replace(/^snapshots-/, '');
-    const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:9009').replace(
+    const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:6006').replace(
       /\/$/,
       '',
     );
@@ -654,7 +654,7 @@ class FilteredReporter implements Reporter {
       // Show failure summary with URLs and diff paths if there are failures
       if (this.failureDetails.length > 0) {
         console.log(chalk.yellow('\n📋 Failed Tests Summary:'));
-        const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:9009').replace(
+        const baseUrl = (this.runtimeOptions?.storybookUrl ?? 'http://localhost:6006').replace(
           /\/$/,
           '',
         );

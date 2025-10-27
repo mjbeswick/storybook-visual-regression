@@ -1,11 +1,11 @@
 FROM mcr.microsoft.com/playwright:v1.56.1-jammy
 
-# Copy the built CLI and install it globally
-WORKDIR /app
-COPY cli/dist /tmp/cli/dist
-COPY cli/package.json /tmp/cli/package.json
-RUN cd /tmp/cli && npm install --omit=dev && npm install -g .
+# Install the CLI package globally (use latest published version)
+RUN npm install -g @storybook-visual-regression/cli@latest
 
 # Set entrypoint
 ENTRYPOINT ["storybook-visual-regression"]
+
+# Tag this image as the default storybook-visual-regression image
+# This allows using it without specifying :dev tag
 

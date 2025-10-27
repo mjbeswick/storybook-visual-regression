@@ -23,7 +23,7 @@ export function previewAnnotations(entry: string[] = [], options: AddonOptions =
       // Use fixed port 6007 for the addon's API server
       const port = 6007;
       const cliCommand = options.cliCommand || defaultConfig.cliCommand;
-      const storybookUrl = options.storybookUrl || 'http://localhost:9009';
+      const storybookUrl = options.storybookUrl || 'http://localhost:6006';
       startApiServer(port, cliCommand, storybookUrl);
       serverStarted = true;
     } catch {

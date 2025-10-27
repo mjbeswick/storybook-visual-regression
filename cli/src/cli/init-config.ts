@@ -12,7 +12,7 @@ const defaultConfigTemplate = `/**
 export default {
   // Storybook server configuration
   url: 'http://localhost',
-  port: 9009,
+  port: 6006,
   command: 'npm run storybook', // Comment out if Storybook is already running
 
   // Test execution
@@ -62,7 +62,7 @@ export default {
 
 const jsonConfigTemplate = `{
   "url": "http://localhost",
-  "port": 9009,
+  "port": 6006,
   "command": "npm run storybook",
   "workers": 16,
   "retries": 0,
