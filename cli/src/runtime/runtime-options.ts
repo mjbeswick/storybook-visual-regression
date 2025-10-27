@@ -24,8 +24,7 @@ export type RuntimeOptions = {
   notFoundRetryDelay: number;
   debug: boolean;
   updateSnapshots: boolean;
-  hideTimeEstimates: boolean;
-  hideSpinners: boolean;
+  noProgress: boolean;
   printUrls: boolean;
   isCI: boolean;
   isDocker: boolean;

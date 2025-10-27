@@ -266,8 +266,9 @@ class FilteredReporter implements Reporter {
 
     // Detect CI environment and configure display options
     this.isCI = this.runtimeOptions?.isCI ?? false;
-    this.showTimeEstimates = !this.isCI && !(this.runtimeOptions?.hideTimeEstimates ?? false);
-    this.showSpinners = !this.isCI && !(this.runtimeOptions?.hideSpinners ?? false);
+    const noProgress = this.runtimeOptions?.noProgress ?? false;
+    this.showTimeEstimates = !this.isCI && !noProgress;
+    this.showSpinners = !this.isCI && !noProgress;
 
     // Set first batch size for improved time estimation
     this.firstBatchSize = Math.min(Math.max(this.workers * 2, 5), Math.floor(this.totalTests / 3));

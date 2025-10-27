@@ -56,12 +56,10 @@ program
   )
   .option('--timezone <timezone>', 'Browser timezone', 'Europe/London')
   .option('--locale <locale>', 'Browser locale', 'en-GB')
-  .option('--reporter <reporter>', 'Playwright reporter (list|line|dot|json|junit)')
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
   .option('--print-urls', 'Show story URLs inline with test results')
-  .option('--hide-time-estimates', 'Hide time estimates in progress display')
-  .option('--hide-spinners', 'Hide progress spinners (useful for CI)')
+  .option('--no-progress', 'Disable progress spinners and time estimates (useful for CI pipelines)')
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
   .option('--max-diff-pixels <number>', 'Maximum number of pixels that can differ', '0')
@@ -131,14 +129,12 @@ type CliOptions = {
   timezone?: string;
   locale?: string;
   maxFailures?: string;
-  reporter?: string;
   quiet?: boolean;
   include?: string;
   exclude?: string;
   grep?: string;
   debug?: boolean;
-  hideTimeEstimates?: boolean;
-  hideSpinners?: boolean;
+  noProgress?: boolean;
   output?: string;
   updateSnapshots?: boolean;
   update?: boolean; // new --update flag
@@ -200,7 +196,6 @@ async function createConfigFromOptions(
   // Basic/string options
   setIf(hasArg('--url', '-u'), 'url', options.url);
   setIf(hasArg('--command', '-c'), 'command', options.command);
-  setIf(hasArg('--reporter'), 'reporter', options.reporter);
   setIf(hasArg('--browser'), 'browser', options.browser);
   setIf(hasArg('--timezone'), 'timezone', options.timezone);
   setIf(hasArg('--locale'), 'locale', options.locale);
@@ -229,8 +224,7 @@ async function createConfigFromOptions(
   setIf(hasArg('--quiet'), 'quiet', bool(options.quiet));
   setIf(hasArg('--debug'), 'debug', bool(options.debug));
   setIf(hasArg('--print-urls'), 'printUrls', bool(options.printUrls));
-  setIf(hasArg('--hide-time-estimates'), 'hideTimeEstimates', bool(options.hideTimeEstimates));
-  setIf(hasArg('--hide-spinners'), 'hideSpinners', bool(options.hideSpinners));
+  setIf(hasArg('--no-progress'), 'noProgress', bool(options.noProgress));
   setIf(hasArg('--not-found-check'), 'notFoundCheck', bool(options.notFoundCheck));
   setIf(hasArg('--missing-only'), 'missingOnly', bool(options.missingOnly));
   setIf(hasArg('--full-page'), 'fullPage', bool(options.fullPage));
@@ -613,8 +607,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const debugEnabled = Boolean(options.debug ?? userConfig.debug);
 
   const updateSnapshots = Boolean(options.updateSnapshots);
-  const hideTimeEstimates = Boolean(options.hideTimeEstimates ?? userConfig.hideTimeEstimates);
-  const hideSpinners = Boolean(options.hideSpinners ?? userConfig.hideSpinners);
+  const noProgress = Boolean(options.noProgress ?? userConfig.noProgress);
   const printUrls = Boolean(options.printUrls ?? userConfig.printUrls);
   const missingOnly = Boolean(options.missingOnly ?? userConfig.missingOnly);
   const clean = Boolean(options.clean);
@@ -856,8 +849,7 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     notFoundRetryDelay,
     debug: debugEnabled,
     updateSnapshots,
-    hideTimeEstimates,
-    hideSpinners,
+    noProgress,
     printUrls,
     isCI: effectiveIsCI,
     isDocker: isDockerEnvironment,
@@ -928,44 +920,16 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
       playwrightArgs.push('--max-failures', String(maxFailuresValue));
     }
 
-    // Resolve our minimal reporter path (used by default and in quiet mode)
-    const customReporterCandidates = [
-      join(projectRoot, 'dist', 'reporters', 'filtered-reporter.js'),
-      join(projectRoot, 'src', 'reporters', 'filtered-reporter.ts'),
-    ];
-    const resolvedCustomReporter = customReporterCandidates.find((p) => existsSync(p));
-    const silentReporterCandidates = [
-      join(projectRoot, 'dist', 'reporters', 'silent-reporter.js'),
-      join(projectRoot, 'src', 'reporters', 'silent-reporter.ts'),
-    ];
-    const resolvedSilentReporter = silentReporterCandidates.find((p) => existsSync(p));
-    const useSilentReporter =
-      typeof runtimeConfig.serverTimeout === 'number' &&
-      runtimeConfig.serverTimeout > 0 &&
-      runtimeConfig.serverTimeout < 1000 &&
-      resolvedSilentReporter;
-
-    let reporterArg: string | undefined;
-    if (useSilentReporter) {
-      reporterArg = resolvedSilentReporter;
-    } else if (isStorybookMode) {
-      // Use filtered reporter for Storybook mode - provides rich terminal output
+    // Use filtered reporter for Storybook mode, otherwise use default
+    if (isStorybookMode) {
       const filteredReporterCandidates = [
         join(projectRoot, 'dist', 'reporters', 'filtered-reporter.js'),
         join(projectRoot, 'src', 'reporters', 'filtered-reporter.ts'),
       ];
       const resolvedFilteredReporter = filteredReporterCandidates.find((p) => existsSync(p));
-      reporterArg = resolvedFilteredReporter;
-    } else if ((options as CliOptions).reporter || userConfig.reporter) {
-      reporterArg = String((options as CliOptions).reporter ?? userConfig.reporter);
-    } else if (debugEnabled) {
-      reporterArg = 'line';
-    } else if (resolvedCustomReporter) {
-      reporterArg = resolvedCustomReporter;
-    }
-
-    if (reporterArg) {
-      playwrightArgs.push('--reporter', reporterArg);
+      if (resolvedFilteredReporter) {
+        playwrightArgs.push('--reporter', resolvedFilteredReporter);
+      }
     }
 
     const child = execa('npx', playwrightArgs, {

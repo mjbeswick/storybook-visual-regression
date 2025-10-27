@@ -48,15 +48,11 @@ export default {
   quiet: false,             // Suppress verbose failure output
   debug: false,             // Enable debug logging
   printUrls: false,         // Show story URLs inline with test results
-  hideTimeEstimates: false, // Hide time estimates in progress display
-  hideSpinners: false,      // Hide progress spinners (useful for CI)
+  noProgress: false,        // Disable progress spinners and time estimates (useful for CI pipelines)
 
   // Advanced options
   notFoundCheck: false,     // Enable 'Not Found' content heuristic
   notFoundRetryDelay: 200,  // Delay between Not Found retries (ms)
-
-  // Reporter (optional)
-  // reporter: 'list',      // Playwright reporter: 'list' | 'line' | 'dot' | 'json' | 'junit'
 };
 `;
 
@@ -82,8 +78,7 @@ const jsonConfigTemplate = `{
   "quiet": false,
   "debug": false,
   "printUrls": false,
-  "hideTimeEstimates": false,
-  "hideSpinners": false,
+  "noProgress": false,
   "notFoundCheck": false,
   "notFoundRetryDelay": 200
 }

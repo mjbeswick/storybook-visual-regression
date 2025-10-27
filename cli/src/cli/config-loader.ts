@@ -47,13 +47,10 @@ export type UserConfig = {
   quiet?: boolean;
   debug?: boolean;
   printUrls?: boolean;
-  hideTimeEstimates?: boolean;
-  hideSpinners?: boolean;
+  noProgress?: boolean;
   notFoundCheck?: boolean;
   missingOnly?: boolean;
 
-  // Reporter
-  reporter?: string;
   // Screenshot
   fullPage?: boolean;
   threshold?: number;
