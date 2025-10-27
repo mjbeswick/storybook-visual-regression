@@ -1,21 +1,25 @@
 export interface AddonConfig {
   port?: number;
   cliCommand?: string;
+  storybookUrl?: string;
 }
 
 export interface ResolvedConfig {
   port: number;
   cliCommand: string;
+  storybookUrl: string;
 }
 
 const DEFAULT_PORT = 6007;
 const DEFAULT_CLI_COMMAND = 'npx @storybook-visual-regression/cli';
+const DEFAULT_STORYBOOK_URL = 'http://localhost:9009';
 
 export function loadAddonConfig(): ResolvedConfig {
   // Always use explicit defaults; avoid env-based drift or port conflicts
   return {
     port: DEFAULT_PORT,
     cliCommand: DEFAULT_CLI_COMMAND,
+    storybookUrl: DEFAULT_STORYBOOK_URL,
   };
 }
 

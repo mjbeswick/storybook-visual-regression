@@ -9,6 +9,7 @@ let serverStarted = false;
 export interface AddonOptions {
   port?: number;
   cliCommand?: string;
+  storybookUrl?: string;
 }
 
 export function managerEntries(entry: string[] = []) {
@@ -23,7 +24,8 @@ export function previewAnnotations(entry: string[] = [], options: AddonOptions =
       // Always use our default port, ignore Storybook's port to avoid conflicts
       const port = defaultConfig.port;
       const cliCommand = options.cliCommand || defaultConfig.cliCommand;
-      startApiServer(port, cliCommand);
+      const storybookUrl = options.storybookUrl || 'http://localhost:9009';
+      startApiServer(port, cliCommand, storybookUrl);
       serverStarted = true;
     } catch {
       // ignore server startup errors
