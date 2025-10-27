@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 4,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:6006/:9009',
+    baseURL: 'http://localhost:6006/:6006',
     headless: true,
     timezoneId: 'Europe/London',
     locale: 'en-GB',
@@ -16,7 +16,7 @@ export default defineConfig({
   webServer: {
     command: 'npm',
     args: ['run', 'storybook'],
-    url: 'http://localhost:6006/:9009',
+    url: 'http://localhost:6006/:6006',
     reuseExistingServer: true,
     timeout: 60000,
   },
