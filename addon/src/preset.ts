@@ -8,7 +8,6 @@ let serverStarted = false;
 
 export interface AddonOptions {
   cliCommand?: string;
-  storybookUrl?: string;
 }
 
 export function managerEntries(entry: string[] = []) {
@@ -23,8 +22,7 @@ export function previewAnnotations(entry: string[] = [], options: AddonOptions =
       // Use fixed port 6007 for the addon's API server
       const port = 6007;
       const cliCommand = options.cliCommand || defaultConfig.cliCommand;
-      const storybookUrl = options.storybookUrl || 'http://localhost:6006';
-      startApiServer(port, cliCommand, storybookUrl);
+      startApiServer(port, cliCommand);
       serverStarted = true;
     } catch {
       // ignore server startup errors

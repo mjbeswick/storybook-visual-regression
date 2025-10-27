@@ -54,7 +54,6 @@ async function ensureVisualRegressionDirs(): Promise<void> {
 export function startApiServer(
   port = 6007,
   cliCommand = 'npx @storybook-visual-regression/cli',
-  storybookUrl = 'http://localhost:6006',
 ): Server {
   if (server) {
     return server;
@@ -392,8 +391,7 @@ export function startApiServer(
           }
           // For 'test' and 'test-all', no additional args needed - main program runs tests by default
 
-          // Add URL to connect to running Storybook
-          args.push('--url', storybookUrl);
+          // Don't pass --url flag - let CLI read from config file
 
           // Add story filter if provided
           // Use --grep with exact match for better precision
