@@ -51,7 +51,7 @@ async function ensureVisualRegressionDirs(): Promise<void> {
   }
 }
 
-export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regression'): Server {
+export function startApiServer(port = 6007, cliCommand = 'npx @storybook-visual-regression/cli'): Server {
   if (server) {
     return server;
   }
@@ -668,19 +668,61 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
             let actualImagePath: string | undefined;
             let expectedImagePath: string | undefined;
 
+            // Helper function to get retry index from filename
+            const getRetryIndex = (filename: string): number => {
+              const m = filename.match(/-(\d+)-(diff|expected|actual)\.png$/);
+              return m ? parseInt(m[1], 10) : 0;
+            };
+
+            // Group files by type and find the highest retry index for each
+            const filesByType = {
+              diff: new Map<string, { path: string; retryIndex: number }>(),
+              actual: new Map<string, { path: string; retryIndex: number }>(),
+              expected: new Map<string, { path: string; retryIndex: number }>(),
+            };
+
             for (const subEntry of subEntries) {
               const subPath = join(entryPath, subEntry);
               const subStats = await stat(subPath);
 
               if (subStats.isFile()) {
                 if (subEntry.includes('-diff.png')) {
-                  diffImagePath = subPath;
+                  const retryIndex = getRetryIndex(subEntry);
+                  const baseKey = subEntry.replace(/-\d+-(diff|expected|actual)\.png$/, '-$1.png');
+                  const existing = filesByType.diff.get(baseKey);
+                  if (!existing || retryIndex > existing.retryIndex) {
+                    filesByType.diff.set(baseKey, { path: subPath, retryIndex });
+                  }
                 } else if (subEntry.includes('-actual.png')) {
-                  actualImagePath = subPath;
+                  const retryIndex = getRetryIndex(subEntry);
+                  const baseKey = subEntry.replace(/-\d+-(diff|expected|actual)\.png$/, '-$1.png');
+                  const existing = filesByType.actual.get(baseKey);
+                  if (!existing || retryIndex > existing.retryIndex) {
+                    filesByType.actual.set(baseKey, { path: subPath, retryIndex });
+                  }
                 } else if (subEntry.includes('-expected.png')) {
-                  expectedImagePath = subPath;
+                  const retryIndex = getRetryIndex(subEntry);
+                  const baseKey = subEntry.replace(/-\d+-(diff|expected|actual)\.png$/, '-$1.png');
+                  const existing = filesByType.expected.get(baseKey);
+                  if (!existing || retryIndex > existing.retryIndex) {
+                    filesByType.expected.set(baseKey, { path: subPath, retryIndex });
+                  }
                 }
               }
+            }
+
+            // Take the files with the highest retry index
+            for (const [, fileInfo] of filesByType.diff) {
+              diffImagePath = fileInfo.path;
+              break; // Take the first (highest retry index) file
+            }
+            for (const [, fileInfo] of filesByType.actual) {
+              actualImagePath = fileInfo.path;
+              break;
+            }
+            for (const [, fileInfo] of filesByType.expected) {
+              expectedImagePath = fileInfo.path;
+              break;
             }
 
             // Convert story ID to story name
@@ -727,8 +769,16 @@ export function startApiServer(port = 6007, cliCommand = 'storybook-visual-regre
 
   // Helper to convert Storybook ID to human-readable name
   function getStoryNameFromId(storyId: string): string {
+    // Remove viewport suffix if present (e.g., "--unattended", "--attended")
+    // Story IDs from visual regression include viewport: "story-id--viewport"
+    // But we want just the base story ID
+    const baseStoryId = storyId.replace(
+      /--(unattended|attended|customer|mobile|tablet|desktop)$/,
+      '',
+    );
+
     // Example: "screens-basket--empty" -> "Screens / Basket / Empty"
-    const parts = storyId.split('--');
+    const parts = baseStoryId.split('--');
     const title = parts[0]
       .split('-')
       .map((s) => s.charAt(0).toUpperCase() + s.slice(1))

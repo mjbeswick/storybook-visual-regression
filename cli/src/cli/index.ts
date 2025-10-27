@@ -20,16 +20,9 @@ import {
 import type { RuntimeOptions } from '../runtime/runtime-options.js';
 import { readFileSync } from 'fs';
 
-// Utility function to replace host.docker.internal with localhost for better accessibility in Docker environments
+// Utility function to display URLs for user (keep host.docker.internal visible in logs)
 function replaceDockerHostInUrl(url: string): string {
-  const isDockerEnvironment = Boolean(
-    process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
-  );
-
-  if (isDockerEnvironment && url.includes('host.docker.internal')) {
-    return url.replace(/host\.docker\.internal/g, 'localhost');
-  }
-
+  // Show the actual URL being used - don't modify it
   return url;
 }
 
@@ -98,6 +91,8 @@ program
     '100',
   )
   .option('--grep <pattern>', 'Filter stories by regex pattern')
+  .option('--include <patterns>', 'Include stories matching these patterns (comma-separated)')
+  .option('--exclude <patterns>', 'Exclude stories matching these patterns (comma-separated)')
   .option(
     '--install-browsers [browser]',
     'Install Playwright browsers before running (chromium|firefox|webkit|all)',
@@ -337,26 +332,34 @@ async function createConfigFromOptions(
 
   const port = inferredPortFromUrl ?? userConfig.port ?? 9009;
 
-  const baseUrl = urlFromOptions || 'http://localhost';
-  const storybookUrl = (() => {
-    // If url explicitly specifies a port, keep it as-is. Else append inferred/selected port.
-    if (inferredPortFromUrl) return baseUrl;
-    return baseUrl.includes(`:${port}`) ? baseUrl : `${baseUrl.replace(/\/$/, '')}:${port}`;
-  })();
-
   // Docker environment detection and URL adjustment
   const isDockerEnvironment = Boolean(
     process.env.DOCKER_CONTAINER || process.env.CONTAINER || existsSync('/.dockerenv'),
   );
 
-  // If running in Docker and using localhost/127.0.0.1, suggest host.docker.internal
-  if (isDockerEnvironment && storybookUrl.includes('127.0.0.1')) {
-    console.log(
-      chalk.yellow(
-        '⚠️  Docker detected: Consider using --url http://host.docker.internal:9009 instead of 127.0.0.1',
-      ),
-    );
-  }
+  const baseUrl = urlFromOptions || 'http://localhost';
+
+  // Auto-convert localhost to host.docker.internal when running in Docker
+  const adjustedBaseUrl = (() => {
+    if (!isDockerEnvironment) return baseUrl;
+
+    // Replace localhost or 127.0.0.1 with host.docker.internal
+    if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+      const converted = baseUrl.replace(/localhost|127\.0\.0\.1/g, 'host.docker.internal');
+      console.log(chalk.cyan(`🐳 Docker detected: Converting ${baseUrl} to ${converted}`));
+      return converted;
+    }
+
+    return baseUrl;
+  })();
+
+  const storybookUrl = (() => {
+    // If url explicitly specifies a port, keep it as-is. Else append inferred/selected port.
+    if (inferredPortFromUrl) return adjustedBaseUrl;
+    return adjustedBaseUrl.includes(`:${port}`)
+      ? adjustedBaseUrl
+      : `${adjustedBaseUrl.replace(/\/$/, '')}:${port}`;
+  })();
 
   const parseNumberOption = (value: unknown): number | undefined => {
     const n = typeof value === 'string' ? parseInt(value, 10) : Number(value);
@@ -577,6 +580,21 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     options.exclude ?? (userConfig.exclude ? userConfig.exclude.join(',') : undefined),
   );
   const grepPattern = (options.grep ?? userConfig.grep)?.trim() || undefined;
+
+  // Log filtering information
+  if (includePatterns && includePatterns.length > 0) {
+    console.log(
+      chalk.cyan(`🎯 Including stories matching: ${chalk.bold(includePatterns.join(', '))}`),
+    );
+  }
+  if (excludePatterns && excludePatterns.length > 0) {
+    console.log(
+      chalk.yellow(`🚫 Excluding stories matching: ${chalk.bold(excludePatterns.join(', '))}`),
+    );
+  }
+  if (grepPattern) {
+    console.log(chalk.magenta(`🔍 Filtering stories with regex: ${chalk.bold(grepPattern)}`));
+  }
   const waitTimeout = parseNumber(options.waitTimeout, userConfig.waitTimeout ?? 30_000);
   const overlayTimeout = parseNumber(options.overlayTimeout, userConfig.overlayTimeout ?? 5_000);
   const testTimeout = options.testTimeout
@@ -759,16 +777,32 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   // Calculate test timeout: sum of all possible waits + buffer
   // This prevents "Test timeout exceeded while setting up 'page'" errors
   const calculatedTestTimeout =
-    10000 + // Initial navigation timeout (Playwright default)
-    10000 + // Explicit font loading wait
     waitTimeout + // Wait for #storybook-root
     overlayTimeout + // Wait for overlays
+    (runtimeConfig.stabilizeInterval || 100) * (runtimeConfig.stabilizeAttempts || 10) + // Stabilization checks
+    (runtimeConfig.finalSettle || 1000) + // Final settle time
     10000 + // Additional waits in waitForLoadingSpinners
     5000 + // Additional checks (error page, content visibility)
     20000; // Buffer for screenshot capture and other operations
 
-  // Use user-provided testTimeout if specified, otherwise use calculated timeout + 30s buffer
-  const finalTestTimeout = testTimeout || Math.max(Math.ceil(calculatedTestTimeout + 30000), 30000);
+  // Apply 1.5x safety multiplier for edge cases and ensure minimum 60s timeout
+  const finalTestTimeout = testTimeout || Math.max(Math.ceil(calculatedTestTimeout * 1.5), 60000);
+
+  // Debug logging for timeout calculation
+  if (debugEnabled) {
+    console.log(`SVR: Timeout calculation breakdown:`);
+    console.log(`  - waitTimeout: ${waitTimeout}ms`);
+    console.log(`  - overlayTimeout: ${overlayTimeout}ms`);
+    console.log(
+      `  - stabilization: ${(runtimeConfig.stabilizeInterval || 100) * (runtimeConfig.stabilizeAttempts || 10)}ms`,
+    );
+    console.log(`  - finalSettle: ${runtimeConfig.finalSettle || 1000}ms`);
+    console.log(`  - additional waits: 15000ms`);
+    console.log(`  - buffer: 20000ms`);
+    console.log(`  - calculated total: ${calculatedTestTimeout}ms`);
+    console.log(`  - with 1.5x safety multiplier: ${Math.ceil(calculatedTestTimeout * 1.5)}ms`);
+    console.log(`  - final test timeout: ${finalTestTimeout}ms`);
+  }
 
   // Discover viewport configurations from Storybook if enabled
   let finalRuntimeConfig = runtimeConfig;

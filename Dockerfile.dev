@@ -1,0 +1,11 @@
+FROM mcr.microsoft.com/playwright:v1.56.1-jammy
+
+# Copy the built CLI and install it globally
+WORKDIR /app
+COPY cli/dist /tmp/cli/dist
+COPY cli/package.json /tmp/cli/package.json
+RUN cd /tmp/cli && npm install --omit=dev && npm install -g .
+
+# Set entrypoint
+ENTRYPOINT ["storybook-visual-regression"]
+

@@ -68,6 +68,7 @@ class FilteredReporter implements Reporter {
     string,
     'passed' | 'failed' | 'skipped' | 'timedOut' | 'interrupted'
   >();
+  private completedTests = new Set<string>(); // Track unique test completions
   private resultsRoot: string | null = null;
   private totalTests = 0;
   private completed = 0;
@@ -405,8 +406,9 @@ class FilteredReporter implements Reporter {
 
     // Update progress stats for ETA calculation
     // Only count unique tests, not retry attempts
-    // retry is undefined for the first attempt, and 0, 1, 2... for subsequent attempts
-    if (result.retry === undefined) {
+    // Use a Set to track unique test completions regardless of retry logic
+    if (!this.completedTests.has(testId)) {
+      this.completedTests.add(testId);
       this.completed += 1;
     }
     const remaining = Math.max(0, this.totalTests - this.completed);

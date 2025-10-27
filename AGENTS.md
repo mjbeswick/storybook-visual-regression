@@ -750,3 +750,143 @@ storybook-visual-regression test --output "test/visual-regression"
 - **Documentation**: Update README.md when making significant changes to functionality or usage
 - **Build verification**: Always test builds locally before committing changes
 - **Agent Memory Maintenance**: Keep AGENTS.md up to date by adding new architectural decisions, patterns, and learnings as they are discovered or implemented
+
+## Publishing and Deployment Workflow
+
+### CLI Package Publishing Process
+
+**CRITICAL**: Follow this exact workflow when publishing new versions of the CLI package.
+
+#### 1. Pre-Publishing Checklist
+
+- ✓ **Build verification**: Always run `npm run build` in the CLI directory before publishing
+- ✓ **Test locally**: Verify changes work before committing
+- ✓ **Version bump**: Use `npm version patch/minor/major` for proper versioning
+- ✓ **Git commit**: Commit changes with descriptive messages before publishing
+
+#### 2. Publishing Steps
+
+1. **Navigate to CLI directory**: `cd cli`
+2. **Build the package**: `npm run build`
+3. **Bump version**: `npm version patch` (or `minor`/`major` as needed)
+4. **Publish**: `npm publish`
+5. **Verify publication**: Check npm registry for the new version
+
+#### 3. Cleanup Old Versions
+
+**CRITICAL**: Always unpublish older versions to keep the registry clean.
+
+1. **Check published versions**: `npm view @storybook-visual-regression/cli versions --json`
+2. **Unpublish old versions**: `npm unpublish @storybook-visual-regression/cli@OLD_VERSION`
+3. **Verify cleanup**: Confirm only the latest version remains
+
+#### 4. Docker Image Rebuild
+
+After publishing a new CLI version, rebuild the Docker image:
+
+```bash
+# Navigate to project root
+cd ..
+
+# Rebuild Docker image with no cache
+docker build --no-cache -t storybook-visual-regression .
+```
+
+**Why use --no-cache**: Ensures the Docker image pulls the latest published CLI version instead of using cached layers.
+
+#### 5. Project Installation
+
+Install the new CLI version in target projects:
+
+```bash
+# Navigate to target project (e.g., Mercury)
+cd /path/to/target/project
+
+# Clear npm cache and install latest version
+npm cache clean --force
+npm install @storybook-visual-regression/cli@latest
+
+# Verify installation
+npm list @storybook-visual-regression/cli
+```
+
+### Complete Workflow Example
+
+```bash
+# 1. Build and publish CLI
+cd cli
+npm run build
+npm version patch
+npm publish
+
+# 2. Cleanup old versions
+npm unpublish @storybook-visual-regression/cli@1.5.12
+
+# 3. Rebuild Docker image
+cd ..
+docker build --no-cache -t storybook-visual-regression .
+
+# 4. Install in target project
+cd /Users/uk45006208/Projects/mercury
+npm cache clean --force
+npm install @storybook-visual-regression/cli@latest
+npm list @storybook-visual-regression/cli
+```
+
+### Workflow Best Practices
+
+#### Version Management
+
+- **Semantic versioning**: Use `patch` for bug fixes, `minor` for new features, `major` for breaking changes
+- **Single source of truth**: Only publish from the main CLI package, not from other locations
+- **Registry hygiene**: Always unpublish old versions to prevent confusion
+
+#### Docker Integration
+
+- **No cache rebuilds**: Always use `--no-cache` when rebuilding Docker images after CLI updates
+- **Tag consistency**: Use consistent Docker tags for easy reference
+- **Verification**: Test Docker images locally before deployment
+
+#### Project Integration
+
+- **Cache clearing**: Always clear npm cache before installing new versions
+- **Verification**: Always verify installations with `npm list`
+- **Consistency**: Use the same version across all projects when possible
+
+#### Error Handling
+
+- **Registry propagation**: Wait for npm registry propagation if installation fails
+- **Version conflicts**: Handle version conflicts gracefully with cache clearing
+- **Rollback plan**: Keep previous versions available for quick rollback if needed
+
+### Common Issues and Solutions
+
+#### "No matching version found" Error
+
+- **Cause**: npm registry hasn't propagated the new version yet
+- **Solution**: Wait a few minutes and try again, or clear npm cache
+
+#### Docker Build Failures
+
+- **Cause**: Docker cache contains old CLI version
+- **Solution**: Always use `--no-cache` flag when rebuilding after CLI updates
+
+#### Version Conflicts
+
+- **Cause**: Multiple versions installed or cached
+- **Solution**: Clear npm cache and reinstall with specific version
+
+### Workflow Automation
+
+For future automation, consider:
+
+1. **CI/CD Pipeline**: Automate the build, test, and publish process
+2. **Version Management**: Use automated version bumping based on commit messages
+3. **Docker Integration**: Automatically rebuild Docker images on CLI updates
+4. **Project Updates**: Automatically update dependent projects with new CLI versions
+
+### Security Considerations
+
+- **npm Authentication**: Ensure proper npm authentication before publishing
+- **Package Integrity**: Verify package contents before publishing
+- **Access Control**: Limit who can publish packages to prevent unauthorized releases

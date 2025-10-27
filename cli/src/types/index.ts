@@ -67,6 +67,14 @@ export type VisualRegressionConfig = {
   waitForNetworkIdle: boolean;
   contentStabilizationTime: number;
 
+  // Timeout configuration
+  waitTimeout?: number;
+  overlayTimeout?: number;
+  testTimeout?: number;
+  stabilizeInterval?: number;
+  stabilizeAttempts?: number;
+  finalSettle?: number;
+
   // Loading spinner handling (always enabled)
   loadingSpinnerSelectors: string[];
   loadingSpinnerTimeout: number;

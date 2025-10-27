@@ -147,7 +147,8 @@ const initializeAddon = async () => {
             // Deduplicate by storyId – keep the entry with the highest retry index
             const getRetryIndex = (p?: string): number => {
               if (!p) return 0;
-              const m = p.match(/-retry(\d+)/);
+              // Look for Playwright's retry pattern: -1, -2, -3, etc.
+              const m = p.match(/-(\d+)-(diff|expected|actual)\.png$/);
               return m ? parseInt(m[1], 10) : 0;
             };
             const bestById = new Map<string, (typeof incoming)[number]>();

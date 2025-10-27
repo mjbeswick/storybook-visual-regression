@@ -9,7 +9,7 @@ export interface ResolvedConfig {
 }
 
 const DEFAULT_PORT = 6007;
-const DEFAULT_CLI_COMMAND = 'storybook-visual-regression';
+const DEFAULT_CLI_COMMAND = 'npx @storybook-visual-regression/cli';
 
 export function loadAddonConfig(): ResolvedConfig {
   // Always use explicit defaults; avoid env-based drift or port conflicts

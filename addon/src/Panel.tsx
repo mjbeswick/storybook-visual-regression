@@ -490,32 +490,39 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                     <ul className={styles.failuresList}>
                       {results
                         .filter((r) => r.status === 'failed')
-                        .map((result) => (
-                          <li key={result.storyId} className={styles.failureItem}>
-                            <button
-                              onClick={() => {
-                                api.selectStory(result.storyId);
-                                setTimeout(() => showDiffInIframe(result), 300);
-                              }}
-                              className={styles.linkButton}
-                              title={
-                                result.errorPath
-                                  ? `Error: ${result.error || 'Story failed to load'}`
-                                  : 'View diff image'
-                              }
-                            >
-                              {result.storyName}
-                              {result.errorPath && (
-                                <span
-                                  className={styles.errorIndicator}
-                                  title="Error screenshot available"
-                                >
-                                  ⚠️
-                                </span>
-                              )}
-                            </button>
-                          </li>
-                        ))}
+                        .map((result) => {
+                          // Remove viewport suffix from story ID for navigation
+                          // Story IDs from visual regression include viewport: "story-id--viewport"
+                          // But api.selectStory() expects just the base story ID
+                          const baseStoryId = result.storyId.replace(/--(unattended|attended|customer|mobile|tablet|desktop)$/, '');
+                          
+                          return (
+                            <li key={result.storyId} className={styles.failureItem}>
+                              <button
+                                onClick={() => {
+                                  api.selectStory(baseStoryId);
+                                  setTimeout(() => showDiffInIframe(result), 300);
+                                }}
+                                className={styles.linkButton}
+                                title={
+                                  result.errorPath
+                                    ? `Error: ${result.error || 'Story failed to load'}`
+                                    : 'View diff image'
+                                }
+                              >
+                                {result.storyName}
+                                {result.errorPath && (
+                                  <span
+                                    className={styles.errorIndicator}
+                                    title="Error screenshot available"
+                                  >
+                                    ⚠️
+                                  </span>
+                                )}
+                              </button>
+                            </li>
+                          );
+                        })}
                     </ul>
                   </div>
                 )}

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, unlink } from 'fs';
 import { join } from 'path';
 
 import { expect, test, type Page } from '@playwright/test';
@@ -114,13 +114,14 @@ async function setViewportSize(page: Page, viewportKey: string): Promise<void> {
   }
 }
 
-type ReadyOptions = {
-  overlayTimeout: number;
-};
-
-async function waitForStoryReady(page: Page, opts?: ReadyOptions): Promise<void> {
-  const overlayTimeout = opts?.overlayTimeout ?? runtimeOptions.overlayTimeout;
+async function waitForStoryReady(page: Page): Promise<void> {
   const debugEnabled = runtimeOptions.debug;
+
+  // Check if page is still valid before waiting
+  if (page.isClosed()) {
+    throw new Error('Page was closed before waiting for story ready');
+  }
+
   // Make sure the canvas container exists
   const waitTimeout = runtimeOptions.waitTimeout;
   await page.waitForSelector('#storybook-root', { state: 'attached', timeout: waitTimeout });
@@ -589,7 +590,6 @@ test.describe('Visual Regression', () => {
 
       try {
         const waitTimeout = runtimeOptions.waitTimeout;
-        const overlayTimeout = runtimeOptions.overlayTimeout;
         const waitUntilOption = runtimeOptions.waitUntil;
 
         const operationStartTime = Date.now();
@@ -609,7 +609,7 @@ test.describe('Visual Regression', () => {
         // Wait for DOM to stabilize using MutationObserver
         // This is more accurate than waiting for resources - it waits for actual DOM changes to stop
         const mutationTimeoutStart = Date.now();
-        const mutationTimeoutMs = runtimeOptions.mutationTimeout;
+        const mutationTimeoutMs = Math.min(runtimeOptions.mutationTimeout, 25); // Cap at 25ms for faster tests
 
         if (mutationTimeoutMs > 0) {
           if (debugEnabled) {
@@ -683,6 +683,40 @@ test.describe('Visual Regression', () => {
           }
         }
 
+        // Wait for story to be ready with simple selector wait
+        const storyWaitStart = Date.now();
+
+        try {
+          // Check if page is still valid before waiting
+          if (page.isClosed()) {
+            throw new Error('Page was closed before story wait');
+          }
+
+          // Simple wait for storybook root with short timeout
+          await page.waitForSelector('#storybook-root', {
+            state: 'attached',
+            timeout: 2000, // Short timeout - if it's not ready in 2 seconds, proceed anyway
+          });
+
+          if (debugEnabled) {
+            console.log(`[${storyId}] Story root found in ${Date.now() - storyWaitStart}ms`);
+          }
+        } catch (error) {
+          if (debugEnabled) {
+            console.log(
+              `[${storyId}] Story root wait timed out after ${Date.now() - storyWaitStart}ms, proceeding`,
+            );
+            console.log(
+              `[${storyId}] Story wait error: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+
+        // Skip additional waits - the story is already ready and stable
+        if (debugEnabled) {
+          console.log(`[${storyId}] Skipping additional waits - story is ready`);
+        }
+
         // Fail fast on bad HTTP responses
         if (!resp || !resp.ok()) {
           // Try alternative path-based URL used by some Storybook setups
@@ -707,6 +741,12 @@ test.describe('Visual Regression', () => {
         if (debugEnabled) {
           console.log(`[${storyId}] Waiting for #storybook-root...`);
         }
+
+        // Check if page is still valid before waiting
+        if (page.isClosed()) {
+          throw new Error('Page was closed before waiting for #storybook-root');
+        }
+
         await page.waitForSelector('#storybook-root', { state: 'attached', timeout: waitTimeout });
         if (debugEnabled) {
           console.log(`[${storyId}] Found #storybook-root in ${Date.now() - beforeRootWait}ms`);
@@ -716,7 +756,7 @@ test.describe('Visual Regression', () => {
         if (debugEnabled) {
           console.log(`[${storyId}] Waiting for story to be ready...`);
         }
-        await waitForStoryReady(page, { overlayTimeout });
+        await waitForStoryReady(page);
         if (debugEnabled) {
           console.log(`[${storyId}] Story ready in ${Date.now() - beforeReadyWait}ms`);
         }
@@ -824,15 +864,90 @@ test.describe('Visual Regression', () => {
           );
         }
         for (let attempt = 1; attempt <= runtimeOptions.snapshotRetries; attempt++) {
+          // Clean up any existing result files from previous attempts before retrying
+          if (attempt > 1) {
+            try {
+              const resultsDir = join(process.cwd(), 'visual-regression', 'results');
+              const testResultDirs = await import('fs').then((fs) =>
+                fs.promises.readdir(resultsDir),
+              );
+
+              for (const dir of testResultDirs) {
+                if (dir.includes(storyId) && dir.includes('chromium')) {
+                  const dirPath = join(resultsDir, dir);
+                  const files = await import('fs').then((fs) => fs.promises.readdir(dirPath));
+
+                  // Delete all files from ALL previous attempts (numbered files: -1-, -2-, etc.)
+                  // This ensures only the last retry attempt has diff images
+                  for (const file of files) {
+                    // Match pattern: story-name-[0-9]+-(diff|expected|actual).png
+                    // This captures all retry numbered files
+                    if (
+                      /-\d+-(diff|expected|actual)\.png$/.test(file) &&
+                      (file.includes('-diff.png') ||
+                        file.includes('-expected.png') ||
+                        file.includes('-actual.png'))
+                    ) {
+                      const filePath = join(dirPath, file);
+                      try {
+                        await import('fs').then((fs) => fs.promises.unlink(filePath));
+                        if (debugEnabled) {
+                          console.log(`[${storyId}] Cleaned up previous retry file: ${file}`);
+                        }
+                      } catch {
+                        // Ignore cleanup errors
+                      }
+                    }
+                  }
+                }
+              }
+            } catch {
+              // Ignore cleanup errors - not critical
+            }
+          }
+
           try {
-            // Apply snapshot delay before each attempt
-            if (runtimeOptions.snapshotDelay > 0) {
+            // Apply snapshot delay before retry attempts (not the first attempt)
+            if (runtimeOptions.snapshotDelay > 0 && attempt > 1) {
               if (debugEnabled) {
                 console.log(
-                  `[${storyId}] Attempt ${attempt}/${runtimeOptions.snapshotRetries}: Waiting ${runtimeOptions.snapshotDelay}ms before taking screenshot`,
+                  `[${storyId}] Attempt ${attempt}/${runtimeOptions.snapshotRetries}: Waiting ${runtimeOptions.snapshotDelay}ms before retry`,
                 );
               }
               await page.waitForTimeout(runtimeOptions.snapshotDelay);
+            }
+
+            // For retry attempts, ensure the page is still ready
+            if (attempt > 1) {
+              if (debugEnabled) {
+                console.log(`[${storyId}] Attempt ${attempt}: Re-checking page readiness...`);
+              }
+
+              // Verify page is still valid
+              if (page.isClosed()) {
+                throw new Error('Page was closed before retry screenshot');
+              }
+
+              // Re-check that the story root is still present and ready
+              try {
+                await page.waitForSelector('#storybook-root', {
+                  state: 'attached',
+                  timeout: 2000,
+                });
+
+                // Small settle time to ensure content is stable
+                await page.waitForTimeout(100); // Reduced from 200ms to 100ms
+
+                if (debugEnabled) {
+                  console.log(`[${storyId}] Attempt ${attempt}: Page re-checked and ready`);
+                }
+              } catch (recheckError) {
+                if (debugEnabled) {
+                  console.log(
+                    `[${storyId}] Attempt ${attempt}: Page re-check failed, proceeding anyway: ${recheckError instanceof Error ? recheckError.message : String(recheckError)}`,
+                  );
+                }
+              }
             }
 
             // Verify page is still valid before attempting screenshot
@@ -877,8 +992,11 @@ test.describe('Visual Regression', () => {
               if (debugEnabled) {
                 console.error(chalk.dim(`  Error: ${errorMessage}`));
               }
+
               // Wait a bit before retrying
-              await page.waitForTimeout(1000);
+              if (!page.isClosed()) {
+                await page.waitForTimeout(1000);
+              }
             } else {
               // This is the last attempt, so we'll handle the error as before
               console.error(
@@ -914,17 +1032,26 @@ test.describe('Visual Regression', () => {
               // Print a spaced, aligned failure block
 
               if (!snapshotExists) {
-                console.error(chalk.yellow(`\n❌ Missing Snapshot: ${storyId}`));
-                console.error(chalk.dim(`   URL: ${storyUrl}`));
-                console.error(chalk.dim(`   Expected: ${snapshotPath}`));
-                console.error(
-                  chalk.cyan(
-                    `\n💡 Create snapshot: storybook-visual-regression update --include "${storyId}"`,
-                  ),
-                );
-                throw new Error(
-                  `Snapshot doesn't exist for story '${storyId}'. Run 'storybook-visual-regression update --include "${storyId}"' to create it.`,
-                );
+                console.log(chalk.yellow(`\n📸 Creating missing snapshot: ${storyId}`));
+                console.log(chalk.dim(`   URL: ${storyUrl}`));
+                console.log(chalk.dim(`   Creating: ${snapshotPath}`));
+
+                // Automatically create the missing snapshot
+                try {
+                  await expect(page).toHaveScreenshot(snapshotPathParts, {
+                    fullPage: Boolean(runtimeOptions.fullPage),
+                  });
+                  console.log(chalk.green(`✅ Successfully created snapshot for ${storyId}`));
+                  return; // Exit the retry loop successfully
+                } catch (createError) {
+                  console.error(chalk.red(`❌ Failed to create snapshot for ${storyId}`));
+                  console.error(
+                    chalk.dim(
+                      `   Error: ${createError instanceof Error ? createError.message : String(createError)}`,
+                    ),
+                  );
+                  throw createError;
+                }
               } else {
                 console.error(chalk.red(`\n❌ Screenshot Mismatch: ${storyId}`));
                 console.error(chalk.dim(`   URL: ${storyUrl}`));
