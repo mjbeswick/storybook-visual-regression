@@ -1,7 +1,24 @@
+FROM node:18 AS cli-builder
+
+WORKDIR /app/cli
+
+# Install dependencies for local CLI build
+COPY cli/package.json ./
+RUN npm install
+
+# Copy CLI source and build it
+COPY cli/ ./
+RUN npm run build
+
+# Pack the CLI into a tarball for global install in final image
+RUN npm pack
+
+
 FROM mcr.microsoft.com/playwright:v1.56.1-jammy
 
-# Install the CLI package globally
-RUN npm install -g @storybook-visual-regression/cli@latest
+# Install the locally built CLI tarball globally
+COPY --from=cli-builder /app/cli/*.tgz /tmp/cli.tgz
+RUN npm install -g /tmp/cli.tgz && rm -f /tmp/cli.tgz
 
 # Set entrypoint
 ENTRYPOINT ["storybook-visual-regression"]

@@ -16,8 +16,11 @@
     "format": "npm run format --workspaces",
     "format:check": "npm run format:check --workspaces",
     "clean": "npm run clean --workspaces",
-    "publish:cli": "cd cli && npm publish",
-    "publish:addon": "cd addon && npm publish"
+    "publish:cli": "npm run build --workspace cli && npm publish --workspace cli",
+    "publish:addon": "npm run build --workspace addon && npm publish --workspace addon",
+    "unpublish:cli": "node ./scripts/unpublish-old-versions.mjs @storybook-visual-regression/cli",
+    "unpublish:addon": "node ./scripts/unpublish-old-versions.mjs @storybook-visual-regression/addon",
+    "docker:build:nocache": "docker build --no-cache -t storybook-visual-regression ."
   },
   "keywords": [
     "storybook",

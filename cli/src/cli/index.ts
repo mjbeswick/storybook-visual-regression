@@ -59,6 +59,7 @@ program
   .option('--quiet', 'Suppress verbose failure output')
   .option('--debug', 'Enable debug logging')
   .option('--print-urls', 'Show story URLs inline with test results')
+  .option('--progress', 'Show progress spinners and time estimates')
   .option('--no-progress', 'Disable progress spinners and time estimates (useful for CI pipelines)')
   .option('--browser <browser>', 'Browser to use (chromium|firefox|webkit)', 'chromium')
   .option('--threshold <number>', 'Screenshot comparison threshold (0.0-1.0)', '0.2')
@@ -87,6 +88,11 @@ program
     'DOM stabilization timeout: wait this long after the last DOM mutation before taking screenshot. Uses MutationObserver to reset timeout on each mutation - tests complete as soon as DOM stabilizes (no mutations for this duration).',
     '100',
   )
+  .option(
+    '--mutation-max-wait <ms>',
+    'Maximum total time to wait for DOM to stabilize (cap for MutationObserver wait). Default 10000ms.',
+    '10000',
+  )
   .option('--grep <pattern>', 'Filter stories by regex pattern')
   .option('--include <patterns>', 'Include stories matching these patterns (comma-separated)')
   .option('--exclude <patterns>', 'Exclude stories matching these patterns (comma-separated)')
@@ -103,6 +109,7 @@ program
     '--missing-only',
     'Only create snapshots that do not already exist (skip existing baselines)',
   )
+  .option('--failed-only', 'Run only the tests that failed in the previous test run')
   .option('--save-config', 'Save CLI options to config file for future use')
   .action(async (options) => {
     const cliOptions = options as CliOptions;
@@ -110,10 +117,10 @@ program
     // Handle update mode
     if (cliOptions.update) {
       cliOptions.updateSnapshots = true;
-      // Set clean to true by default for update mode
-      if (cliOptions.clean === undefined) {
-        cliOptions.clean = true;
-      }
+      // Do not auto-enable cleaning; require explicit --clean to prune snapshots
+      // if (cliOptions.clean === undefined) {
+      //   cliOptions.clean = true;
+      // }
     }
 
     await runTests(cliOptions);
@@ -134,6 +141,7 @@ type CliOptions = {
   exclude?: string;
   grep?: string;
   debug?: boolean;
+  progress?: boolean;
   noProgress?: boolean;
   output?: string;
   updateSnapshots?: boolean;
@@ -151,6 +159,7 @@ type CliOptions = {
   snapshotRetries?: string; // count
   snapshotDelay?: string; // ms
   mutationTimeout?: string; // ms
+  mutationMaxWait?: string; // ms
   waitUntil?: string; // 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
   // Not found check configuration
   notFoundCheck?: boolean;
@@ -158,6 +167,7 @@ type CliOptions = {
   // Update behavior
   missingOnly?: boolean;
   clean?: boolean;
+  failedOnly?: boolean;
   // CI convenience
   installBrowsers?: string;
   installDeps?: boolean;
@@ -216,6 +226,7 @@ async function createConfigFromOptions(
   setIf(hasArg('--snapshot-delay'), 'snapshotDelay', num(options.snapshotDelay));
   setIf(hasArg('--webserver-timeout'), 'webserverTimeout', num(options.webserverTimeout));
   setIf(hasArg('--mutation-timeout'), 'mutationTimeout', num(options.mutationTimeout));
+  setIf(hasArg('--mutation-max-wait'), 'mutationMaxWait', num(options.mutationMaxWait));
   setIf(hasArg('--threshold'), 'threshold', floatNum(options.threshold));
   setIf(hasArg('--max-diff-pixels'), 'maxDiffPixels', num(options.maxDiffPixels));
 
@@ -224,7 +235,20 @@ async function createConfigFromOptions(
   setIf(hasArg('--quiet'), 'quiet', bool(options.quiet));
   setIf(hasArg('--debug'), 'debug', bool(options.debug));
   setIf(hasArg('--print-urls'), 'printUrls', bool(options.printUrls));
-  setIf(hasArg('--no-progress'), 'noProgress', bool(options.noProgress));
+  // Handle both --progress and --no-progress flags
+  // Commander.js sets noProgress to true when --no-progress is passed, false otherwise
+  if (hasArg('--progress', '--no-progress')) {
+    const resolvedNoProgress =
+      typeof options.noProgress === 'boolean'
+        ? options.noProgress
+        : typeof options.progress === 'boolean'
+          ? !options.progress
+          : false;
+    if (updatedUserConfig.noProgress !== resolvedNoProgress) {
+      updatedUserConfig.noProgress = resolvedNoProgress;
+      didUpdate = true;
+    }
+  }
   setIf(hasArg('--not-found-check'), 'notFoundCheck', bool(options.notFoundCheck));
   setIf(hasArg('--missing-only'), 'missingOnly', bool(options.missingOnly));
   setIf(hasArg('--full-page'), 'fullPage', bool(options.fullPage));
@@ -589,12 +613,15 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   }
   const waitTimeout = parseNumber(options.waitTimeout, userConfig.waitTimeout ?? 30_000);
   const overlayTimeout = parseNumber(options.overlayTimeout, userConfig.overlayTimeout ?? 5_000);
-  const testTimeout = options.testTimeout
-    ? parseInt(options.testTimeout, 10)
-    : userConfig.testTimeout;
+  // Only use testTimeout if explicitly provided via CLI, otherwise calculate it
+  // Check if --test-timeout was actually provided in CLI args (not from config merge)
+  const hasTestTimeoutArg = process.argv.some((arg) => /^--test-timeout(=|$)/.test(arg));
+  const explicitTestTimeout =
+    hasTestTimeoutArg && options.testTimeout ? parseInt(options.testTimeout, 10) : undefined;
   const snapshotRetries = parseNumber(options.snapshotRetries, userConfig.snapshotRetries ?? 1);
   const snapshotDelay = parseNumber(options.snapshotDelay, userConfig.snapshotDelay ?? 0);
   const mutationTimeout = parseNumber(options.mutationTimeout, userConfig.mutationTimeout ?? 100);
+  const mutationMaxWait = parseNumber(options.mutationMaxWait, userConfig.mutationMaxWait ?? 10000);
   const waitUntilCandidates = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
   const waitUntilInput = (options.waitUntil || userConfig.waitUntil || '').toLowerCase();
   const waitUntilValue = waitUntilCandidates.has(waitUntilInput)
@@ -607,7 +634,16 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const debugEnabled = Boolean(options.debug ?? userConfig.debug);
 
   const updateSnapshots = Boolean(options.updateSnapshots);
-  const noProgress = Boolean(options.noProgress ?? userConfig.noProgress);
+  // Determine noProgress: if user explicitly passed --no-progress, then noProgress = true
+  // If user explicitly passed --progress, then noProgress = false
+  // Otherwise, use config value (defaults to false)
+  const explicitNoProgress =
+    typeof options.noProgress === 'boolean'
+      ? options.noProgress
+      : typeof options.progress === 'boolean'
+        ? !options.progress
+        : undefined;
+  const noProgress = explicitNoProgress ?? Boolean(userConfig.noProgress);
   const printUrls = Boolean(options.printUrls ?? userConfig.printUrls);
   const missingOnly = Boolean(options.missingOnly ?? userConfig.missingOnly);
   const clean = Boolean(options.clean);
@@ -773,24 +809,24 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
   const calculatedTestTimeout =
     waitTimeout + // Wait for #storybook-root
     overlayTimeout + // Wait for overlays
-    (runtimeConfig.stabilizeInterval || 100) * (runtimeConfig.stabilizeAttempts || 10) + // Stabilization checks
-    (runtimeConfig.finalSettle || 1000) + // Final settle time
     10000 + // Additional waits in waitForLoadingSpinners
     5000 + // Additional checks (error page, content visibility)
     20000; // Buffer for screenshot capture and other operations
 
   // Apply 1.5x safety multiplier for edge cases and ensure minimum 60s timeout
-  const finalTestTimeout = testTimeout || Math.max(Math.ceil(calculatedTestTimeout * 1.5), 60000);
+  // Only use explicit timeout if provided via CLI, otherwise use calculated value
+  // IMPORTANT: Ignore any testTimeout from userConfig to always use calculated or explicit CLI value
+  const finalTestTimeout =
+    explicitTestTimeout ?? Math.max(Math.ceil(calculatedTestTimeout * 1.5), 60000);
 
   // Debug logging for timeout calculation
   if (debugEnabled) {
     console.log(`SVR: Timeout calculation breakdown:`);
+    console.log(`  - --test-timeout in argv: ${hasTestTimeoutArg}`);
+    console.log(`  - options.testTimeout: ${options.testTimeout}`);
+    console.log(`  - explicitTestTimeout: ${explicitTestTimeout}`);
     console.log(`  - waitTimeout: ${waitTimeout}ms`);
     console.log(`  - overlayTimeout: ${overlayTimeout}ms`);
-    console.log(
-      `  - stabilization: ${(runtimeConfig.stabilizeInterval || 100) * (runtimeConfig.stabilizeAttempts || 10)}ms`,
-    );
-    console.log(`  - finalSettle: ${runtimeConfig.finalSettle || 1000}ms`);
     console.log(`  - additional waits: 15000ms`);
     console.log(`  - buffer: 20000ms`);
     console.log(`  - calculated total: ${calculatedTestTimeout}ms`);
@@ -842,9 +878,11 @@ async function runWithPlaywrightReporter(options: CliOptions): Promise<void> {
     snapshotRetries,
     snapshotDelay,
     mutationTimeout,
+    mutationMaxWait,
     waitUntil: waitUntilValue,
     missingOnly,
     clean,
+    failedOnly: Boolean(options.failedOnly),
     notFoundCheck,
     notFoundRetryDelay,
     debug: debugEnabled,

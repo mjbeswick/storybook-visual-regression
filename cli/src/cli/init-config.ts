@@ -30,7 +30,6 @@ export default {
   waitTimeout: 30000,       // Wait-for-element timeout (ms)
   overlayTimeout: 5000,     // Storybook overlay timeout (ms)
   webserverTimeout: 120000, // Webserver startup timeout (ms)
-  finalSettle: 500,         // Final settle delay after readiness (ms)
   snapshotRetries: 1,       // Number of times to retry taking screenshot (count)
   snapshotDelay: 0,         // Delay before taking screenshot (ms)
   mutationTimeout: 100,         // Time to wait after last DOM mutation before considering page stable (ms)
@@ -70,7 +69,6 @@ const jsonConfigTemplate = `{
   "waitTimeout": 30000,
   "overlayTimeout": 5000,
   "webserverTimeout": 120000,
-  "finalSettle": 500,
   "snapshotRetries": 1,
   "snapshotDelay": 0,
   "mutationTimeout": 100,

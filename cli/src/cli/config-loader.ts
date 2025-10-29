@@ -33,6 +33,7 @@ export type UserConfig = {
   snapshotRetries?: number;
   snapshotDelay?: number;
   mutationTimeout?: number;
+  mutationMaxWait?: number;
   notFoundRetryDelay?: number;
 
   // Wait strategy

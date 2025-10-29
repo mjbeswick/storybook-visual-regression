@@ -115,7 +115,7 @@ A fully functional Storybook addon that integrates visual regression testing dir
 ## Installation
 
 ```bash
-npm install --save-dev storybook-visual-regression-addon
+npm install --save-dev @storybook-visual-regression/addon
 ```
 
 ## Setup
@@ -128,17 +128,17 @@ Add the addon to your `.storybook/main.js` or `.storybook/main.ts`:
 module.exports = {
   addons: [
     // ... other addons
-    'storybook-visual-regression-addon',
+    '@storybook-visual-regression/addon',
   ],
 };
 ```
 
 ### 2. Prerequisites
 
-This addon requires the `storybook-visual-regression` CLI tool to be installed:
+This addon requires the `@storybook-visual-regression/cli` CLI tool to be installed:
 
 ```bash
-npm install --save-dev storybook-visual-regression
+npm install --save-dev @storybook-visual-regression/cli
 ```
 
 Make sure Playwright browsers are installed:
@@ -152,7 +152,7 @@ npx playwright install chromium
 The addon will use the default configuration from your `svr.config.js` file if it exists. You can create one with:
 
 ```bash
-npx storybook-visual-regression init
+npx @storybook-visual-regression/cli init
 ```
 
 #### Addon Configuration
@@ -166,10 +166,10 @@ module.exports = {
   addons: [
     // ... other addons
     {
-      name: 'storybook-visual-regression-addon',
+      name: '@storybook-visual-regression/addon',
       options: {
         port: 6008, // Custom API server port
-        cliCommand: 'npx storybook-visual-regression', // Custom CLI command
+        cliCommand: 'npx @storybook-visual-regression/cli', // Custom CLI command
       },
     },
   ],
@@ -183,7 +183,7 @@ module.exports = {
 ```javascript
 // .storybook/main.js
 module.exports = {
-  addons: ['storybook-visual-regression-addon'],
+  addons: ['@storybook-visual-regression/addon'],
 };
 ```
 
@@ -194,7 +194,7 @@ module.exports = {
 module.exports = {
   addons: [
     {
-      name: 'storybook-visual-regression-addon',
+      name: '@storybook-visual-regression/addon',
       options: {
         port: 6008,
       },
@@ -210,9 +210,9 @@ module.exports = {
 module.exports = {
   addons: [
     {
-      name: 'storybook-visual-regression-addon',
+      name: '@storybook-visual-regression/addon',
       options: {
-        cliCommand: 'npx storybook-visual-regression',
+        cliCommand: 'npx @storybook-visual-regression/cli',
       },
     },
   ],
@@ -226,7 +226,7 @@ module.exports = {
 module.exports = {
   addons: [
     {
-      name: 'storybook-visual-regression-addon',
+      name: '@storybook-visual-regression/addon',
       options: {
         cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression',
       },
@@ -240,7 +240,7 @@ module.exports = {
 **Default Configuration:**
 
 - **API Server Port**: 6007
-- **CLI Command**: `storybook-visual-regression`
+- **CLI Command**: `@storybook-visual-regression/cli`
 
 #### Cross-Platform Considerations
 
@@ -261,7 +261,7 @@ To ensure consistent font rendering across all platforms, use the Docker CLI com
 module.exports = {
   addons: [
     {
-      name: 'storybook-visual-regression-addon',
+      name: '@storybook-visual-regression/addon',
       options: {
         cliCommand: 'docker run --rm -v $(pwd):/app storybook-visual-regression',
       },
@@ -307,10 +307,10 @@ You can also use environment variables as a fallback:
 VR_API_PORT=6008 npm run storybook
 
 # Custom CLI command
-VR_CLI_COMMAND="npx storybook-visual-regression" npm run storybook
+VR_CLI_COMMAND="npx @storybook-visual-regression/cli" npm run storybook
 
 # Both custom
-VR_API_PORT=6008 VR_CLI_COMMAND="npx storybook-visual-regression" npm run storybook
+VR_API_PORT=6008 VR_CLI_COMMAND="npx @storybook-visual-regression/cli" npm run storybook
 ```
 
 ## Usage
@@ -418,7 +418,7 @@ Manager emits 'TEST_STORY' event via Storybook channel
      ↓
 Preview receives event, gets current story ID
      ↓
-Preview spawns CLI: storybook-visual-regression test --json --grep "story-id"
+Preview spawns CLI: @storybook-visual-regression/cli test --json --grep "story-id"
      ↓
 CLI executes Playwright test, outputs JSON results
      ↓
@@ -436,7 +436,7 @@ User clicks "Test All Stories" button
      ↓
 Manager emits 'TEST_ALL_STORIES' event
      ↓
-Preview spawns CLI: storybook-visual-regression test --json
+Preview spawns CLI: @storybook-visual-regression/cli test --json
      ↓
 CLI runs all tests, outputs comprehensive JSON results
      ↓
@@ -452,7 +452,7 @@ User clicks "Update Baseline" after failed test
      ↓
 Manager emits 'UPDATE_BASELINE' event with story ID
      ↓
-Preview spawns CLI: storybook-visual-regression update --grep "story-id"
+Preview spawns CLI: @storybook-visual-regression/cli update --grep "story-id"
      ↓
 CLI updates baseline, outputs confirmation
      ↓
@@ -529,7 +529,7 @@ The addon spawns CLI processes with carefully constructed arguments:
 ```typescript
 // Individual story test
 const args = [
-  'storybook-visual-regression',
+  '@storybook-visual-regression/cli',
   'test',
   '--json',
   '--grep',
@@ -542,7 +542,7 @@ const args = [
 
 // Batch test
 const args = [
-  'storybook-visual-regression',
+  '@storybook-visual-regression/cli',
   'test',
   '--json',
   '--output',
@@ -692,9 +692,9 @@ The addon can be extended with:
 
 **Causes & Solutions**:
 
-- **Missing CLI tool**: Ensure `storybook-visual-regression` is installed
+- **Missing CLI tool**: Ensure `@storybook-visual-regression/cli` is installed
   ```bash
-  npm install --save-dev storybook-visual-regression
+  npm install --save-dev @storybook-visual-regression/cli
   ```
 - **Playwright not installed**: Install Playwright browsers
   ```bash
@@ -738,7 +738,7 @@ The addon can be extended with:
 - **Addon not registered**: Check `.storybook/main.js` includes the addon
   ```javascript
   module.exports = {
-    addons: ['storybook-visual-regression-addon'],
+    addons: ['@storybook-visual-regression/addon'],
   };
   ```
 - **Storybook not restarted**: Restart Storybook after adding the addon
@@ -829,7 +829,7 @@ The addon can be extended with:
 
 - **CLI not installed**: Install the CLI tool
   ```bash
-  npm install --save-dev storybook-visual-regression
+  npm install --save-dev @storybook-visual-regression/cli
   ```
 - **Permission issues**: Check CLI execution permissions
   ```bash
@@ -863,9 +863,9 @@ npx storybook-visual-regression test --debug
 
 #### Common Error Messages
 
-**"Cannot find module 'storybook-visual-regression'"**
+**"Cannot find module '@storybook-visual-regression/cli'"**
 
-- Install the CLI tool: `npm install --save-dev storybook-visual-regression`
+- Install the CLI tool: `npm install --save-dev @storybook-visual-regression/cli`
 
 **"Port 6007 is already in use"**
 
@@ -898,7 +898,7 @@ When reporting issues, include:
 
 ## Related Projects
 
-- [storybook-visual-regression](https://github.com/your-org/storybook-visual-regression) - The CLI tool that powers this addon
+- [@storybook-visual-regression/cli](../cli/README.md) - The CLI tool that powers this addon
 - [@storybook/addon-interactions](https://github.com/storybookjs/storybook/tree/main/addons/interactions) - Inspiration for the UI patterns
 - [Playwright](https://playwright.dev/) - The test runner used under the hood
 
@@ -920,5 +920,5 @@ Contributions are welcome! This is an example addon that demonstrates integratio
 For issues related to:
 
 - **The addon itself** - Open an issue in this repository
-- **Visual regression testing** - See the main `storybook-visual-regression` documentation
+- **Visual regression testing** - See the [CLI documentation](../cli/README.md)
 - **Storybook** - Visit [Storybook documentation](https://storybook.js.org/docs)

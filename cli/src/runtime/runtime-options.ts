@@ -17,9 +17,11 @@ export type RuntimeOptions = {
   snapshotRetries: number;
   snapshotDelay: number;
   mutationTimeout: number;
+  mutationMaxWait: number;
   waitUntil: 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
   missingOnly: boolean;
   clean: boolean;
+  failedOnly: boolean;
   notFoundCheck: boolean;
   notFoundRetryDelay: number;
   debug: boolean;

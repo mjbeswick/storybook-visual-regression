@@ -48,17 +48,10 @@ export function createDefaultConfig(): VisualRegressionConfig {
     disableAnimations: true,
     waitForNetworkIdle: true,
     contentStabilizationTime: 100,
-
-    // Loading spinner handling (always enabled)
-    loadingSpinnerSelectors: [
-      '.sb-loader',
-      '[data-testid="loading"]',
-      '[data-testid="spinner"]',
-      '[role="progressbar"]',
-      '.loading-spinner',
-      '.loading-indicator',
-      '.loading:not(.loading-button):not(.loading-text)',
-    ],
-    loadingSpinnerTimeout: 10000,
+    // DOM stabilization timeout: wait this long after the last DOM mutation before taking screenshot
+    mutationTimeout: 100,
+    // Max time to wait for DOM stabilization (MutationObserver-based)
+    // Ensures we never hang indefinitely if a story updates continuously
+    mutationMaxWait: 10000,
   };
 }

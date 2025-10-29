@@ -65,22 +65,65 @@ function loadStorybookFromStatic(projectCwd: string): StorybookIndex {
   return data;
 }
 
+/**
+ * Sanitize a filename/directory name by removing invalid characters
+ */
+function sanitizePathSegment(segment: string): string {
+  // Replace invalid filename characters with dashes
+  // Windows: < > : " | ? * \
+  // Unix: / (forward slash)
+  // Also replace spaces with dashes for better filesystem compatibility
+  // Remove leading/trailing spaces, dots, and dashes
+  // Remove control characters
+  return segment
+    .replace(/[<>:"|?*\\/]/g, '-') // Replace invalid path characters
+    .replace(/\s+/g, '-') // Replace spaces (and multiple spaces) with single dash
+    .replace(/\.\./g, '-') // Remove .. sequences
+    .replace(/^[\s.-]+|[\s.-]+$/g, '') // Remove leading/trailing spaces, dots, dashes
+    .replace(/-+/g, '-') // Replace multiple dashes with single dash
+    .trim();
+}
+
 function extractStoryMetadata(data: StorybookIndex): {
   storyIds: string[];
   importPaths: Record<string, string>;
+  storySnapshotPaths: Record<string, string>;
 } {
   const entries = data.entries ?? {};
   const storyIds = Object.keys(entries).filter((id) => entries[id]?.type === 'story');
   const importPaths: Record<string, string> = {};
+  const storySnapshotPaths: Record<string, string> = {};
 
   for (const storyId of storyIds) {
     const entry = entries[storyId];
     if (entry && typeof entry.importPath === 'string') {
       importPaths[storyId] = entry.importPath;
     }
+
+    // Generate snapshot path matching directory structure from story title/name
+    const human =
+      entry && (entry.title || entry.name)
+        ? `${entry.title ?? ''}${entry.title && entry.name ? ' / ' : ''}${entry.name ?? ''}`
+        : storyId;
+
+    const displayName = human || storyId;
+    const parts = displayName
+      .split(' / ')
+      .map((part) => sanitizePathSegment(part))
+      .filter(Boolean);
+
+    if (parts.length > 0) {
+      const fileName = parts[parts.length - 1] || storyId;
+      const dirParts = parts.length > 1 ? parts.slice(0, -1) : [];
+      const pathParts =
+        dirParts.length > 0 ? [...dirParts, `${fileName}.png`] : [`${fileName}.png`];
+      storySnapshotPaths[storyId] = join(...pathParts);
+    } else {
+      storySnapshotPaths[storyId] = `${storyId}.png`;
+    }
   }
 
-  return { storyIds, importPaths };
+  return { storyIds, importPaths, storySnapshotPaths };
 }
 
 async function cleanOrphanedSnapshots(
@@ -90,24 +133,13 @@ async function cleanOrphanedSnapshots(
   console.log('');
   console.log(chalk.bold('🗑️  Cleaning orphaned snapshots'));
 
-  const entries = indexData.entries || {};
-  const stories = Object.keys(entries)
-    .map((id) => entries[id])
-    .filter(
-      (entry: any) =>
-        entry &&
-        entry.type === 'story' &&
-        typeof entry.id === 'string' &&
-        typeof entry.title === 'string' &&
-        typeof entry.name === 'string',
-    );
+  // Use the same path generation logic as the test file
+  const { storySnapshotPaths } = extractStoryMetadata(indexData);
 
-  // Create a set of all existing story snapshot paths
-  const existingStoryPaths = new Set<string>();
-  for (const story of stories) {
-    if (!story.id) continue;
-    const fullSnapshotPath = join(runtimeOptions.visualRegression.snapshotPath, `${story.id}.png`);
-    existingStoryPaths.add(fullSnapshotPath);
+  // Create a set of all existing story snapshot paths (relative paths)
+  const existingSnapshotPaths = new Set<string>();
+  for (const [storyId, relativePath] of Object.entries(storySnapshotPaths)) {
+    existingSnapshotPaths.add(relativePath);
   }
 
   // Find all snapshot files in the snapshot directory
@@ -142,14 +174,18 @@ async function cleanOrphanedSnapshots(
   const allSnapshotFiles = findSnapshotFiles(snapshotPath);
 
   // Delete snapshots that don't match any existing story
+  // Compare relative paths from snapshot directory root
   for (const snapshotFile of allSnapshotFiles) {
-    if (!existingStoryPaths.has(snapshotFile)) {
+    const relativePath = relative(snapshotPath, snapshotFile);
+
+    // Normalize path separators for comparison (handle both / and \)
+    const normalizedRelativePath = relativePath.replace(/\\/g, '/');
+
+    if (!existingSnapshotPaths.has(normalizedRelativePath)) {
       try {
         rmSync(snapshotFile, { force: true });
         deletedCount++;
-        console.log(
-          `  ${chalk.dim('•')} Deleted orphaned snapshot: ${relative(snapshotPath, snapshotFile)}`,
-        );
+        console.log(`  ${chalk.dim('•')} Deleted orphaned snapshot: ${relativePath}`);
       } catch (deleteError) {
         console.log(
           `  ${chalk.yellow('⚠')} Failed to delete ${snapshotFile}: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`,
@@ -202,6 +238,78 @@ async function cleanOrphanedSnapshots(
   }
 
   console.log(`  ✓ Cleaned ${deletedCount} orphaned snapshots (${skippedCount} kept)`);
+}
+
+async function cleanOrphanedResults(
+  indexData: StorybookIndex,
+  runtimeOptions: ReturnType<typeof loadRuntimeOptions>,
+): Promise<void> {
+  console.log('');
+  console.log(chalk.bold('🧹 Cleaning orphaned results'));
+
+  // Use the same path generation logic as the test file
+  const { storySnapshotPaths } = extractStoryMetadata(indexData);
+
+  // Create a set of all valid result file paths (relative paths)
+  // Results can be: snapshot.png, snapshot-diff.png, snapshot-error.png
+  const validResultPaths = new Set<string>();
+  for (const relativePath of Object.values(storySnapshotPaths)) {
+    validResultPaths.add(relativePath);
+    validResultPaths.add(relativePath.replace(/\.png$/i, '-diff.png'));
+    validResultPaths.add(relativePath.replace(/\.png$/i, '-error.png'));
+  }
+
+  const resultsRoot = runtimeOptions.visualRegression.resultsPath;
+  if (!existsSync(resultsRoot)) {
+    console.log(`  ${chalk.dim('•')} No results directory found - nothing to clean`);
+    return;
+  }
+
+  let deletedFiles = 0;
+
+  const walk = (dir: string): void => {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          // Remove empty directory
+          try {
+            const after = readdirSync(full);
+            if (after.length === 0) {
+              rmSync(full, { recursive: true, force: true });
+              console.log(`  ${chalk.dim('•')} Removed empty directory: ${full}`);
+            }
+          } catch {
+            /* ignore */
+          }
+        } else if (entry.isFile() && entry.name.endsWith('.png')) {
+          // Compare relative paths from results directory root
+          const relativePath = relative(resultsRoot, full);
+          const normalizedRelativePath = relativePath.replace(/\\/g, '/');
+
+          // Check if this file matches any valid result path
+          const isOrphan = !validResultPaths.has(normalizedRelativePath);
+
+          if (isOrphan) {
+            try {
+              rmSync(full, { force: true });
+              deletedFiles++;
+              console.log(`  ${chalk.dim('•')} Deleted orphaned result: ${relativePath}`);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  walk(resultsRoot);
+  console.log(`  ✓ Cleaned ${deletedFiles} orphaned result files`);
 }
 
 async function globalSetup(_config: FullConfig): Promise<void> {
@@ -261,10 +369,13 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     `  ${chalk.green('✓')} Found ${chalk.bold(storyIds.length)} stories via ${sourceLabel}`,
   );
 
-  // Delete existing snapshots if --clean flag is set
-  if (runtimeOptions.clean && runtimeOptions.updateSnapshots) {
+  // Automatically clean orphaned snapshots when running in update mode
+  if (runtimeOptions.updateSnapshots && runtimeOptions.clean) {
     await cleanOrphanedSnapshots(indexData, runtimeOptions);
   }
+
+  // Always prune results that do not correspond to any current story id
+  await cleanOrphanedResults(indexData, runtimeOptions);
 }
 
 export default globalSetup;

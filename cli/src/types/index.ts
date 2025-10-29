@@ -71,13 +71,11 @@ export type VisualRegressionConfig = {
   waitTimeout?: number;
   overlayTimeout?: number;
   testTimeout?: number;
-  stabilizeInterval?: number;
-  stabilizeAttempts?: number;
-  finalSettle?: number;
-
-  // Loading spinner handling (always enabled)
-  loadingSpinnerSelectors: string[];
-  loadingSpinnerTimeout: number;
+  // DOM stabilization timeout: wait this long after the last DOM mutation before taking screenshot
+  mutationTimeout?: number;
+  // Maximum wall-clock time to wait for DOM to stabilize via MutationObserver
+  // Even if mutations continue happening, we will stop waiting after this duration
+  mutationMaxWait?: number;
 };
 
 export type TestResult = {

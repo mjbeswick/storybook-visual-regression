@@ -3,7 +3,9 @@ import { spawn, ChildProcess, exec } from 'child_process';
 import { parse as parseUrl } from 'url';
 import { readdir, stat, readFile, mkdir } from 'fs/promises';
 import { watch as watchFs } from 'fs';
-import { join } from 'path';
+import { join, relative, dirname } from 'path';
+import { existsSync } from 'fs';
+import type { Dirent } from 'fs';
 
 type TestRequest = {
   action: 'test' | 'update' | 'update-baseline' | 'test-all';
@@ -20,6 +22,87 @@ type FailedResult = {
   errorImagePath?: string;
   errorType?: 'screenshot_mismatch' | 'loading_failure' | 'network_error' | 'other_error';
 };
+
+// Storybook index types
+type StorybookIndexEntry = {
+  type: 'story';
+  id: string;
+  name: string;
+  title: string;
+  importPath: string;
+};
+
+type StorybookIndex = {
+  v: number;
+  entries: Record<string, StorybookIndexEntry>;
+};
+
+// Extract story metadata from index.json (same logic as CLI)
+function extractStoryMetadata(index: StorybookIndex): {
+  storySnapshotPaths: Record<string, string>;
+} {
+  const entries = index.entries || {};
+  const storySnapshotPaths: Record<string, string> = {};
+
+  function sanitizePathSegment(segment: string): string {
+    return segment
+      .replace(/[<>:"|?*\\/]/g, '-')
+      .replace(/\s+/g, '-')
+      .replace(/\.\./g, '-')
+      .replace(/^[\s.-]+|[\s.-]+$/g, '')
+      .replace(/-+/g, '-')
+      .trim();
+  }
+
+  for (const [id, entry] of Object.entries(entries)) {
+    if (entry.type === 'story') {
+      const displayName = entry.title ? `${entry.title} / ${entry.name}` : entry.name || id;
+      const parts = displayName.split(' / ').map((part) => sanitizePathSegment(part));
+      const fileName = parts.pop() || id;
+      const dirPath = parts.length > 0 ? parts.join('/') : '';
+      storySnapshotPaths[id] = dirPath ? `${dirPath}/${fileName}.png` : `${fileName}.png`;
+    }
+  }
+
+  return { storySnapshotPaths };
+}
+
+// Load Storybook index.json to get story metadata
+async function loadStorybookIndex(
+  storybookUrl: string = 'http://localhost:6006',
+): Promise<StorybookIndex | null> {
+  try {
+    const indexUrl = `${storybookUrl.replace(/\/$/, '')}/index.json`;
+    const response = await fetch(indexUrl);
+    if (!response.ok) {
+      // Try fallback to static files
+      try {
+        const staticIndexPath = join(process.cwd(), 'storybook-static', 'index.json');
+        if (existsSync(staticIndexPath)) {
+          const data = await readFile(staticIndexPath, 'utf8');
+          return JSON.parse(data) as StorybookIndex;
+        }
+      } catch {
+        // Ignore static file errors
+      }
+      return null;
+    }
+    const data = await response.json();
+    return data as StorybookIndex;
+  } catch {
+    // Try fallback to static files
+    try {
+      const staticIndexPath = join(process.cwd(), 'storybook-static', 'index.json');
+      if (existsSync(staticIndexPath)) {
+        const data = await readFile(staticIndexPath, 'utf8');
+        return JSON.parse(data) as StorybookIndex;
+      }
+    } catch {
+      // Ignore static file errors
+    }
+    return null;
+  }
+}
 
 let server: Server | null = null;
 const activeProcesses = new Map<
@@ -618,149 +701,152 @@ export function startApiServer(
     res.end(JSON.stringify({ error: 'Not found' }));
   });
 
-  // Function to scan failed test results
+  // Function to scan failed test results using the new directory structure
   async function scanFailedResults(resultsDir: string): Promise<FailedResult[]> {
     const failedResults: FailedResult[] = [];
 
     try {
       // Check if directory exists first
-      try {
-        await stat(resultsDir);
-      } catch {
-        // Directory doesn't exist, return empty results
+      if (!existsSync(resultsDir)) {
         return failedResults;
       }
 
-      const entries = await readdir(resultsDir);
+      // Load Storybook index to get story snapshot paths
+      let storySnapshotPaths: Record<string, string> = {};
+      try {
+        // Try to get Storybook URL from environment or default
+        const storybookUrl = process.env.STORYBOOK_URL || 'http://localhost:6006';
+        const index = await loadStorybookIndex(storybookUrl);
+        if (index) {
+          const metadata = extractStoryMetadata(index);
+          storySnapshotPaths = metadata.storySnapshotPaths;
+        }
+      } catch {
+        // If we can't load Storybook index, we'll fall back to filename-based matching
+      }
 
-      for (const entry of entries) {
-        const entryPath = join(resultsDir, entry);
-        const stats = await stat(entryPath);
-
-        if (stats.isDirectory() && entry.startsWith('storybook-Visual-Regressio-')) {
-          // This is a failed test result directory
-          // Extract story ID from directory name
-          // Example: "storybook-Visual-Regressio-00c0e-mpty-screens-basket--empty--chromium"
-          // We need to extract "screens-basket--empty"
-
-          // Extract story ID from image filenames instead of directory name
-          // The directory name is often truncated, but image filenames contain the full story ID
-          const subEntries = await readdir(entryPath);
-          let storyId: string | undefined;
-
-          // Look for image files that contain the complete story ID
-          const storyFiles = subEntries.filter(
-            (subEntry) =>
-              subEntry.includes('-actual.png') ||
-              subEntry.includes('-expected.png') ||
-              subEntry.includes('-diff.png'),
-          );
-
-          if (storyFiles.length > 0) {
-            // Extract story ID from the first image filename
-            const imageFile = storyFiles[0];
-            const imageMatch = imageFile.match(/(.+?)-(actual|expected|diff)\.png$/);
-            if (imageMatch) {
-              storyId = imageMatch[1];
+      // Helper function to recursively scan directory for PNG files
+      async function scanDirectory(
+        dir: string,
+        baseDir: string = resultsDir,
+      ): Promise<Array<{ path: string; relativePath: string; name: string }>> {
+        const files: Array<{ path: string; relativePath: string; name: string }> = [];
+        try {
+          const entries = await readdir(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = join(dir, entry.name);
+            if (entry.isDirectory()) {
+              files.push(...(await scanDirectory(fullPath, baseDir)));
+            } else if (entry.isFile() && entry.name.endsWith('.png')) {
+              const relativePath = relative(baseDir, fullPath);
+              // Normalize path separators for comparison
+              const normalizedRelativePath = relativePath.replace(/\\/g, '/');
+              files.push({
+                path: fullPath,
+                relativePath: normalizedRelativePath,
+                name: entry.name,
+              });
             }
           }
+        } catch {
+          // Ignore errors when scanning
+        }
+        return files;
+      }
 
-          if (storyId) {
-            let diffImagePath: string | undefined;
-            let actualImagePath: string | undefined;
-            let expectedImagePath: string | undefined;
+      const allPngFiles = await scanDirectory(resultsDir);
 
-            // Helper function to get retry index from filename
-            const getRetryIndex = (filename: string): number => {
-              const m = filename.match(/-(\d+)-(diff|expected|actual)\.png$/);
-              return m ? parseInt(m[1], 10) : 0;
-            };
+      // Build a map of story IDs to failure files
+      const storyFailures = new Map<
+        string,
+        {
+          diffPath?: string;
+          actualPath?: string;
+          errorPath?: string;
+        }
+      >();
 
-            // Group files by type and find the highest retry index for each
-            const filesByType = {
-              diff: new Map<string, { path: string; retryIndex: number }>(),
-              actual: new Map<string, { path: string; retryIndex: number }>(),
-              expected: new Map<string, { path: string; retryIndex: number }>(),
-            };
+      for (const file of allPngFiles) {
+        // Check for diff files
+        if (file.name.endsWith('-diff.png')) {
+          // Remove -diff.png suffix to get the base path
+          const baseRelativePath = file.relativePath.replace(/-diff\.png$/i, '.png');
 
-            for (const subEntry of subEntries) {
-              const subPath = join(entryPath, subEntry);
-              const subStats = await stat(subPath);
-
-              if (subStats.isFile()) {
-                if (subEntry.includes('-diff.png')) {
-                  const retryIndex = getRetryIndex(subEntry);
-                  const baseKey = subEntry.replace(/-\d+-(diff|expected|actual)\.png$/, '-$1.png');
-                  const existing = filesByType.diff.get(baseKey);
-                  if (!existing || retryIndex > existing.retryIndex) {
-                    filesByType.diff.set(baseKey, { path: subPath, retryIndex });
-                  }
-                } else if (subEntry.includes('-actual.png')) {
-                  const retryIndex = getRetryIndex(subEntry);
-                  const baseKey = subEntry.replace(/-\d+-(diff|expected|actual)\.png$/, '-$1.png');
-                  const existing = filesByType.actual.get(baseKey);
-                  if (!existing || retryIndex > existing.retryIndex) {
-                    filesByType.actual.set(baseKey, { path: subPath, retryIndex });
-                  }
-                } else if (subEntry.includes('-expected.png')) {
-                  const retryIndex = getRetryIndex(subEntry);
-                  const baseKey = subEntry.replace(/-\d+-(diff|expected|actual)\.png$/, '-$1.png');
-                  const existing = filesByType.expected.get(baseKey);
-                  if (!existing || retryIndex > existing.retryIndex) {
-                    filesByType.expected.set(baseKey, { path: subPath, retryIndex });
-                  }
-                }
-              }
-            }
-
-            // Take the files with the highest retry index
-            for (const [, fileInfo] of filesByType.diff) {
-              diffImagePath = fileInfo.path;
-              break; // Take the first (highest retry index) file
-            }
-            for (const [, fileInfo] of filesByType.actual) {
-              actualImagePath = fileInfo.path;
+          // Find matching story ID from snapshot paths
+          for (const [storyId, snapshotPath] of Object.entries(storySnapshotPaths)) {
+            if (snapshotPath === baseRelativePath) {
+              const existing = storyFailures.get(storyId) || {};
+              existing.diffPath = file.path;
+              storyFailures.set(storyId, existing);
               break;
             }
-            for (const [, fileInfo] of filesByType.expected) {
-              expectedImagePath = fileInfo.path;
-              break;
-            }
-
-            // Convert story ID to story name
-            const storyName = getStoryNameFromId(storyId);
-
-            failedResults.push({
-              storyId,
-              storyName,
-              diffImagePath,
-              actualImagePath,
-              expectedImagePath,
-              errorType: 'screenshot_mismatch',
-            });
-          }
-        } else if (stats.isFile() && entry.endsWith('-error.png')) {
-          // This is an error screenshot file created by the CLI for failed tests
-          // Extract story ID from filename
-          const errorMatch = entry.match(/(.+?)-error\.png$/);
-          if (errorMatch) {
-            const storyId = errorMatch[1];
-            const storyName = getStoryNameFromId(storyId);
-
-            // Determine error type based on filename or other heuristics
-            let errorType: 'loading_failure' | 'network_error' | 'other_error' = 'other_error';
-
-            // You could add more sophisticated error type detection here
-            // For now, we'll classify all error screenshots as 'other_error'
-
-            failedResults.push({
-              storyId,
-              storyName,
-              errorImagePath: entryPath,
-              errorType,
-            });
           }
         }
+        // Check for error files
+        else if (file.name.endsWith('-error.png')) {
+          // Remove -error.png suffix to get the base path
+          const baseRelativePath = file.relativePath.replace(/-error\.png$/i, '.png');
+
+          // Find matching story ID from snapshot paths
+          for (const [storyId, snapshotPath] of Object.entries(storySnapshotPaths)) {
+            if (snapshotPath === baseRelativePath) {
+              const existing = storyFailures.get(storyId) || {};
+              existing.errorPath = file.path;
+              storyFailures.set(storyId, existing);
+              break;
+            }
+          }
+        }
+        // Check for actual screenshot files (should exist alongside diff or error)
+        else if (!file.name.includes('-diff') && !file.name.includes('-error')) {
+          // This could be an actual screenshot
+          const baseRelativePath = file.relativePath;
+
+          // Check if there's a corresponding diff or error file in the same directory
+          const fileDir = dirname(file.path);
+          const baseName = file.name.replace(/\.png$/i, '');
+          const diffPath = join(fileDir, `${baseName}-diff.png`);
+          const errorPath = join(fileDir, `${baseName}-error.png`);
+
+          const hasDiff = existsSync(diffPath);
+          const hasError = existsSync(errorPath);
+
+          // If there's a diff or error, this is a failure
+          if (hasDiff || hasError) {
+            // Find matching story ID from snapshot paths
+            for (const [storyId, snapshotPath] of Object.entries(storySnapshotPaths)) {
+              if (snapshotPath === baseRelativePath) {
+                const existing = storyFailures.get(storyId) || {};
+                existing.actualPath = file.path;
+                if (hasDiff) existing.diffPath = diffPath;
+                if (hasError) existing.errorPath = errorPath;
+                storyFailures.set(storyId, existing);
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Convert map to FailedResult array
+      for (const [storyId, files] of storyFailures.entries()) {
+        const storyName = getStoryNameFromId(storyId);
+
+        let errorType: 'screenshot_mismatch' | 'loading_failure' | 'network_error' | 'other_error' =
+          'screenshot_mismatch';
+        if (files.errorPath && !files.diffPath) {
+          // If we have an error file but no diff, it's likely a loading/network error
+          errorType = 'loading_failure';
+        }
+
+        failedResults.push({
+          storyId,
+          storyName,
+          diffImagePath: files.diffPath,
+          actualImagePath: files.actualPath,
+          errorImagePath: files.errorPath,
+          errorType,
+        });
       }
     } catch {
       // ignore scan errors
