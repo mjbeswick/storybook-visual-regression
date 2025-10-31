@@ -16,7 +16,6 @@ export type CliFlags = {
 	quiet?: boolean;
 	debug?: boolean;
 	logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'debug';
-	printUrls?: boolean;
 	progress?: boolean;
 	browser?: 'chromium' | 'firefox' | 'webkit';
 	threshold?: number;
@@ -39,7 +38,7 @@ export type CliFlags = {
 	missingOnly?: boolean;
 	failedOnly?: boolean;
 	saveConfig?: boolean;
-	summary?: boolean;
+	showProgress?: boolean;
 };
 
 export type RuntimeConfig = VisualRegressionConfig & {
@@ -50,7 +49,6 @@ export type RuntimeConfig = VisualRegressionConfig & {
 	quiet: boolean;
 	debug: boolean;
 	logLevel: 'silent' | 'error' | 'warn' | 'info' | 'debug';
-	printUrls: boolean;
 	progress: boolean;
 	installBrowsers?: string | boolean;
 	installDeps?: boolean;
@@ -61,7 +59,7 @@ export type RuntimeConfig = VisualRegressionConfig & {
 	failedOnly: boolean;
 	testTimeout?: number;
 	overlayTimeout?: number;
-	summary: boolean;
+	showProgress: boolean;
 };
 
 export const loadJsonFile = (maybePath?: string): Record<string, unknown> | undefined => {
@@ -136,7 +134,6 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
 		quiet: logLevel === 'silent' || Boolean(flags.quiet),
 		debug: logLevel === 'debug' || Boolean(process.env.SVR_DEBUG || flags.debug),
 		logLevel,
-		printUrls: Boolean(flags.printUrls),
 		progress: process.env.SVR_NO_PROGRESS ? false : flags.progress ?? true,
 		installBrowsers: flags.installBrowsers,
 		installDeps: flags.installDeps,
@@ -147,7 +144,7 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
 		failedOnly: Boolean(flags.failedOnly),
 		testTimeout: flags.testTimeout,
 		overlayTimeout: flags.overlayTimeout,
-		summary: Boolean(flags.summary)
+		showProgress: Boolean(flags.showProgress)
 	};
 
 	return runtime;

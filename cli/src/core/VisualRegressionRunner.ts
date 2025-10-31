@@ -33,12 +33,6 @@ export const run = async (config: RuntimeConfig): Promise<number> => {
 
   // Discover stories
   const baseStories = await discoverStories(config);
-  if (config.printUrls) {
-    process.stdout.write(
-      `Discovered ${baseStories.length} stories from ${new URL('index.json', config.url).toString()}\n`,
-    );
-    for (const s of baseStories) process.stdout.write(` - ${s.id} -> ${s.url}\n`);
-  }
   if (baseStories.length === 0) {
     process.stdout.write(
       'No stories discovered. Ensure Storybook is running and /index.json is accessible.\n',

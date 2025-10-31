@@ -414,7 +414,7 @@ export async function runParallelTests(options: {
 
   // Check if we can use the terminal UI
   const useUI = TerminalUI.isSupported() && config.logLevel !== 'silent';
-  const ui = useUI ? new TerminalUI(stories.length, config.summary) : null;
+  const ui = useUI ? new TerminalUI(stories.length, config.showProgress) : null;
 
   // Default to number of CPU cores, with a reasonable cap
   const defaultWorkers = Math.min(os.cpus().length, 8); // Cap at 8 to avoid overwhelming the system
@@ -463,7 +463,7 @@ export async function runParallelTests(options: {
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
 
     // Calculate summary statistics from results
-    const allResults = Object.values(pool.results);
+    const allResults = Object.values(pool.getResults());
     const passed = allResults.filter(r => r.action === 'Visual regression passed').length;
     const updated = allResults.filter(r => r.action === 'Updated baseline').length;
     const created = allResults.filter(r => r.action === 'Created baseline').length;
