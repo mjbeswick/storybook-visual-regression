@@ -6,6 +6,260 @@ import { watch as watchFs } from 'fs';
 import { join, relative, dirname } from 'path';
 import { existsSync } from 'fs';
 import type { Dirent } from 'fs';
+// Import JSON-RPC types inline since we can't import from CLI package
+interface JsonRpcRequest {
+  jsonrpc: '2.0';
+  id: number | string | null;
+  method: string;
+  params?: any;
+}
+
+interface JsonRpcResponse {
+  jsonrpc: '2.0';
+  id: number | string | null;
+  result?: any;
+  error?: {
+    code: number;
+    message: string;
+    data?: any;
+  };
+}
+
+interface JsonRpcNotification {
+  jsonrpc: '2.0';
+  method: string;
+  params?: any;
+}
+
+class JsonRpcClient {
+  private process: any = null;
+  private nextId = 1;
+  private pendingRequests = new Map<number | string, {
+    resolve: (value: any) => void;
+    reject: (error: any) => void;
+    timeout: NodeJS.Timeout;
+  }>();
+  private listeners = new Map<string, Set<(params: any) => void>>();
+
+  constructor(private cliCommand: string = 'npx @storybook-visual-regression/cli') {}
+
+  async start(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const { spawn } = require('child_process');
+      this.process = spawn(this.cliCommand, ['--json-rpc'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          FORCE_COLOR: '0',
+        },
+      });
+
+      if (!this.process.stdout || !this.process.stderr || !this.process.stdin) {
+        reject(new Error('Failed to create process streams'));
+        return;
+      }
+
+      let stdoutBuffer = '';
+      this.process.stdout.on('data', (data: Buffer) => {
+        stdoutBuffer += data.toString();
+        const messages = this.parseJsonRpcMessages(stdoutBuffer);
+        if (messages.length > 0) {
+          stdoutBuffer = messages.pop()?.remaining || '';
+          for (const message of messages) {
+            this.handleMessage(message.message);
+          }
+        }
+      });
+
+      this.process.stderr?.on('data', (data: Buffer) => {
+        // Forward stderr as log events
+        this.emit('log', { level: 'error', message: data.toString().trim() });
+      });
+
+      this.process.on('exit', (code: number | null, signal: string | null) => {
+        this.emit('exit', { code, signal });
+        this.cleanup();
+      });
+
+      this.process.on('error', (error: Error) => {
+        this.emit('error', { error: error.message });
+        this.cleanup();
+        reject(error);
+      });
+
+      // Wait for ready notification
+      this.once('ready', () => {
+        resolve();
+      });
+    });
+  }
+
+  async stop(): Promise<void> {
+    if (this.process && !this.process.killed) {
+      this.process.kill('SIGTERM');
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          if (this.process && !this.process.killed) {
+            this.process.kill('SIGKILL');
+          }
+          resolve();
+        }, 5000);
+        this.process?.once?.('exit', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    }
+    this.cleanup();
+  }
+
+  async request<T = any>(method: string, params?: any, timeoutMs = 30000): Promise<T> {
+    const id = this.nextId++;
+    const request: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id,
+      method,
+      params,
+    };
+
+    return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Request timeout: ${method}`));
+      }, timeoutMs);
+
+      this.pendingRequests.set(id, { resolve, reject, timeout });
+
+      this.sendMessage(request);
+    });
+  }
+
+  notify(method: string, params?: any): void {
+    const notification: JsonRpcNotification = {
+      jsonrpc: '2.0',
+      method,
+      params,
+    };
+    this.sendMessage(notification);
+  }
+
+  on(event: string, listener: (params: any) => void): void {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+    this.listeners.get(event)!.add(listener);
+  }
+
+  once(event: string, listener: (params: any) => void): void {
+    const onceListener = (params: any) => {
+      this.off(event, onceListener);
+      listener(params);
+    };
+    this.on(event, onceListener);
+  }
+
+  off(event: string, listener: (params: any) => void): void {
+    const listeners = this.listeners.get(event);
+    if (listeners) {
+      listeners.delete(listener);
+      if (listeners.size === 0) {
+        this.listeners.delete(event);
+      }
+    }
+  }
+
+  async run(params: any): Promise<any> {
+    return this.request('run', params);
+  }
+
+  async cancel(): Promise<any> {
+    return this.request('cancel');
+  }
+
+  private sendMessage(message: JsonRpcRequest | JsonRpcNotification): void {
+    if (!this.process || !this.process.stdin) {
+      throw new Error('CLI process not started');
+    }
+
+    const json = JSON.stringify(message) + '\n';
+    this.process.stdin.write(json);
+  }
+
+  private handleMessage(message: any): void {
+    if (message.jsonrpc !== '2.0') {
+      return;
+    }
+
+    if ('id' in message && message.id !== null) {
+      // This is a response
+      const pending = this.pendingRequests.get(message.id);
+      if (pending) {
+        this.pendingRequests.delete(message.id);
+        clearTimeout(pending.timeout);
+
+        if ('error' in message) {
+          pending.reject(new Error(message.error.message));
+        } else {
+          pending.resolve(message.result);
+        }
+      }
+    } else {
+      // This is a notification
+      this.emit(message.method, message.params);
+    }
+  }
+
+  private emit(event: string, params: any): void {
+    const listeners = this.listeners.get(event);
+    if (listeners) {
+      for (const listener of listeners) {
+        try {
+          listener(params);
+        } catch (error) {
+          console.error(`Error in event listener for ${event}:`, error);
+        }
+      }
+    }
+  }
+
+  private parseJsonRpcMessages(buffer: string): Array<{ message: any; remaining: string }> {
+    const messages: Array<{ message: any; remaining: string }> = [];
+    let remaining = buffer;
+
+    while (true) {
+      const newlineIndex = remaining.indexOf('\n');
+      if (newlineIndex === -1) {
+        break;
+      }
+
+      const line = remaining.substring(0, newlineIndex);
+      remaining = remaining.substring(newlineIndex + 1);
+
+      if (line.trim()) {
+        try {
+          const message = JSON.parse(line);
+          messages.push({ message, remaining });
+        } catch (error) {
+          // Invalid JSON - ignore
+        }
+      }
+    }
+
+    return messages;
+  }
+
+  private cleanup(): void {
+    for (const [id, pending] of this.pendingRequests) {
+      this.pendingRequests.delete(id);
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('Process terminated'));
+    }
+    this.listeners.clear();
+    this.process = null;
+  }
+}
 
 type TestRequest = {
   action: 'test' | 'update' | 'update-baseline' | 'test-all';
@@ -105,6 +359,7 @@ async function loadStorybookIndex(
 }
 
 let server: Server | null = null;
+let jsonRpcClient: JsonRpcClient | null = null;
 const activeProcesses = new Map<
   string,
   {
@@ -145,6 +400,19 @@ export function startApiServer(
   // Ensure directories exist when server starts
   ensureVisualRegressionDirs().catch(() => {
     // ignore startup directory creation errors
+  });
+
+  // Initialize JSON-RPC client
+  jsonRpcClient = new JsonRpcClient(cliCommand);
+  jsonRpcClient.on('progress', (progress: any) => {
+    // Forward progress events to any connected WebSocket/SSE clients
+    // This could be enhanced with actual WebSocket support
+  });
+  jsonRpcClient.on('log', (logData: any) => {
+    // Forward log events
+  });
+  jsonRpcClient.on('error', (error: any) => {
+    console.error('[VR Addon] JSON-RPC error:', error);
   });
 
   server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -237,128 +505,30 @@ export function startApiServer(
 
     // Stop all running tests endpoint
     if (pathname === '/stop' && req.method === 'POST') {
-      // Debounce rapid stop requests
-      if (isStopInProgress) {
-        console.log(`[VR Addon] Stop request already in progress, ignoring duplicate`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            status: 'ok',
-            message: 'Stop request already in progress',
-            stoppedCount: 0,
-          }),
-        );
-        return;
-      }
-
-      console.log(`[VR Addon] Stop request received. Active processes: ${activeProcesses.size}`);
-
-      // Prevent multiple simultaneous stop requests
-      if (activeProcesses.size === 0) {
-        console.log(`[VR Addon] No active processes to stop`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            status: 'ok',
-            message: 'No active processes to stop',
-            stoppedCount: 0,
-          }),
-        );
-        return;
-      }
-
-      isStopInProgress = true;
-
-      let stoppedCount = 0;
-
       try {
-        const stopPromises = Array.from(activeProcesses.entries()).map(
-          async ([processId, processInfo]) => {
-            try {
-              const childProcess = processInfo.process;
-              if (childProcess && !childProcess.killed && childProcess.pid) {
-                console.log(
-                  `[VR Addon] Stopping process ${processId} (PID: ${childProcess.pid}) - Command: ${processInfo.command}`,
-                );
-
-                // Simple, elegant killing: kill the process group
-                try {
-                  // Kill the entire process group (includes all child processes)
-                  process.kill(-childProcess.pid, 'SIGTERM');
-                  console.log(`[VR Addon] Sent SIGTERM to process group ${childProcess.pid}`);
-
-                  // Wait for graceful termination
-                  await new Promise((resolve) => setTimeout(resolve, 2000));
-
-                  // Force kill if still running
-                  if (!childProcess.killed) {
-                    process.kill(-childProcess.pid, 'SIGKILL');
-                    console.log(`[VR Addon] Sent SIGKILL to process group ${childProcess.pid}`);
-                  }
-                } catch (error) {
-                  // ESRCH (No such process) is expected when process is already dead
-                  if (error instanceof Error && (error as any).code === 'ESRCH') {
-                    console.log(`[VR Addon] Process group ${childProcess.pid} already terminated`);
-                  } else {
-                    console.log(`[VR Addon] Failed to kill process group:`, error);
-                  }
-
-                  // Fallback to direct process kill
-                  try {
-                    childProcess.kill('SIGKILL');
-                  } catch (fallbackError) {
-                    // ESRCH is expected here too
-                    if (fallbackError instanceof Error && (fallbackError as any).code === 'ESRCH') {
-                      console.log(`[VR Addon] Process ${childProcess.pid} already terminated`);
-                    } else {
-                      console.log(`[VR Addon] Fallback kill also failed:`, fallbackError);
-                    }
-                  }
-                }
-
-                if (childProcess.killed) {
-                  stoppedCount++;
-                  console.log(`[VR Addon] Successfully stopped process ${processId}`);
-                } else {
-                  console.log(`[VR Addon] Process ${processId} cleanup completed`);
-                  // Count as stopped even if we couldn't verify the kill
-                  stoppedCount++;
-                }
-
-                // Always remove from tracking after kill attempt
-                activeProcesses.delete(processId);
-              } else {
-                // Process was already killed or doesn't exist, just clean up
-                activeProcesses.delete(processId);
-                stoppedCount++;
-              }
-            } catch (error) {
-              console.log(`[VR Addon] Error stopping process ${processId}:`, error);
-              // Still remove from tracking to prevent memory leaks
-              activeProcesses.delete(processId);
-            }
-          },
-        );
-
-        // Wait for all stop operations to complete
-        await Promise.all(stopPromises);
-
-        console.log(`[VR Addon] Stop operation completed. Stopped ${stoppedCount} processes`);
+        if (jsonRpcClient) {
+          await jsonRpcClient.cancel();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            status: 'ok',
+            message: 'Stop request sent to CLI',
+            stoppedCount: 1,
+          }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            status: 'ok',
+            message: 'No active CLI process',
+            stoppedCount: 0,
+          }));
+        }
       } catch (error) {
-        console.log(`[VR Addon] Error during stop operation:`, error);
-      } finally {
-        // Always reset the stop in progress flag
-        isStopInProgress = false;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to stop tests',
+        }));
       }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          status: 'ok',
-          message: `Stopped ${stoppedCount} running tests`,
-          stoppedCount,
-        }),
-      );
       return;
     }
 
@@ -457,7 +627,7 @@ export function startApiServer(
         try {
           const request: TestRequest = JSON.parse(body);
 
-          // Set up raw stream for terminal output
+          // Set up streaming response for terminal output
           res.writeHead(200, {
             'Content-Type': 'text/plain; charset=utf-8',
             'Cache-Control': 'no-cache',
@@ -465,224 +635,63 @@ export function startApiServer(
             'Transfer-Encoding': 'chunked',
           });
 
-          // Build command arguments
-          const args: string[] = [];
-
-          // Handle update mode
-          if (request.action === 'update' || request.action === 'update-baseline') {
-            args.push('--update');
-          }
-          // For 'test' and 'test-all', no additional args needed - main program runs tests by default
-
-          // Don't pass --url flag - let CLI read from config file
-
-          // Add story filter if provided
-          // Use --grep with exact match for better precision
-          if (request.storyId && request.action !== 'test-all') {
-            // Escape special regex characters and match exactly
-            const escapedId = request.storyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            args.push('--grep', `^${escapedId}$`);
+          if (!jsonRpcClient) {
+            res.write('Error: JSON-RPC client not initialized\n');
+            res.end();
+            return;
           }
 
-          // Generate unique process ID and track it
-          const processId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          // Convert request to JSON-RPC parameters
+          const runParams: any = {
+            url: 'http://localhost:6006', // Default Storybook URL
+            update: request.action === 'update' || request.action === 'update-baseline',
+            grep: request.storyId && request.action !== 'test-all' ? `^${request.storyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$` : undefined,
+            summary: true, // Enable summary for better output
+            progress: false, // Disable progress to avoid conflicts with streaming
+          };
 
-          // Let the CLI determine the appropriate reporter (filtered-reporter for storybook mode)
-          const enhancedArgs = [...args];
-
-          // Create clean environment for terminal output
-          const cleanEnv = { ...process.env };
-          // Remove NO_COLOR to avoid conflicts with FORCE_COLOR
-          delete cleanEnv.NO_COLOR;
-
-          // Spawn the CLI process with full terminal support
-          // Handle complex commands like Docker by using shell execution
-          let child: ChildProcess;
-
-          if (
-            cliCommand.includes('docker') ||
-            cliCommand.includes('$(pwd)') ||
-            cliCommand.includes(' ')
-          ) {
-            // Complex command - use shell execution
-            // Remove -it flags from Docker commands to prevent TTY errors
-            let processedCommand = cliCommand;
-            // Handle npm run commands first (before Docker processing)
-            if (cliCommand.startsWith('npm run')) {
-              // For npm run commands, add --silent flag and append arguments with -- separator
-              const silentCommand = cliCommand.replace('npm run', 'npm run --silent');
-              processedCommand = `${silentCommand} -- ${enhancedArgs.join(' ')}`;
-              console.log(`[VR Addon] npm run command, appending with --: ${processedCommand}`);
-            } else if (cliCommand.includes('docker run')) {
-              // Remove -it flags (both combined and separate) from anywhere in the command
-              processedCommand = cliCommand
-                .replace(/\s-it\s/g, ' ')
-                .replace(/\s-i\s-t\s/g, ' ')
-                .replace(/^-it\s/, '')
-                .replace(/^-i\s-t\s/, '')
-                .replace(/\s-it$/, '')
-                .replace(/\s-i\s-t$/, '')
-                // Also handle cases where -it is at the beginning without space
-                .replace(/^-it/, '')
-                .replace(/^-i\s-t/, '')
-                // Handle cases where -it is followed by other flags
-                .replace(/\s-it\s/, ' ')
-                .replace(/\s-i\s-t\s/, ' ');
-
-              console.log(`[VR Addon] Original command: ${cliCommand}`);
-              console.log(`[VR Addon] Processed command: ${processedCommand}`);
-
-              // For Docker commands, inject arguments into the CLI command inside Docker
-              // Find the CLI command part (after the Docker image name)
-              const dockerImageMatch = processedCommand.match(
-                /docker run[^]*?storybook-visual-regression:latest\s+(.+)/,
-              );
-              if (dockerImageMatch) {
-                const cliCommand = dockerImageMatch[1];
-                const beforeCliCommand = processedCommand.substring(
-                  0,
-                  processedCommand.indexOf(cliCommand),
-                );
-                const afterCliCommand = processedCommand.substring(
-                  processedCommand.indexOf(cliCommand) + cliCommand.length,
-                );
-
-                // Inject arguments into the CLI command
-                const enhancedCliCommand = `${cliCommand} ${enhancedArgs.join(' ')}`;
-                processedCommand = `${beforeCliCommand}${enhancedCliCommand}${afterCliCommand}`;
-                console.log(`[VR Addon] Docker command, injecting into CLI: ${processedCommand}`);
-              } else {
-                // Fallback: append arguments at the end
-                processedCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
-                console.log(`[VR Addon] Docker command fallback: ${processedCommand}`);
-              }
-            } else {
-              // For other commands, append arguments normally
-              processedCommand = `${processedCommand} ${enhancedArgs.join(' ')}`;
-              console.log(`[VR Addon] Other command: ${processedCommand}`);
-            }
-            const fullCommand = processedCommand;
-            console.log(`[VR Addon] Executing command: ${fullCommand}`);
-
-            // Simple, elegant solution: spawn with process group
-            const parts = fullCommand.split(' ');
-            const executable = parts[0];
-            const args = parts.slice(1);
-
-            child = spawn(executable, args, {
-              cwd: process.cwd(),
-              env: {
-                ...cleanEnv,
-                FORCE_COLOR: '3',
-                TERM: 'xterm-256color',
-                COLUMNS: '120',
-                LINES: '30',
-                DOCKER_TTY: 'false',
-                CI: 'false',
-                STORYBOOK_MODE: 'true',
-                COLORTERM: 'truecolor',
-                NO_COLOR: undefined,
-              },
-              stdio: ['pipe', 'pipe', 'pipe'],
-              detached: true, // Create new process group
-            });
-
-            // Track the process with command information
-            const processInfo = {
-              process: child,
-              command: fullCommand,
-              startTime: Date.now(),
-            };
-            activeProcesses.set(processId, processInfo);
-          } else {
-            // Simple command - direct execution
-            const simpleCommand = `${cliCommand} ${enhancedArgs.join(' ')}`;
-            console.log(`[VR Addon] Executing simple command: ${simpleCommand}`);
-            child = spawn(cliCommand, enhancedArgs, {
-              stdio: ['pipe', 'pipe', 'pipe'],
-              cwd: process.cwd(),
-              env: {
-                ...cleanEnv,
-                FORCE_COLOR: '3', // Force chalk to output ANSI color codes (level 3 = full color)
-                TERM: 'xterm-256color', // Enable full terminal features
-                COLUMNS: '120', // Set terminal width for proper formatting
-                LINES: '30', // Set terminal height
-                // Force TTY detection for CLI tools
-                CI: 'false', // Disable CI mode
-                STORYBOOK_MODE: 'true', // Enable Storybook mode
-                // Additional color forcing
-                COLORTERM: 'truecolor', // Enable true color support
-                NO_COLOR: undefined, // Ensure NO_COLOR is not set
-              },
-              // Don't detach the process so we can kill it properly
-              detached: false,
-            });
-
-            // Track the process with command information
-            const processInfo = {
-              process: child,
-              command: simpleCommand,
-              startTime: Date.now(),
-            };
-            activeProcesses.set(processId, processInfo);
+          // Merge in config from request if provided
+          if ((request as any).config) {
+            Object.assign(runParams, (request as any).config);
           }
 
-          child.stdout?.on('data', (data) => {
-            const chunk = data.toString();
-
-            // Replace host.docker.internal with localhost in URLs for better accessibility
-            const processedChunk = chunk.replace(/host\.docker\.internal/g, 'localhost');
-
-            // Log when URL replacement happens for debugging
-            if (processedChunk !== chunk) {
-              console.log('[VR Addon] Replaced host.docker.internal with localhost in output');
-            }
-
-            // Stream raw terminal output directly (no JSON wrapping)
-            res.write(processedChunk);
+          // Set up event handlers to stream output
+          jsonRpcClient.on('log', (logData: any) => {
+            res.write(logData.message + '\n');
           });
 
-          child.stderr?.on('data', (data) => {
-            const chunk = data.toString();
-
-            // Replace host.docker.internal with localhost in URLs for better accessibility
-            const processedChunk = chunk.replace(/host\.docker\.internal/g, 'localhost');
-
-            // Log when URL replacement happens for debugging
-            if (processedChunk !== chunk) {
-              console.log('[VR Addon] Replaced host.docker.internal with localhost in stderr');
-            }
-
-            // Stream stderr directly as well
-            res.write(processedChunk);
+          jsonRpcClient.on('progress', (progress: any) => {
+            // Could emit progress information if needed
           });
 
-          child.on('error', (error) => {
-            // Clean up the process
-            activeProcesses.delete(processId);
+          jsonRpcClient.on('storyStart', (data: any) => {
+            res.write(`Starting: ${data.storyName}\n`);
+          });
 
-            // Handle EPIPE errors gracefully (pipe closed by client)
-            if ((error as NodeJS.ErrnoException).code === 'EPIPE') {
-              return;
-            }
+          jsonRpcClient.on('storyComplete', (result: any) => {
+            const status = result.status === 'passed' ? '✓' :
+                          result.status === 'failed' ? '✗' :
+                          result.status === 'skipped' ? '○' : '?';
+            res.write(`${status} ${result.storyName}\n`);
+          });
 
-            res.write(
-              `data: ${JSON.stringify({
-                type: 'error',
-                storyId: request.storyId,
-                error: `Failed to run CLI: ${error.message}`,
-              })}\n\n`,
-            );
+          jsonRpcClient.on('complete', (result: any) => {
+            res.write(`\nTest run completed with code: ${result.code}\n`);
             res.end();
           });
 
-          child.on('close', (code, signal) => {
-            // Clean up the process
-            activeProcesses.delete(processId);
-
-            // Just end the stream - terminal output is complete
+          jsonRpcClient.on('error', (error: any) => {
+            res.write(`Error: ${error.message}\n`);
             res.end();
           });
+
+          // Start the test run
+          try {
+            await jsonRpcClient.run(runParams);
+          } catch (error) {
+            res.write(`Failed to start test run: ${error instanceof Error ? error.message : 'Unknown error'}\n`);
+            res.end();
+          }
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(
@@ -893,6 +902,13 @@ export function startApiServer(
 }
 
 export function stopApiServer() {
+  if (jsonRpcClient) {
+    jsonRpcClient.stop().catch(() => {
+      // Ignore cleanup errors
+    });
+    jsonRpcClient = null;
+  }
+
   if (server) {
     server.close();
     server = null;

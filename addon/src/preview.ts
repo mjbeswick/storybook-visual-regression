@@ -240,7 +240,7 @@ const initializeAddon = async () => {
 
   // Listen for test requests from the manager
   channel.on(EVENTS.RUN_TEST, async (data: unknown) => {
-    const eventData = data as { storyId?: string };
+    const eventData = data as { storyId?: string; config?: any };
     const storyId = eventData.storyId;
     if (!storyId) {
       channel.emit(EVENTS.TEST_COMPLETE);
@@ -263,6 +263,7 @@ const initializeAddon = async () => {
           action: 'test',
           storyId,
           storyName,
+          config: eventData.config,
         }),
       });
 
@@ -311,7 +312,8 @@ const initializeAddon = async () => {
   });
 
   // Listen for "run all tests" requests from the manager
-  channel.on(EVENTS.RUN_ALL_TESTS, async () => {
+  channel.on(EVENTS.RUN_ALL_TESTS, async (data: unknown) => {
+    const eventData = data as { config?: any };
     channel.emit(EVENTS.TEST_STARTED);
 
     try {
@@ -322,6 +324,7 @@ const initializeAddon = async () => {
         },
         body: JSON.stringify({
           action: 'test-all',
+          config: eventData.config,
         }),
       });
 
@@ -371,7 +374,7 @@ const initializeAddon = async () => {
 
   // Listen for baseline update requests
   channel.on(EVENTS.UPDATE_BASELINE, async (data: unknown) => {
-    const eventData = data as { storyId?: string };
+    const eventData = data as { storyId?: string; config?: any };
     const storyId = eventData.storyId;
     if (!storyId) {
       channel.emit(EVENTS.TEST_COMPLETE);
@@ -392,6 +395,7 @@ const initializeAddon = async () => {
           action: 'update-baseline',
           storyId,
           storyName,
+          config: eventData.config,
         }),
       });
 

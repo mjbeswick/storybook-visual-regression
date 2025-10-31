@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useChannel, useStorybookApi } from '@storybook/manager-api';
-import { ScrollArea, Button } from '@storybook/components';
+import { ScrollArea, Button, Form } from '@storybook/components';
 import { PlayIcon, SyncIcon, DownloadIcon } from '@storybook/icons';
 import { EVENTS } from './constants';
 import styles from './Panel.module.css';
@@ -17,6 +17,21 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const api = useStorybookApi();
   const emit = useChannel({});
   const { results, isRunning, logs, cancelTest, clearLogs } = useTestResults();
+
+  // CLI configuration state
+  const [cliConfig, setCliConfig] = useState({
+    workers: 4,
+    retries: 1,
+    browser: 'chromium' as 'chromium' | 'firefox' | 'webkit',
+    threshold: 0.2,
+    maxDiffPixels: 0,
+    fullPage: false,
+    disableAnimations: true,
+    mockDate: false,
+    quiet: false,
+    summary: true,
+    progress: false,
+  });
 
   // Check if channel is available
   const channel = api.getChannel();
@@ -322,7 +337,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     }
     const currentStory = api.getCurrentStoryData();
     if (currentStory) {
-      emit(EVENTS.RUN_TEST, { storyId: currentStory.id });
+      emit(EVENTS.RUN_TEST, { storyId: currentStory.id, config: cliConfig });
     }
   };
 
@@ -330,7 +345,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     if (!isChannelReady) {
       return;
     }
-    emit(EVENTS.RUN_ALL_TESTS);
+    emit(EVENTS.RUN_ALL_TESTS, { config: cliConfig });
   };
 
   const handleUpdateBaseline = () => {
@@ -339,7 +354,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     }
     const currentStory = api.getCurrentStoryData();
     if (currentStory) {
-      emit(EVENTS.UPDATE_BASELINE, { storyId: currentStory.id });
+      emit(EVENTS.UPDATE_BASELINE, { storyId: currentStory.id, config: cliConfig });
     }
   };
 
@@ -457,6 +472,118 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                     <SyncIcon className={styles.buttonIcon} />
                     Test All
                   </Button>
+                </div>
+
+                {/* Configuration Section */}
+                <div className={styles.configSection}>
+                  <h4>Configuration</h4>
+                  <Form onSubmit={() => {}}>
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>Workers</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="16"
+                        value={cliConfig.workers}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, workers: Number(e.target.value) }))}
+                        className={styles.configInput}
+                      />
+                    </div>
+
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>Retries</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        value={cliConfig.retries}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, retries: Number(e.target.value) }))}
+                        className={styles.configInput}
+                      />
+                    </div>
+
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>Browser</label>
+                      <select
+                        value={cliConfig.browser}
+                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCliConfig(prev => ({ ...prev, browser: e.target.value as any }))}
+                        className={styles.configInput}
+                      >
+                        <option value="chromium">Chromium</option>
+                        <option value="firefox">Firefox</option>
+                        <option value="webkit">WebKit</option>
+                      </select>
+                    </div>
+
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>Threshold</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={cliConfig.threshold}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, threshold: Number(e.target.value) }))}
+                        className={styles.configInput}
+                      />
+                    </div>
+
+                    <div className={styles.checkboxGroup}>
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={cliConfig.fullPage}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, fullPage: e.target.checked }))}
+                        />
+                        Full page screenshots
+                      </label>
+
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={cliConfig.disableAnimations}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, disableAnimations: e.target.checked }))}
+                        />
+                        Disable animations
+                      </label>
+
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={cliConfig.mockDate}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, mockDate: e.target.checked }))}
+                        />
+                        Mock Date object
+                      </label>
+
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={cliConfig.quiet}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, quiet: e.target.checked }))}
+                        />
+                        Quiet mode
+                      </label>
+
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={cliConfig.summary}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, summary: e.target.checked }))}
+                        />
+                        Show summary
+                      </label>
+
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={cliConfig.progress}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, progress: e.target.checked }))}
+                        />
+                        Show progress
+                      </label>
+                    </div>
+                  </Form>
                 </div>
 
                 {/* Show message when no test results */}

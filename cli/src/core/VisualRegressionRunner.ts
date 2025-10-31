@@ -85,7 +85,16 @@ export const cleanStaleSnapshots = (
   cleanEmptyDirs(snapshotPath);
 };
 
-export const run = async (config: RuntimeConfig): Promise<number> => {
+export interface RunCallbacks {
+  onProgress?: (progress: any) => void;
+  onStoryStart?: (storyId: string, storyName: string) => void;
+  onStoryComplete?: (result: any) => void;
+  onResult?: (result: any) => void;
+  onLog?: (message: string) => void;
+  cancelled?: () => boolean;
+}
+
+export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Promise<number> => {
   ensureDirs(config);
   cleanStaleArtifacts(config.resolvePath(config.resultsPath));
 
@@ -159,6 +168,7 @@ export const run = async (config: RuntimeConfig): Promise<number> => {
     },
     runtimePath,
     debug: config.debug,
+    callbacks,
   });
 
   return exitCode;

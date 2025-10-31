@@ -12,6 +12,7 @@ import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
 import { TerminalUI } from './terminal-ui.js';
+import type { RunCallbacks } from './core/VisualRegressionRunner.js';
 
 // Logging helper based on logLevel
 const createLogger = (logLevel: RuntimeConfig['logLevel']) => {
@@ -140,6 +141,7 @@ class WorkerPool {
   private onComplete?: (results: any) => void;
   private singleLineMode: boolean;
   private printUnderSpinner?: (line: string) => void;
+  private callbacks?: RunCallbacks;
   private log: ReturnType<typeof createLogger>;
 
   constructor(
@@ -148,12 +150,14 @@ class WorkerPool {
     stories: DiscoveredStory[],
     ui?: TerminalUI,
     printUnderSpinner?: (line: string) => void,
+    callbacks?: RunCallbacks,
   ) {
     this.maxWorkers = maxWorkers;
     this.config = config;
     this.total = stories.length;
     this.queue = [...stories];
     this.ui = ui;
+    this.callbacks = callbacks;
     this.singleLineMode = Boolean(config.summary || config.showProgress);
     this.printUnderSpinner = printUnderSpinner;
     this.log = createLogger(config.logLevel);
@@ -209,6 +213,9 @@ class WorkerPool {
   private async runStoryTest(story: DiscoveredStory): Promise<void> {
     const startTime = Date.now();
     this.log.debug(`Starting test for story: ${story.id} (${story.title}/${story.name})`);
+
+    // Notify callbacks that story has started
+    this.callbacks?.onStoryStart?.(story.id, `${story.title}/${story.name}`);
 
     // Helper to return file paths as-is
     const escapePath = (filePath: string): string => {
@@ -291,6 +298,23 @@ class WorkerPool {
       // Success
       this.results[story.id] = { success: true, duration, action: result };
 
+      // Notify callbacks of successful result
+      this.callbacks?.onResult?.({
+        storyId: story.id,
+        storyName: displayName,
+        status: 'passed',
+        duration,
+        action: 'passed',
+      });
+
+      this.callbacks?.onStoryComplete?.({
+        storyId: story.id,
+        storyName: displayName,
+        status: 'passed',
+        duration,
+        action: 'passed',
+      });
+
       // Finish test in UI
       if (this.ui) {
         this.ui.finishTest(story.id, true);
@@ -314,6 +338,23 @@ class WorkerPool {
           action: 'skipped',
         };
 
+        // Notify callbacks of skipped result
+        this.callbacks?.onResult?.({
+          storyId: story.id,
+          storyName: displayName,
+          status: 'skipped',
+          duration,
+          action: 'skipped',
+        });
+
+        this.callbacks?.onStoryComplete?.({
+          storyId: story.id,
+          storyName: displayName,
+          status: 'skipped',
+          duration,
+          action: 'skipped',
+        });
+
         // Finish test in UI
         if (this.ui) {
           this.ui.finishTest(story.id, true);
@@ -333,6 +374,38 @@ class WorkerPool {
           duration,
           action: 'failed',
         };
+
+        // Extract diff image path from error message for visual regression failures
+        const errorStr = lastError ? String(lastError) : '';
+        const diffMatch = errorStr.match(/diff: (.+)\)/);
+        const diffPath = diffMatch ? diffMatch[1] : null;
+
+        // Notify callbacks of failed result
+        this.callbacks?.onResult?.({
+          storyId: story.id,
+          storyName: displayName,
+          status: 'failed',
+          duration,
+          error: lastError ? String(lastError) : 'Unknown error',
+          diffPath,
+          actualPath: undefined, // Could be extracted from error if needed
+          expectedPath: undefined, // Could be extracted from error if needed
+          errorPath: diffPath, // Use diff path as error path for now
+          errorType: 'screenshot_mismatch',
+        });
+
+        this.callbacks?.onStoryComplete?.({
+          storyId: story.id,
+          storyName: displayName,
+          status: 'failed',
+          duration,
+          error: lastError ? String(lastError) : 'Unknown error',
+          diffPath,
+          actualPath: undefined,
+          expectedPath: undefined,
+          errorPath: diffPath,
+          errorType: 'screenshot_mismatch',
+        });
 
         // Finish test in UI
         if (this.ui) {
@@ -801,8 +874,9 @@ export async function runParallelTests(options: {
   config: TestConfig;
   runtimePath: string;
   debug: boolean;
+  callbacks?: RunCallbacks;
 }): Promise<number> {
-  const { stories, config, debug } = options;
+  const { stories, config, debug, callbacks } = options;
   const log = createLogger(config.logLevel);
 
   log.debug(`Starting parallel test run with ${stories.length} stories`);
@@ -850,7 +924,7 @@ export async function runParallelTests(options: {
     }
   };
 
-  const pool = new WorkerPool(numWorkers, config, stories, ui || undefined, printUnderSpinner);
+  const pool = new WorkerPool(numWorkers, config, stories, ui || undefined, printUnderSpinner, callbacks);
 
   const startTime = Date.now();
 

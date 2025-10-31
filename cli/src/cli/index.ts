@@ -2,6 +2,7 @@
 import { resolveConfig, saveEffectiveConfig, type CliFlags } from '../config.js';
 import { Command } from '@commander-js/extra-typings';
 import { run } from '../core/VisualRegressionRunner.js';
+import { JsonRpcServer, CLI_METHODS, CLI_EVENTS } from '../jsonrpc.js';
 
 const parseArgs = (argv: string[]): CliFlags => {
   const out: CliFlags = {};
@@ -161,6 +162,9 @@ const parseArgs = (argv: string[]): CliFlags => {
           out.mockDate = true;
         }
         break;
+      case '--json-rpc':
+        out.jsonRpc = true;
+        break;
       default:
         break;
     }
@@ -170,6 +174,12 @@ const parseArgs = (argv: string[]): CliFlags => {
 
 const main = async (): Promise<number> => {
   const argv = process.argv.slice(2);
+
+  // Check for JSON-RPC mode first (before commander parsing)
+  const flags = parseArgs(argv);
+  if (flags.jsonRpc) {
+    return await runJsonRpcMode(flags);
+  }
 
   // Use commander for help/usage output and basic option declarations
   const program = new Command();
@@ -213,13 +223,133 @@ const main = async (): Promise<number> => {
     if (err?.code === 'commander.helpDisplayed') return 0;
     throw err;
   }
-  const flags = parseArgs(argv);
   const config = resolveConfig(flags);
   if (flags.saveConfig) {
     saveEffectiveConfig(config, 'storybook-visual-regression.config.json');
   }
   const code = await run(config);
   return code;
+};
+
+const runJsonRpcMode = async (flags: CliFlags): Promise<number> => {
+  const config = resolveConfig(flags);
+  const server = new JsonRpcServer();
+
+  // Current run state
+  let currentRun: { cancel: () => void } | null = null;
+  let isRunning = false;
+
+  // Send ready notification
+  server.notify(CLI_EVENTS.READY, { version: '1.0.0' });
+
+  // Register method handlers
+  server.on(CLI_METHODS.RUN, async (params) => {
+    if (isRunning) {
+      throw new Error('A test run is already in progress');
+    }
+
+    isRunning = true;
+    server.notify(CLI_EVENTS.PROGRESS, { running: true, completed: 0, total: 0 });
+
+    try {
+      // Merge provided params with base config
+      const runConfig = { ...config };
+
+      // Override config with params
+      if (params) {
+        Object.assign(runConfig, params);
+      }
+
+      // Create a promise that can be cancelled
+      let cancelled = false;
+      const cancel = () => { cancelled = true; };
+
+      currentRun = { cancel };
+
+      // Set up progress callbacks
+      const progressCallback = (progress: any) => {
+        server.notify(CLI_EVENTS.PROGRESS, progress);
+      };
+
+      const storyStartCallback = (storyId: string, storyName: string) => {
+        server.notify(CLI_EVENTS.STORY_START, { storyId, storyName });
+      };
+
+      const storyCompleteCallback = (result: any) => {
+        server.notify(CLI_EVENTS.STORY_COMPLETE, result);
+      };
+
+      const resultCallback = (result: any) => {
+        server.notify(CLI_EVENTS.RESULT, result);
+      };
+
+      const logCallback = (message: string) => {
+        server.notify(CLI_EVENTS.LOG, { message });
+      };
+
+      // Run the tests with callbacks
+      const code = await run(runConfig, {
+        onProgress: progressCallback,
+        onStoryStart: storyStartCallback,
+        onStoryComplete: storyCompleteCallback,
+        onResult: resultCallback,
+        onLog: logCallback,
+        cancelled: () => cancelled,
+      });
+
+      server.notify(CLI_EVENTS.COMPLETE, { code, cancelled });
+      return { code, cancelled };
+
+    } catch (error) {
+      server.notify(CLI_EVENTS.ERROR, {
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    } finally {
+      isRunning = false;
+      currentRun = null;
+      server.notify(CLI_EVENTS.PROGRESS, { running: false });
+    }
+  });
+
+  server.on(CLI_METHODS.CANCEL, async () => {
+    if (currentRun) {
+      currentRun.cancel();
+      return { cancelled: true };
+    }
+    return { cancelled: false };
+  });
+
+  server.on(CLI_METHODS.SET_CONFIG, async (newConfig) => {
+    // Update config (this would merge with existing config)
+    Object.assign(config, newConfig);
+    return { updated: true };
+  });
+
+  server.on(CLI_METHODS.GET_CONFIG, async () => {
+    return config;
+  });
+
+  server.on(CLI_METHODS.GET_STATUS, async () => {
+    return {
+      isRunning,
+      currentRun: currentRun ? true : false,
+    };
+  });
+
+  server.on(CLI_METHODS.GET_RESULTS, async () => {
+    // This would need to be implemented to return current results
+    // For now, return empty array
+    return [];
+  });
+
+  // Start the server
+  server.start();
+
+  // Keep the process alive
+  return new Promise(() => {
+    // Never resolve - process stays alive until killed
+  });
 };
 
 main()

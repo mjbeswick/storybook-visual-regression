@@ -41,6 +41,7 @@ export type CliFlags = {
 	showProgress?: boolean;
 	summary?: boolean;
 	mockDate?: boolean | string | number;
+	jsonRpc?: boolean;
 };
 
 export type RuntimeConfig = VisualRegressionConfig & {
