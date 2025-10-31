@@ -26,6 +26,7 @@ export type VisualRegressionConfig = {
 	excludeStories?: string[];
 	grep?: string;
 	disableAnimations: boolean;
+	mockDate?: boolean | string | number;
 	frozenTime?: number;
 	timezone?: string;
 	locale?: string;
@@ -69,6 +70,7 @@ export const defaultConfig = (): VisualRegressionConfig => {
 		excludeStories: undefined,
 		grep: undefined,
 		disableAnimations: true,
+		mockDate: false,
 		frozenTime: undefined,
 		timezone: undefined,
 		locale: undefined,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { resolveConfig, saveEffectiveConfig, type CliFlags } from '../config.js';
-import { Command } from 'commander';
+import { Command } from '@commander-js/extra-typings';
 import { run } from '../core/VisualRegressionRunner.js';
 
 const parseArgs = (argv: string[]): CliFlags => {
@@ -11,8 +11,8 @@ const parseArgs = (argv: string[]): CliFlags => {
     switch (a) {
       case '-h':
       case '--help':
-        out.debug = out.debug;
-        /* no-op to mark presence */ break;
+        /* no-op to mark presence */
+        break;
       case '--log-level':
         out.logLevel = getVal(i) as any;
         i += 1;
@@ -150,6 +150,17 @@ const parseArgs = (argv: string[]): CliFlags => {
       case '--save-config':
         out.saveConfig = true;
         break;
+      case '--mock-date':
+        const mockDateVal = getVal(i);
+        if (mockDateVal && mockDateVal !== 'true' && mockDateVal !== 'false') {
+          // If a value is provided, use it (could be timestamp or date string)
+          out.mockDate = mockDateVal;
+          i += 1;
+        } else {
+          // Just --mock-date without value means use default
+          out.mockDate = true;
+        }
+        break;
       default:
         break;
     }
@@ -189,6 +200,10 @@ const main = async (): Promise<number> => {
     .option('--log-level <level>', 'silent|error|warn|info|debug')
     .option('--save-config', 'Write effective config JSON')
     .option('--quiet', 'Suppress per-test output')
+    .option(
+      '--mock-date [date]',
+      'Mock Date object with fixed date (timestamp or ISO string, or omit for default)',
+    )
     .helpOption('-h, --help', 'Show help');
 
   program.exitOverride();

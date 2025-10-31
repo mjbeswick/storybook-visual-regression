@@ -25,6 +25,7 @@ export const writeRuntimeOptions = (
 				snapshotRetries: config.snapshotRetries,
 				snapshotDelay: config.snapshotDelay,
 				disableAnimations: config.disableAnimations,
+				mockDate: config.mockDate,
 				frozenTime: config.frozenTime,
 				timezone: config.timezone,
 				locale: config.locale,

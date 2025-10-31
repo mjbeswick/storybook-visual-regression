@@ -40,6 +40,7 @@ export type CliFlags = {
 	saveConfig?: boolean;
 	showProgress?: boolean;
 	summary?: boolean;
+	mockDate?: boolean | string | number;
 };
 
 export type RuntimeConfig = VisualRegressionConfig & {
@@ -62,6 +63,7 @@ export type RuntimeConfig = VisualRegressionConfig & {
 	overlayTimeout?: number;
 	showProgress: boolean;
 	summary: boolean;
+	mockDate?: boolean | string | number;
 };
 
 export const loadJsonFile = (maybePath?: string): Record<string, unknown> | undefined => {
@@ -107,6 +109,7 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
 		excludeStories: normalizePatterns(flags.exclude ?? fileVisual.excludeStories),
 		grep: flags.grep ?? fileVisual.grep ?? base.grep,
 		disableAnimations: fileVisual.disableAnimations ?? base.disableAnimations,
+		mockDate: flags.mockDate ?? fileVisual.mockDate ?? base.mockDate ?? false,
 		snapshotPath: ((): string => {
 			const rootOut = flags.output ?? fileVisual.outputDir ?? base.outputDir;
 			return path.join(rootOut, 'snapshots');
@@ -147,7 +150,8 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
 		testTimeout: flags.testTimeout,
 		overlayTimeout: flags.overlayTimeout,
 		showProgress: Boolean(flags.showProgress),
-		summary: Boolean(flags.summary)
+		summary: Boolean(flags.summary),
+		mockDate: merged.mockDate ?? false
 	};
 
 	return runtime;
@@ -178,6 +182,7 @@ export const saveEffectiveConfig = (config: RuntimeConfig, filePath: string): vo
 			excludeStories: config.excludeStories,
 			grep: config.grep,
 			disableAnimations: config.disableAnimations,
+			mockDate: config.mockDate,
 			frozenTime: config.frozenTime,
 			timezone: config.timezone,
 			locale: config.locale,

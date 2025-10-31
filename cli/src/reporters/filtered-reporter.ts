@@ -105,7 +105,7 @@ export default class FilteredReporter implements Reporter {
         this.progressSpinner = ora({
           text: this.getProgressText(),
           spinner: 'dots',
-          interval: 100
+          interval: 100,
         }).start();
       }
     }

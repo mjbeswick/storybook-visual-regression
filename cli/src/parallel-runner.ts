@@ -8,9 +8,115 @@ import os from 'node:os';
 import { chromium, Browser, Page } from 'playwright';
 import { compare as odiffCompare } from 'odiff-bin';
 import ora from 'ora';
+import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
 import { TerminalUI } from './terminal-ui.js';
+
+// Logging helper based on logLevel
+const createLogger = (logLevel: RuntimeConfig['logLevel']) => {
+  const levels = ['silent', 'error', 'warn', 'info', 'debug'];
+  const currentLevel = levels.indexOf(logLevel);
+
+  return {
+    error: (...args: any[]) => {
+      if (currentLevel >= levels.indexOf('error')) {
+        console.error(...args);
+      }
+    },
+    warn: (...args: any[]) => {
+      if (currentLevel >= levels.indexOf('warn')) {
+        console.warn(...args);
+      }
+    },
+    info: (...args: any[]) => {
+      if (currentLevel >= levels.indexOf('info')) {
+        console.log(...args);
+      }
+    },
+    debug: (...args: any[]) => {
+      if (currentLevel >= levels.indexOf('debug')) {
+        console.log(chalk.dim('[DEBUG]'), ...args);
+      }
+    },
+  };
+};
+
+// Summary message helper
+type SummaryParams = {
+  passed: number;
+  failed: number;
+  skipped: number;
+  created: number;
+  updated: number;
+  total: number;
+  successPercent: number;
+  verbose?: boolean;
+  context: 'update' | 'test';
+  testsPerMinute: string;
+};
+
+export function generateSummaryMessage({
+  passed,
+  failed,
+  skipped,
+  created,
+  updated,
+  total,
+  successPercent,
+  verbose = false,
+  context,
+  testsPerMinute,
+}: SummaryParams): string {
+  const lines: string[] = [];
+
+  if (context === 'update') {
+    if (updated === total && failed === 0) {
+      lines.push(chalk.green(`${total} snapshots updated successfully.`));
+    } else if (updated > 0 && failed > 0) {
+      lines.push(chalk.yellow(`${updated} snapshots updated, ${failed} failed.`));
+    } else if (failed === total) {
+      lines.push(chalk.red(`All ${total} snapshot updates failed.`));
+    } else {
+      lines.push(chalk.gray(`No snapshots were updated.`));
+    }
+  } else if (context === 'test') {
+    if (passed === total && failed === 0) {
+      lines.push(chalk.green(`All ${total} tests passed.`));
+    } else if (passed > 0 && failed > 0) {
+      lines.push(chalk.yellow(`${passed} tests passed, ${failed} failed.`));
+    } else if (failed === total) {
+      lines.push(chalk.red(`All ${total} tests failed.`));
+    } else {
+      lines.push(chalk.gray(`No tests were run.`));
+    }
+  }
+
+  if (verbose) {
+    const breakdown: string[] = [];
+    if (context === 'update') {
+      breakdown.push(`Created: ${created}`);
+      breakdown.push(`Updated: ${updated}`);
+      breakdown.push(`Failed: ${failed}`);
+      if (skipped > 0) {
+        breakdown.push(`Skipped: ${skipped}`);
+      }
+      breakdown.push(`storiesPerMinute: ${testsPerMinute}`);
+    } else {
+      breakdown.push(`Passed: ${passed}`);
+      breakdown.push(`Failed: ${failed}`);
+      if (skipped > 0) {
+        breakdown.push(`Skipped: ${skipped}`);
+      }
+      breakdown.push(`Stories/m: ${testsPerMinute}`);
+    }
+    breakdown.push(`Total: ${total}`);
+    lines.push(breakdown.join(chalk.dim(' • ')));
+    lines.push(chalk.cyan(`Success Rate: ${successPercent.toFixed(1)}%`));
+  }
+
+  return lines.join('\n');
+}
 
 type TestConfig = RuntimeConfig & {
   snapshotPath: string;
@@ -32,13 +138,25 @@ class WorkerPool {
   private ui?: TerminalUI;
   private onProgress?: (completed: number, total: number, results: any) => void;
   private onComplete?: (results: any) => void;
+  private singleLineMode: boolean;
+  private printUnderSpinner?: (line: string) => void;
+  private log: ReturnType<typeof createLogger>;
 
-  constructor(maxWorkers: number, config: TestConfig, stories: DiscoveredStory[], ui?: TerminalUI) {
+  constructor(
+    maxWorkers: number,
+    config: TestConfig,
+    stories: DiscoveredStory[],
+    ui?: TerminalUI,
+    printUnderSpinner?: (line: string) => void,
+  ) {
     this.maxWorkers = maxWorkers;
     this.config = config;
     this.total = stories.length;
     this.queue = [...stories];
     this.ui = ui;
+    this.singleLineMode = Boolean(config.summary || config.showProgress);
+    this.printUnderSpinner = printUnderSpinner;
+    this.log = createLogger(config.logLevel);
   }
 
   getResults() {
@@ -90,19 +208,176 @@ class WorkerPool {
 
   private async runStoryTest(story: DiscoveredStory): Promise<void> {
     const startTime = Date.now();
-    let browser: Browser | undefined;
-    let page: Page | undefined;
+    this.log.debug(`Starting test for story: ${story.id} (${story.title}/${story.name})`);
+
+    // Helper to return file paths as-is
+    const escapePath = (filePath: string): string => {
+      return filePath;
+    };
+
+    // Compute a human-friendly display name using title/name from story ID, maintaining path structure
+    const toDisplayName = (): string => {
+      // Use title as the directory path and name as the basename
+      // This is closer to the story ID structure (title--name) while keeping path splitting
+      return story.title ? `${story.title}/${story.name}` : story.name;
+    };
+    const displayName = toDisplayName();
+
+    // Helper to color duration number by speed, unit rendered separately in a lighter color
+    const colorDuration = (durationMs: number): string => {
+      const secs = durationMs / 1000;
+      const secsStr = secs.toFixed(1);
+      if (secs < 2) {
+        return `${chalk.green(secsStr)}${chalk.dim(chalk.green('s'))}`;
+      } else if (secs < 4) {
+        return `${chalk.yellow(secsStr)}${chalk.dim(chalk.yellow('s'))}`;
+      } else {
+        return `${chalk.red(secsStr)}${chalk.dim(chalk.red('s'))}`;
+      }
+    };
 
     // Start test in UI
     if (this.ui) {
-      this.ui.startTest(story.id, story.id);
+      this.ui.startTest(story.id, displayName);
     }
 
-    // Small random delay to stagger browser launches and reduce resource contention
-    const delay = Math.random() * 50; // 0-50ms random delay
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    // Retry logic: attempt up to retries + 1 times (initial attempt + retries)
+    const maxAttempts = (this.config.retries || 0) + 1;
+    let lastError: Error | null = null;
+    let result: string | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        // Small random delay to stagger browser launches and reduce resource contention
+        if (attempt === 1) {
+          const delay = Math.random() * 50; // 0-50ms random delay only on first attempt
+          this.log.debug(
+            `Story ${story.id}: Staggering browser launch (delay: ${delay.toFixed(1)}ms)`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        } else {
+          // Add a small delay between retries
+          this.log.debug(`Story ${story.id}: Waiting before retry attempt ${attempt}`);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        const attemptStart = Date.now();
+        result = await this.executeSingleTestAttempt(story);
+        const attemptDuration = Date.now() - attemptStart;
+        this.log.debug(`Story ${story.id}: Attempt ${attempt} succeeded in ${attemptDuration}ms`);
+        lastError = null;
+        break; // Success, exit retry loop
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < maxAttempts) {
+          // Will retry, log if debug mode
+          this.log.debug(
+            `Story ${story.id}: Attempt ${attempt}/${maxAttempts} failed, retrying...`,
+          );
+          if (lastError) {
+            this.log.debug(`  Error: ${String(lastError)}`);
+          }
+        }
+        // If this is the last attempt, error will be handled below
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    this.log.debug(
+      `Story ${story.id}: Test completed in ${duration}ms with result: ${result || 'failed'}`,
+    );
+
+    if (result !== null) {
+      // Success
+      this.results[story.id] = { success: true, duration, action: result };
+
+      // Finish test in UI
+      if (this.ui) {
+        this.ui.finishTest(story.id, true);
+      } else if (!this.config.quiet) {
+        const line = `${chalk.green('✓')} ${displayName} ${colorDuration(duration)}`;
+        if (this.printUnderSpinner) {
+          this.printUnderSpinner(line);
+        } else {
+          console.log(line);
+        }
+      }
+    } else {
+      // Check if this is a missing baseline (should be skipped)
+      const isMissingBaseline = lastError && String(lastError).includes('Missing baseline');
+
+      if (isMissingBaseline) {
+        // Skipped - no snapshot exists
+        this.results[story.id] = {
+          success: true, // Skipped is considered successful (not a failure)
+          duration,
+          action: 'skipped',
+        };
+
+        // Finish test in UI
+        if (this.ui) {
+          this.ui.finishTest(story.id, true);
+        } else if (!this.config.quiet) {
+          const line = `${chalk.yellow('○')} ${displayName} ${colorDuration(duration)} ${chalk.dim('(no snapshot)')}`;
+          if (this.printUnderSpinner) {
+            this.printUnderSpinner(line);
+          } else {
+            console.log(line);
+          }
+        }
+      } else {
+        // Failed after all retries
+        this.results[story.id] = {
+          success: false,
+          error: lastError ? String(lastError) : 'Unknown error',
+          duration,
+          action: 'failed',
+        };
+
+        // Finish test in UI
+        if (this.ui) {
+          this.ui.finishTest(
+            story.id,
+            false,
+            lastError ? String(lastError) : 'Unknown error',
+            story.url,
+          );
+        } else if (!this.config.quiet) {
+          // Extract diff image path from error message for visual regression failures
+          const errorStr = lastError ? String(lastError) : '';
+          // Match everything after "diff: " until the last ")" (which closes the error message)
+          const diffMatch = errorStr.match(/diff: (.+)\)/);
+          const diffPath = diffMatch ? diffMatch[1] : null;
+
+          const first = `${chalk.red('✗')} ${displayName} ${colorDuration(duration)}`;
+          if (this.printUnderSpinner) {
+            this.printUnderSpinner(first);
+            this.printUnderSpinner(`  ${chalk.blue(escapePath(story.url))}`);
+            if (diffPath) {
+              this.printUnderSpinner(`  ${chalk.blue(escapePath(diffPath))}`);
+            }
+          } else {
+            console.error(first);
+            console.error(`  ${chalk.blue(escapePath(story.url))}`);
+            if (diffPath) {
+              console.error(`  ${chalk.blue(escapePath(diffPath))}`);
+            }
+          }
+        }
+      }
+    }
+
+    this.completed++;
+    this.onProgress?.(this.completed, this.total, this.results);
+  }
+
+  private async executeSingleTestAttempt(story: DiscoveredStory): Promise<string> {
+    let browser: Browser | undefined;
+    let page: Page | undefined;
 
     try {
+      const browserStart = Date.now();
+      this.log.debug(`Story ${story.id}: Launching browser...`);
       // Launch browser with aggressive memory optimization for parallel execution
       browser = await chromium.launch({
         headless: true,
@@ -135,20 +410,81 @@ class WorkerPool {
           '--disable-component-update', // Disable component updates
         ],
       });
+      this.log.debug(`Story ${story.id}: Browser launched in ${Date.now() - browserStart}ms`);
 
       const viewport = this.config.perStory?.[story.id]?.viewport;
+      this.log.debug(
+        `Story ${story.id}: Creating browser context${viewport ? ` with viewport: ${JSON.stringify(viewport)}` : ''}...`,
+      );
       const context = await browser.newContext({
         viewport: typeof viewport === 'object' ? viewport : undefined,
         // Reuse context for performance
       });
 
       page = await context.newPage();
+      this.log.debug(`Story ${story.id}: New page created`);
+
+      // Date mocking will be applied after navigation to avoid interfering with page initialization
+
+      // Disable animations if configured
+      if (this.config.disableAnimations) {
+        await page.addInitScript(() => {
+          // Inject CSS to disable all animations and transitions
+          const disableAnimations = () => {
+            const style = document.createElement('style');
+            style.textContent = `
+              *, *::before, *::after {
+                animation-duration: 0s !important;
+                animation-delay: 0s !important;
+                transition-duration: 0s !important;
+                transition-delay: 0s !important;
+                scroll-behavior: auto !important;
+              }
+            `;
+            document.head.appendChild(style);
+
+            // Override getComputedStyle to return 0s for animations/transitions
+            const originalGetComputedStyle = window.getComputedStyle;
+            window.getComputedStyle = function (element: Element, pseudoElement?: string | null) {
+              const style = originalGetComputedStyle.call(window, element, pseudoElement);
+              try {
+                Object.defineProperty(style, 'animationDuration', {
+                  get: () => '0s',
+                  configurable: true,
+                });
+                Object.defineProperty(style, 'transitionDuration', {
+                  get: () => '0s',
+                  configurable: true,
+                });
+              } catch {
+                // If property override fails, CSS injection should still work
+              }
+              return style;
+            };
+          };
+
+          // Run immediately if document is ready, otherwise wait for DOMContentLoaded
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', disableAnimations, { once: true });
+          } else {
+            disableAnimations();
+          }
+        });
+      }
 
       // Navigate and wait for story to load
+      this.log.debug(`Story ${story.id}: Navigating to ${story.url}...`);
+      const navStart = Date.now();
       await page.goto(story.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      this.log.debug(`Story ${story.id}: Navigation completed in ${Date.now() - navStart}ms`);
 
       // Wait for Storybook root to be attached
+      this.log.debug(`Story ${story.id}: Waiting for #storybook-root...`);
       await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 10000 });
+      this.log.debug(`Story ${story.id}: Storybook root found`);
+
+      // Date mocking temporarily disabled - causing application hangs
+      // TODO: Implement safer Date mocking approach if needed
 
       // Wait for story content to actually load - Storybook specific waiting
       await page.waitForFunction(
@@ -253,10 +589,12 @@ class WorkerPool {
         { quietPeriodMs, maxWaitMs },
       );
 
-      if (!isStable && this.config.debug) {
-        console.log(
+      if (!isStable) {
+        this.log.debug(
           `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
         );
+      } else {
+        this.log.debug(`Story ${story.id}: DOM is stable`);
       }
 
       // Optimized screenshot capture
@@ -264,40 +602,104 @@ class WorkerPool {
       const actualDir = path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath));
       const actual = path.join(actualDir, path.basename(story.snapshotRelPath));
 
+      this.log.debug(
+        `Story ${story.id}: Screenshot paths - expected: ${expected}, actual: ${actual}`,
+      );
+
       // Pre-create directory to avoid contention
       fs.mkdirSync(actualDir, { recursive: true });
 
+      // Apply Date mock right before screenshot capture if enabled
+      // This is the safest point - page is fully loaded but screenshot not yet taken
+      if (this.config.mockDate && !page.isClosed()) {
+        try {
+          const parseMockDate = (value: boolean | string | number | undefined): Date => {
+            if (!value || value === true) {
+              // Default: February 2, 2024, 10:00:00 UTC as requested
+              return new Date('2024-02-02T10:00:00Z');
+            }
+
+            if (typeof value === 'number') {
+              // If it's a number, assume it's already a timestamp
+              if (value < 946684800000) {
+                // Looks like seconds, convert to milliseconds
+                return new Date(value * 1000);
+              }
+              return new Date(value);
+            }
+
+            if (typeof value === 'string') {
+              const parsed = Date.parse(value);
+              if (!isNaN(parsed)) {
+                return new Date(parsed);
+              }
+              // Try as numeric string
+              const numValue = Number(value);
+              if (!isNaN(numValue)) {
+                if (numValue < 946684800000) {
+                  return new Date(numValue * 1000);
+                }
+                return new Date(numValue);
+              }
+            }
+
+            // Fallback to default
+            return new Date('2024-02-02T10:00:00Z');
+          };
+
+          const fixedDate = parseMockDate(this.config.mockDate);
+          this.log.debug(
+            `Story ${story.id}: Setting fixed clock time to ${fixedDate.toISOString()}`,
+          );
+
+          // Use Playwright's built-in clock API for reliable time mocking
+          await page.clock.setFixedTime(fixedDate);
+
+          this.log.debug(`Story ${story.id}: Clock time set successfully`);
+        } catch (e) {
+          this.log.debug(`Story ${story.id}: Failed to set clock time:`, e);
+          // Don't throw - continue with screenshot even if clock setting fails
+        }
+      }
+
       // Capture screenshot with settings optimized for visual regression
+      this.log.debug(
+        `Story ${story.id}: Capturing screenshot${this.config.fullPage ? ' (full page)' : ''}...`,
+      );
+      const screenshotStart = Date.now();
       await page.screenshot({
         path: actual,
         fullPage: this.config.fullPage,
         type: 'png', // PNG format required for accurate odiff comparison
       });
+      this.log.debug(`Story ${story.id}: Screenshot captured in ${Date.now() - screenshotStart}ms`);
 
       // Handle baseline logic with odiff visual regression testing
       const missingBaseline = !fs.existsSync(expected);
       let result: string;
 
-      if (this.config.debug) {
-        console.log(
-          `Story ${story.id}: expected=${expected}, actual=${actual}, missing=${missingBaseline}, update=${this.config.update}`,
-        );
-      }
+      this.log.debug(
+        `Story ${story.id}: Baseline check - expected: ${expected}, missing: ${missingBaseline}, update mode: ${this.config.update}`,
+      );
 
       if (missingBaseline) {
         if (this.config.update && this.config.missingOnly) {
+          this.log.debug(`Story ${story.id}: Creating missing baseline snapshot`);
           fs.mkdirSync(path.dirname(expected), { recursive: true });
           fs.copyFileSync(actual, expected);
           result = 'Created baseline';
         } else if (this.config.update) {
+          this.log.debug(`Story ${story.id}: Creating baseline snapshot (update mode)`);
           fs.mkdirSync(path.dirname(expected), { recursive: true });
           fs.copyFileSync(actual, expected);
           result = 'Updated baseline';
         } else {
+          this.log.debug(`Story ${story.id}: Missing baseline, skipping test`);
           throw new Error(`Missing baseline: ${expected}`);
         }
       } else if (this.config.update) {
         // When --update is passed and baseline exists, update it without diffing
+        this.log.debug(`Story ${story.id}: Updating existing baseline snapshot`);
         fs.mkdirSync(path.dirname(expected), { recursive: true });
         fs.copyFileSync(actual, expected);
         result = 'Updated baseline';
@@ -310,28 +712,36 @@ class WorkerPool {
 
         try {
           // Run odiff comparison using Node.js bindings
+          this.log.debug(
+            `Story ${story.id}: Comparing images with threshold: ${this.config.threshold}`,
+          );
+          const compareStart = Date.now();
           const odiffResult = await odiffCompare(expected, actual, diffPath, {
             threshold: this.config.threshold,
             outputDiffMask: true,
           });
+          this.log.debug(
+            `Story ${story.id}: Image comparison completed in ${Date.now() - compareStart}ms, match: ${odiffResult.match}`,
+          );
 
           if (odiffResult.match) {
             // Images are identical within threshold
             result = 'Visual regression passed';
+            this.log.debug(`Story ${story.id}: Visual regression test passed`);
 
             // Clean up diff file if it exists (odiff creates it even for identical images)
             if (fs.existsSync(diffPath)) {
               try {
                 fs.unlinkSync(diffPath);
+                this.log.debug(`Story ${story.id}: Cleaned up diff file`);
               } catch (e) {
                 // Ignore cleanup errors
               }
             }
           } else {
             // Images differ beyond threshold
-            if (this.config.debug) {
-              console.log(`Images differ for ${story.id}: ${odiffResult.reason}`);
-            }
+            this.log.debug(`Story ${story.id}: Images differ - reason: ${odiffResult.reason}`);
+            this.log.debug(`Story ${story.id}: Diff image saved to: ${diffPath}`);
 
             throw new Error(`Visual regression failed: images differ (diff: ${diffPath})`);
           }
@@ -345,34 +755,7 @@ class WorkerPool {
         }
       }
 
-      const duration = Date.now() - startTime;
-      this.results[story.id] = { success: true, duration, action: result };
-
-      // Finish test in UI
-      if (this.ui) {
-        this.ui.finishTest(story.id, true);
-      } else if (!this.config.quiet) {
-        console.log(`✓ ${story.id}`);
-      }
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.results[story.id] = { success: false, error: String(error), duration, action: 'failed' };
-
-      // Finish test in UI
-      if (this.ui) {
-        this.ui.finishTest(story.id, false, String(error), story.url);
-      } else if (!this.config.quiet) {
-        // Extract diff image path from error message for visual regression failures
-        const errorStr = String(error);
-        const diffMatch = errorStr.match(/diff: ([^\)]+)/);
-        const diffPath = diffMatch ? diffMatch[1] : null;
-
-        console.error(`✗ ${story.id}`);
-        console.error(`  ${story.url}`);
-        if (diffPath) {
-          console.error(`  ${diffPath}`);
-        }
-      }
+      return result;
     } finally {
       // Aggressive cleanup to prevent memory leaks
       if (page) {
@@ -389,9 +772,7 @@ class WorkerPool {
           }
         } catch (e) {
           // Ignore cleanup errors but log for debugging
-          if (this.config.debug) {
-            console.log(`Warning: Failed to close page for ${story.id}:`, e);
-          }
+          this.log.debug(`Warning: Failed to close page for ${story.id}:`, e);
         }
       }
 
@@ -403,9 +784,7 @@ class WorkerPool {
           }
         } catch (e) {
           // Ignore cleanup errors but log for debugging
-          if (this.config.debug) {
-            console.log(`Warning: Failed to close browser for ${story.id}:`, e);
-          }
+          this.log.debug(`Warning: Failed to close browser for ${story.id}:`, e);
         }
       }
 
@@ -413,9 +792,6 @@ class WorkerPool {
       if (typeof global !== 'undefined' && global.gc) {
         global.gc();
       }
-
-      this.completed++;
-      this.onProgress?.(this.completed, this.total, this.results);
     }
   }
 }
@@ -427,33 +803,83 @@ export async function runParallelTests(options: {
   debug: boolean;
 }): Promise<number> {
   const { stories, config, debug } = options;
+  const log = createLogger(config.logLevel);
+
+  log.debug(`Starting parallel test run with ${stories.length} stories`);
+  log.debug(
+    `Configuration: workers=${config.workers || 'default'}, retries=${config.retries}, threshold=${config.threshold}, update=${config.update}`,
+  );
+  log.debug(
+    `Log level: ${config.logLevel}, quiet: ${config.quiet}, summary: ${config.summary}, progress: ${config.showProgress}`,
+  );
 
   if (stories.length === 0) {
     console.error('No stories to test');
     return 1;
   }
 
-  // Check if we can use the terminal UI
-  const useUI = TerminalUI.isSupported() && !config.quiet;
+  // Prefer single-line spinner when --summary or --progress is passed; otherwise allow TUI
+  // Disable TUI in quiet mode as well
+  const useUI =
+    TerminalUI.isSupported() && !config.quiet && !config.summary && !config.showProgress;
   const ui = useUI ? new TerminalUI(stories.length, config.showProgress) : null;
+  log.debug(`UI mode: ${useUI ? 'TerminalUI' : ui === null ? 'none' : 'spinner'}`);
 
   // Default to number of CPU cores, with a reasonable cap
   const defaultWorkers = Math.min(os.cpus().length, 8); // Cap at 8 to avoid overwhelming the system
   const numWorkers = config.workers || defaultWorkers;
+  log.debug(`Worker pool: ${numWorkers} workers (${os.cpus().length} CPU cores available)`);
 
-  const initialMessage = `Running ${stories.length} stories using ${numWorkers} concurrent workers`;
+  const initialMessage = `Running ${chalk.yellow(String(stories.length))} stories using ${chalk.yellow(String(numWorkers))} concurrent workers...`;
   if (ui) {
     ui.log(initialMessage);
   } else if (!config.quiet) {
     console.log(initialMessage);
   }
 
-  const pool = new WorkerPool(numWorkers, config, stories, ui || undefined);
+  // Helper to print a line under the spinner and then resume spinner
+  const printUnderSpinner = (line: string) => {
+    if (spinner) {
+      const currentText = spinnerText;
+      spinner.stop();
+      spinner.clear();
+      console.log(line);
+      spinner = ora(currentText).start();
+    } else {
+      console.log(line);
+    }
+  };
+
+  const pool = new WorkerPool(numWorkers, config, stories, ui || undefined, printUnderSpinner);
 
   const startTime = Date.now();
 
   // Create ora spinner when --progress or --summary is passed (even in quiet), and not using UI
-  const spinner = !ui && (config.showProgress || config.summary) ? ora().start() : null;
+  let spinner = !ui && (config.showProgress || config.summary) ? ora() : null;
+  let spinnerText = '';
+  if (spinner) {
+    // Initialize with a starting line so users see it immediately
+    const initialPercent = 0;
+    const initialText = ` 0/${stories.length} (${initialPercent}%) ${chalk.dim('•')} estimating...`;
+    spinner = spinner.start(initialText);
+    spinnerText = initialText;
+  }
+
+  // Handle Ctrl+C: stop spinner immediately and show aborted message
+  let abortHandled = false;
+  const handleSigint = () => {
+    if (abortHandled) return;
+    abortHandled = true;
+    if (spinner) {
+      try {
+        spinner.stop();
+        spinner.clear();
+      } catch {}
+    }
+    console.error('^C Aborted by user. Visual regression run stopped.');
+    process.exit(130);
+  };
+  process.once('SIGINT', handleSigint);
 
   // Progress callback
   const onProgress = (completed: number, total: number) => {
@@ -474,13 +900,16 @@ export async function runParallelTests(options: {
       const elapsedMinutes = Math.max(elapsed / 60000, 0.001);
       const storiesPerMinute = completed > 0 ? Math.round(completed / elapsedMinutes) : 0;
 
-      spinner.text = ` ${completed}/${total} (${percent}%) • ${timeStr} remaining • ${storiesPerMinute}/m`;
+      spinnerText = ` ${chalk.yellow(`${completed}/${total}`)} (${chalk.cyan(`${percent}%`)}) ${chalk.dim('•')} ${chalk.cyan(timeStr)} remaining ${chalk.dim('•')} ${chalk.magenta(`${storiesPerMinute}/m`)}`;
+      spinner.text = spinnerText;
     }
   };
 
   try {
     // Run the tests
+    log.debug('Starting worker pool execution...');
     const { success, failed } = await pool.run(onProgress);
+    log.debug(`Worker pool completed: success=${success}, failed=${failed}`);
 
     // Clear progress and show final summary
     if (spinner) {
@@ -498,25 +927,36 @@ export async function runParallelTests(options: {
     const updated = allResults.filter((r) => r.action === 'Updated baseline').length;
     const created = allResults.filter((r) => r.action === 'Created baseline').length;
     const failedCount = allResults.filter((r) => r.action === 'failed').length;
+    const skipped = allResults.filter((r) => r.action === 'skipped').length;
     const testsPerMinute = (stories.length / (parseFloat(totalDuration) / 60)).toFixed(0);
 
     // Show detailed summary at the end when --summary is passed
     if (config.summary) {
-      const summaryLines = [
-        `📊 Summary:`,
-        `  ✅ Passed: ${passed}`,
-        `  ❌ Failed: ${failedCount}`,
-        `  📸 Created: ${created}`,
-        `  🔄 Updated: ${updated}`,
-        `  ⏱️  Total time: ${totalDuration}s`,
-        `  ⚡ Tests/min: ${testsPerMinute}`,
-      ];
+      const totalStories = stories.length;
+      const context: 'update' | 'test' = config.update ? 'update' : 'test';
+      const successPercent =
+        context === 'test'
+          ? (passed / Math.max(totalStories, 1)) * 100
+          : (updated / Math.max(totalStories, 1)) * 100;
+
+      const message = generateSummaryMessage({
+        passed,
+        failed: failedCount,
+        skipped,
+        created,
+        updated,
+        total: totalStories,
+        successPercent,
+        verbose: true,
+        context,
+        testsPerMinute,
+      });
 
       if (ui) {
-        summaryLines.forEach((line) => ui.log(line));
+        message.split('\n').forEach((line) => ui.log(line));
         ui.destroy();
       } else {
-        summaryLines.forEach((line) => console.log(line));
+        console.log('\n' + message);
       }
     } else {
       if (ui) {

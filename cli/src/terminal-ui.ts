@@ -50,7 +50,7 @@ export class TerminalUI {
       startedAt: Date.now(),
       endedAt: null,
       error: null,
-      duration: 0
+      duration: 0,
     };
 
     this.tests.set(storyId, test);
@@ -65,7 +65,7 @@ export class TerminalUI {
 
     test.status = success ? 'pass' : 'fail';
     test.endedAt = Date.now();
-    test.error = success ? null : (error || 'Unknown error');
+    test.error = success ? null : error || 'Unknown error';
     test.duration = test.endedAt - (test.startedAt || test.endedAt);
 
     // Store additional failure info for display
@@ -125,7 +125,7 @@ export class TerminalUI {
 
     // Add status row with progress, ETA, and stories per minute (only when summary is enabled)
     if (this.showProgress) {
-      const completedTests = allTests.filter(t => t.status === 'pass' || t.status === 'fail');
+      const completedTests = allTests.filter((t) => t.status === 'pass' || t.status === 'fail');
       const completed = completedTests.length;
       const total = this.totalTests;
       const percentage = Math.round((completed / total) * 100);
@@ -147,13 +147,18 @@ export class TerminalUI {
         // Format ETA with bounds checking
         const boundedEtaSeconds = Math.min(etaSeconds, 3600); // Cap at 1 hour
         const etaMinutesDisplay = Math.floor(boundedEtaSeconds / 60);
-        const etaDisplay = boundedEtaSeconds >= 60
-          ? `${etaMinutesDisplay}m ${boundedEtaSeconds % 60}s`
-          : boundedEtaSeconds > 0
-            ? `${boundedEtaSeconds}s`
-            : '0s';
+        const etaDisplay =
+          boundedEtaSeconds >= 60
+            ? `${etaMinutesDisplay}m ${boundedEtaSeconds % 60}s`
+            : boundedEtaSeconds > 0
+              ? `${boundedEtaSeconds}s`
+              : '0s';
 
-        console.log(chalk.dim(`Progress: ${completed}/${total} (${percentage}%) • ETA: ${etaDisplay} • ${storiesPerMinute}/m`));
+        console.log(
+          chalk.dim(
+            `Progress: ${completed}/${total} (${percentage}%) ${chalk.dim('•')} ETA: ${etaDisplay} ${chalk.dim('•')} ${storiesPerMinute}/m`,
+          ),
+        );
         linesPrinted++;
       }
     }
