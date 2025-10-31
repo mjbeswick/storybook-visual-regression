@@ -1,137 +1,98 @@
-import type {
-  FullConfig,
-  FullResult,
-  Reporter,
-  Suite,
-  TestCase,
-  TestResult,
-} from '@playwright/test/reporter';
-import { writeFileSync } from 'fs';
-import { join } from 'path';
-import chalk from 'chalk';
-import { loadRuntimeOptions } from '../runtime/runtime-options.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { FullConfig, Reporter, Suite, TestCase, TestResult } from '@playwright/test/reporter';
 
-export type JsonTestResult = {
-  storyId: string;
-  title: string;
-  name: string;
-  status: 'passed' | 'failed' | 'skipped' | 'timedOut' | 'interrupted';
-  duration: number;
-  error?: string;
-  attachments?: {
-    name: string;
-    path?: string;
-    contentType: string;
-  }[];
-  diffImagePath?: string;
-  expectedImagePath?: string;
-  actualImagePath?: string;
+type Attempt = { status: string; duration: number; retry: number; error?: string };
+
+type TestOut = {
+	storyId?: string;
+	title: string;
+	name?: string;
+	status: 'passed' | 'failed' | 'timedOut' | 'interrupted' | 'skipped';
+	duration: number;
+	flaky: boolean;
+	attempts: Attempt[];
+	expectedImagePath?: string;
+	actualImagePath?: string;
+	diffImagePath?: string;
+	attachments?: Array<{ name: string; path?: string; contentType?: string }>;
 };
 
-export type JsonOutput = {
-  status: 'passed' | 'failed' | 'timedout' | 'interrupted';
-  startTime: number;
-  duration: number;
-  totalTests: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-  tests: JsonTestResult[];
+type Summary = {
+	status: 'passed' | 'failed' | 'timedout' | 'interrupted';
+	startTime: number;
+	duration: number;
+	totalTests: number;
+	passed: number;
+	failed: number;
+	skipped: number;
+	timedOut: number;
+	interrupted: number;
+	tests: TestOut[];
 };
 
 export default class JsonReporter implements Reporter {
-  private startTime = 0;
-  private tests: JsonTestResult[] = [];
+	private startTime = Date.now();
+	private tests = new Map<string, TestOut>();
+	private counts = { total: 0, passed: 0, failed: 0, skipped: 0, timedOut: 0, interrupted: 0 };
 
-  onBegin(_config: FullConfig, _suite: Suite): void {
-    this.startTime = Date.now();
-  }
+	onBegin(_config: FullConfig, suite: Suite) {
+		this.counts.total = suite.allTests().length;
+	}
 
-  onTestEnd(test: TestCase, result: TestResult): void {
-    // Extract story information from test title
-    // Test titles are in format: "Story Title / Story Name [story-id]"
-    const fullTitle = test.title;
+	onTestEnd(test: TestCase, result: TestResult) {
+		const key = test.titlePath().join(' > ');
+		const prev = this.tests.get(key);
+		const attempt: Attempt = {
+			status: result.status,
+			duration: result.duration,
+			retry: result.retry,
+			error: result.error ? result.error.message : undefined
+		};
+		const base: TestOut =
+			prev ?? {
+				title: key,
+				status: result.status as TestOut['status'],
+				duration: result.duration,
+				flaky: false,
+				attempts: []
+			};
+		base.attempts.push(attempt);
+		base.status = result.status as TestOut['status'];
+		base.duration = (prev?.duration ?? 0) + result.duration;
+		base.flaky = base.attempts.length > 1 && base.attempts.some((a) => a.status === 'failed') && base.status === 'passed';
+		this.tests.set(key, base);
 
-    // Extract story ID from brackets if present
-    const storyIdMatch = fullTitle.match(/\[([^\]]+)\]/);
-    const storyId = storyIdMatch ? storyIdMatch[1] : fullTitle.toLowerCase().replace(/\s+/g, '-');
+		if (result.status === 'passed') this.counts.passed += 1;
+		else if (result.status === 'failed') this.counts.failed += 1;
+		else if (result.status === 'skipped') this.counts.skipped += 1;
+		else if (result.status === 'timedOut') this.counts.timedOut += 1;
+		else if (result.status === 'interrupted') this.counts.interrupted += 1;
+	}
 
-    // Extract title and name from the part before brackets
-    const titleWithoutBrackets = fullTitle.replace(/\s*\[[^\]]+\]\s*$/, '');
-    const titleParts = titleWithoutBrackets.split(' / ');
-    const title = titleParts.slice(0, -1).join(' / ') || titleWithoutBrackets;
-    const name = titleParts[titleParts.length - 1] || titleWithoutBrackets;
+	onEnd(): void {
+		const duration = Date.now() - this.startTime;
+		const summary: Summary = {
+			status: this.counts.failed > 0 ? 'failed' : 'passed',
+			startTime: this.startTime,
+			duration,
+			totalTests: this.counts.total,
+			passed: this.counts.passed,
+			failed: this.counts.failed,
+			skipped: this.counts.skipped,
+			timedOut: this.counts.timedOut,
+			interrupted: this.counts.interrupted,
+			tests: Array.from(this.tests.values())
+		};
 
-    // Extract image paths from attachments
-    let diffImagePath: string | undefined;
-    let expectedImagePath: string | undefined;
-    let actualImagePath: string | undefined;
-
-    for (const attachment of result.attachments) {
-      if (attachment.name.includes('-diff') && attachment.path) {
-        diffImagePath = attachment.path;
-      } else if (attachment.name.includes('-expected') && attachment.path) {
-        expectedImagePath = attachment.path;
-      } else if (attachment.name.includes('-actual') && attachment.path) {
-        actualImagePath = attachment.path;
-      }
-    }
-
-    const testResult: JsonTestResult = {
-      storyId,
-      title,
-      name,
-      status: result.status,
-      duration: result.duration,
-      error: result.error?.message,
-      attachments: result.attachments.map((a) => ({
-        name: a.name,
-        path: a.path,
-        contentType: a.contentType,
-      })),
-      diffImagePath,
-      expectedImagePath,
-      actualImagePath,
-    };
-
-    this.tests.push(testResult);
-
-    // Output individual test result immediately for real-time updates
-    console.log(
-      JSON.stringify({
-        type: 'test-result',
-        test: testResult,
-      }),
-    );
-  }
-
-  onEnd(result: FullResult): void {
-    const duration = Date.now() - this.startTime;
-
-    const passed = this.tests.filter((t) => t.status === 'passed').length;
-    const failed = this.tests.filter((t) => t.status === 'failed').length;
-    const skipped = this.tests.filter((t) => t.status === 'skipped').length;
-
-    const output: JsonOutput = {
-      status: result.status,
-      startTime: this.startTime,
-      duration,
-      totalTests: this.tests.length,
-      passed,
-      failed,
-      skipped,
-      tests: this.tests,
-    };
-
-    // Output to stdout for CLI consumption
-    console.log(JSON.stringify(output, null, 2));
-
-    // Also write to file for later reference
-    try {
-      const outputPath = join(process.cwd(), 'visual-regression', 'results', 'test-results.json');
-      writeFileSync(outputPath, JSON.stringify(output, null, 2), 'utf-8');
-    } catch (error) {
-      // Silent fail - stdout output is primary
-    }
-  }
+		const root = path.resolve(process.cwd(), 'visual-regression/results');
+		fs.mkdirSync(root, { recursive: true });
+		const file = path.join(root, 'test-results.json');
+		fs.writeFileSync(file, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+		if (process.env.SVR_JSON_STDOUT === '1') {
+			process.stdout.write(`${JSON.stringify(summary)}\n`);
+		}
+	}
 }
+
+

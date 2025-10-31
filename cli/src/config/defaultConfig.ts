@@ -1,57 +1,85 @@
-import type { VisualRegressionConfig } from '../types/index.js';
+/*
+ * Default configuration for Storybook Visual Regression CLI
+ */
+export type ViewportSize = { name: string; width: number; height: number };
 
-export function createDefaultConfig(): VisualRegressionConfig {
-  return {
-    // Storybook server configuration
-    storybookUrl: 'http://localhost:6006',
-    storybookCommand: 'npm run storybook',
+export type VisualRegressionConfig = {
+	url: string;
+	outputDir: string;
+	snapshotPath: string;
+	resultsPath: string;
+	browser: 'chromium' | 'firefox' | 'webkit';
+	workers?: number;
+	retries: number;
+	maxFailures?: number;
+	threshold: number; // 0..1
+	maxDiffPixels: number;
+	fullPage: boolean;
+	viewportSizes: ViewportSize[];
+	defaultViewport: string;
+	discoverViewports: boolean;
+	mutationWait: number;
+	mutationTimeout: number;
+	snapshotRetries: number;
+	snapshotDelay: number;
+	includeStories?: string[];
+	excludeStories?: string[];
+	grep?: string;
+	disableAnimations: boolean;
+	frozenTime?: number;
+	timezone?: string;
+	locale?: string;
+	masks?: Record<string, Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>>;
+	perStory?: Record<string, Partial<{
+		threshold: number;
+		viewport: string | { width: number; height: number };
+		snapshotDelay: number;
+		mutationWait: number;
+		mutationTimeout: number;
+		masks: Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>;
+	}>>;
+};
 
-    // Test configuration
-    viewportSizes: {
-      mobile: { width: 375, height: 667 },
-      tablet: { width: 768, height: 1024 },
-      desktop: { width: 1024, height: 768 },
-    },
-    defaultViewport: 'desktop',
-    discoverViewports: true,
+export const defaultConfig = (): VisualRegressionConfig => {
+	const outputDir = 'visual-regression';
+	return {
+		url: 'http://localhost:6006',
+		outputDir,
+		snapshotPath: `${outputDir}/snapshots`,
+		resultsPath: `${outputDir}/results`,
+		browser: 'chromium',
+		workers: undefined,
+		retries: 0,
+		maxFailures: undefined,
+		threshold: 0.2,
+		maxDiffPixels: 0,
+		fullPage: false,
+		viewportSizes: [
+			{ name: 'mobile', width: 375, height: 667 },
+			{ name: 'tablet', width: 768, height: 1024 },
+			{ name: 'desktop', width: 1024, height: 768 }
+		],
+		defaultViewport: 'desktop',
+		discoverViewports: true,
+		mutationWait: 200,
+		mutationTimeout: 1000,
+		snapshotRetries: 1,
+		snapshotDelay: 0,
+		includeStories: undefined,
+		excludeStories: undefined,
+		grep: undefined,
+		disableAnimations: true,
+		frozenTime: undefined,
+		timezone: undefined,
+		locale: undefined,
+		masks: undefined,
+		perStory: undefined
+	};
+};
 
-    // Screenshot configuration
-    threshold: 0.2,
-    maxDiffPixels: 0, // Strict by default, can be overridden for CI
-    snapshotPath: './visual-regression/snapshots',
-    resultsPath: './visual-regression/results',
+export type ResolvedPaths = {
+	snapshotPath: string;
+	resultsPath: string;
+};
 
-    // Browser configuration
-    browser: 'chromium',
-    headless: true,
 
-    // Timing configuration
-    frozenTime: '2024-01-15T10:30:00.000Z',
-    timezone: 'Europe/London',
-    locale: 'en-GB',
-
-    // Test execution
-    workers: 16, // Increased for powerful machines
-    retries: 2,
-    timeout: 30000,
-    serverTimeout: 120000,
-
-    // maxFailures: undefined means don't quit on any failures (run all tests)
-    // Set to 0 to stop on first failure, or a number to stop after N failures
-    // maxFailures: undefined, // Don't quit on any failures by default
-
-    // Story filtering
-    includeStories: [],
-    excludeStories: [],
-
-    // Advanced options
-    disableAnimations: true,
-    waitForNetworkIdle: true,
-    contentStabilizationTime: 100,
-    // DOM stabilization timeout: wait this long after the last DOM mutation before taking screenshot
-    mutationTimeout: 100,
-    // Max time to wait for DOM stabilization (MutationObserver-based)
-    // Ensures we never hang indefinitely if a story updates continuously
-    mutationMaxWait: 10000,
-  };
-}

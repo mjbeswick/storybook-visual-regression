@@ -1,316 +1,101 @@
-import { chromium, firefox, webkit, Browser } from 'playwright';
-import picomatch from 'picomatch';
-import type {
-  VisualRegressionConfig,
-  TestResult,
-  TestResults,
-  StorybookEntry,
-} from '../types/index.js';
-import { StorybookDiscovery } from './StorybookDiscovery.js';
-import chalk from 'chalk';
+import fs from 'node:fs';
+import path from 'node:path';
+import { type RuntimeConfig } from '../config.js';
+import { discoverStories } from './StorybookDiscovery.js';
+import { detectViewports } from './StorybookConfigDetector.js';
+import { writeRuntimeOptions, getRuntimeOptionsPath } from '../runtime/runtime-options.js';
+import { fileURLToPath } from 'node:url';
 
-export class VisualRegressionRunner {
-  private config: VisualRegressionConfig;
-  private browser: Browser | null = null;
+export const ensureDirs = (config: RuntimeConfig): void => {
+  fs.mkdirSync(config.resolvePath(config.snapshotPath), { recursive: true });
+  fs.mkdirSync(config.resolvePath(config.resultsPath), { recursive: true });
+};
 
-  constructor(config: VisualRegressionConfig) {
-    this.config = config;
-  }
-
-  async initialize(): Promise<void> {
-    const browserType = this.getBrowserType();
-    this.browser = await browserType.launch({
-      headless: this.config.headless,
-    });
-  }
-
-  async cleanup(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-    }
-  }
-
-  async runTests(): Promise<TestResults> {
-    if (!this.browser) {
-      throw new Error('Browser not initialized. Call initialize() first.');
-    }
-
-    const discovery = new StorybookDiscovery(this.config);
-
-    // Discover viewport configurations if enabled
-    if (this.config.discoverViewports) {
-      console.log('Discovering viewport configurations from Storybook...');
-      const discoveredViewports = await discovery.discoverViewportConfigurations();
-      if (discoveredViewports && Object.keys(discoveredViewports.viewportSizes).length > 0) {
-        this.config.viewportSizes = discoveredViewports.viewportSizes;
-        if (discoveredViewports.defaultViewport) {
-          this.config.defaultViewport = discoveredViewports.defaultViewport;
-        }
-        console.log(
-          `Discovered ${Object.keys(discoveredViewports.viewportSizes).length} viewport configurations:`,
-          Object.keys(discoveredViewports.viewportSizes).join(', '),
-        );
+export const cleanStaleArtifacts = (resultsPath: string): void => {
+  if (!fs.existsSync(resultsPath)) return;
+  // Best-effort cleanup: remove orphaned empty directories
+  const walk = (dir: string) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      const stat = fs.statSync(full);
+      if (stat.isDirectory()) {
+        walk(full);
+        if (fs.readdirSync(full).length === 0) fs.rmSync(full, { recursive: true, force: true });
       }
     }
+  };
+  walk(resultsPath);
+};
 
-    const stories = await discovery.discoverStories();
+export const run = async (config: RuntimeConfig): Promise<number> => {
+  ensureDirs(config);
+  cleanStaleArtifacts(config.resolvePath(config.resultsPath));
 
-    const filteredStories = this.filterStories(stories);
-    const results: TestResult[] = [];
-    let failures = 0;
-    let stopRequested = false;
-
-    // Handle SIGINT (Ctrl+C) to stop tests gracefully
-    const handleSigInt = () => {
-      console.log(chalk.yellow('\n🛑 Received SIGINT (Ctrl+C), stopping tests...'));
-      stopRequested = true;
-    };
-
-    // Register signal handlers
-    process.on('SIGINT', handleSigInt);
-    process.on('SIGTERM', handleSigInt);
-
-    // Clean up signal handlers when tests complete
-    const cleanup = () => {
-      process.off('SIGINT', handleSigInt);
-      process.off('SIGTERM', handleSigInt);
-    };
-
-    try {
-      const storiesQueue = [...filteredStories];
-      const workerCount = Math.max(1, this.config.workers ?? 1);
-
-      const runWorker = async (): Promise<void> => {
-        while (!stopRequested) {
-          const story = storiesQueue.shift();
-          if (!story) break;
-          try {
-            const result = await this.testStory(story);
-            results.push(result);
-            // Print list-style line with duration
-            if (result.passed) {
-              console.log(
-                `${chalk.green('✓')} ${result.storyTitle} (${
-                  result.storyId
-                }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
-              );
-            } else {
-              console.log(
-                `${chalk.red('✗')} ${result.storyTitle} (${
-                  result.storyId
-                }) ${chalk.gray('— ' + formatDuration(result.durationMs))}`,
-              );
-              if (result.error) {
-                console.log(chalk.gray(`    ${result.error}`));
-              }
-            }
-            if (!result.passed) {
-              failures += 1;
-            }
-          } catch (error) {
-            const failedResult: TestResult = {
-              storyId: story.id,
-              storyTitle: story.title ?? story.id,
-              passed: false,
-              error: error instanceof Error ? error.message : 'Unknown error',
-              durationMs: 0,
-            };
-            results.push(failedResult);
-            console.log(
-              `${chalk.red('✗')} ${failedResult.storyTitle} (${
-                failedResult.storyId
-              }) ${chalk.gray('— ' + formatDuration(failedResult.durationMs))}`,
-            );
-            if (failedResult.error) {
-              console.log(chalk.gray(`    ${failedResult.error}`));
-            }
-            failures += 1;
-          }
-
-          if (
-            this.config.maxFailures !== undefined &&
-            this.config.maxFailures > 0 &&
-            failures >= this.config.maxFailures
-          ) {
-            stopRequested = true;
-            break;
-          }
-        }
-      };
-
-      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
-
-      if (
-        this.config.maxFailures !== undefined &&
-        this.config.maxFailures > 0 &&
-        failures >= this.config.maxFailures
-      ) {
-        console.log(`Reached max failures (${this.config.maxFailures}). Stopping early.`);
-      }
-
-      return {
-        total: results.length,
-        passed: results.filter((r) => r.passed).length,
-        failed: results.filter((r) => !r.passed).length,
-        results,
-      };
-    } finally {
-      cleanup();
-    }
+  // Discover stories
+  const baseStories = await discoverStories(config);
+  if (config.printUrls) {
+    process.stdout.write(
+      `Discovered ${baseStories.length} stories from ${new URL('index.json', config.url).toString()}\n`,
+    );
+    for (const s of baseStories) process.stdout.write(` - ${s.id} -> ${s.url}\n`);
+  }
+  if (baseStories.length === 0) {
+    process.stdout.write(
+      'No stories discovered. Ensure Storybook is running and /index.json is accessible.\n',
+    );
   }
 
-  private async testStory(story: StorybookEntry): Promise<TestResult> {
-    if (!this.browser) {
-      throw new Error('Browser not initialized');
+  // Warn about missing baselines
+  try {
+    const snapshotRoot = config.resolvePath(config.snapshotPath);
+    let missing = 0;
+    for (const s of baseStories) {
+      const expected = path.join(snapshotRoot, s.snapshotRelPath);
+      if (!fs.existsSync(expected)) missing += 1;
     }
-
-    const page = await this.browser.newPage();
-    const startTime = Date.now();
-
-    try {
-      // Set viewport
-      const viewportSize = this.config.viewportSizes[this.config.defaultViewport];
-      await page.setViewportSize(viewportSize);
-
-      // Set timezone and locale
-      await page.addInitScript(() => {
-        const timezone = 'UTC';
-        const locale = 'en-GB';
-        Object.defineProperty(Intl, 'DateTimeFormat', {
-          value: class extends Intl.DateTimeFormat {
-            constructor(...args: unknown[]) {
-              super(...(args as ConstructorParameters<typeof Intl.DateTimeFormat>));
-              if (args.length === 0) {
-                super(locale, { timeZone: timezone });
-              }
-            }
-          },
-        });
-      });
-
-      // Disable animations if configured
-      if (this.config.disableAnimations) {
-        await page.addStyleTag({
-          content: `
-            *, *::before, *::after {
-              animation-duration: 0s !important;
-              animation-delay: 0s !important;
-              transition-duration: 0s !important;
-              transition-delay: 0s !important;
-            }
-          `,
-        });
-      }
-
-      // Navigate to story
-      const storyUrl = `${this.config.storybookUrl}/iframe.html?id=${story.id}`;
-      await page.goto(storyUrl, {
-        waitUntil: this.config.waitForNetworkIdle ? 'networkidle' : 'load',
-        timeout: this.config.timeout,
-      });
-
-      // Wait for content stabilization
-      if (this.config.contentStabilizationTime && this.config.contentStabilizationTime > 0) {
-        await page.waitForTimeout(this.config.contentStabilizationTime);
-      }
-
-      // Pause and reset any SVG SMIL animations once content is present
-      try {
-        await page.evaluate(() => {
-          document.querySelectorAll('svg').forEach((svg) => {
-            (svg as any).pauseAnimations?.();
-            (svg as any).setCurrentTime?.(0);
-          });
-        });
-      } catch (_error) {
-        // ignore
-      }
-
-      // Take screenshot
-      const screenshotPath = `${this.config.snapshotPath}/${story.id}.png`;
-      await page.screenshot({ path: screenshotPath });
-
-      const durationMs = Date.now() - startTime;
-      return {
-        storyId: story.id,
-        storyTitle: story.title ?? story.id,
-        passed: true,
-        snapshotPath: screenshotPath,
-        durationMs,
-      };
-    } finally {
-      await page.close();
-    }
-  }
-
-  private filterStories(stories: StorybookEntry[]): StorybookEntry[] {
-    let filtered = stories.filter((story) => story.type === 'story');
-
-    if (this.config.includeStories && this.config.includeStories.length > 0) {
-      filtered = filtered.filter((story) =>
-        this.config.includeStories!.some((pattern) => {
-          const lowerPattern = pattern.toLowerCase();
-          const lowerStoryId = story.id.toLowerCase();
-          const lowerTitle = story.title.toLowerCase();
-
-          // Try glob pattern matching first, fallback to includes for backward compatibility
-          try {
-            const matcher = picomatch(lowerPattern, { nocase: true });
-            return matcher(lowerStoryId) || matcher(lowerTitle);
-          } catch {
-            // Fallback to simple includes matching for backward compatibility
-            return lowerStoryId.includes(lowerPattern) || lowerTitle.includes(lowerPattern);
-          }
-        }),
+    if (missing > 0 && !config.update && !config.missingOnly) {
+      process.stdout.write(
+        `Warning: ${missing} stor${missing === 1 ? 'y has' : 'ies have'} no baseline snapshot. ` +
+          `Run again with --update --missing-only to create only the missing baselines.\n`,
       );
     }
-
-    if (this.config.excludeStories && this.config.excludeStories.length > 0) {
-      filtered = filtered.filter(
-        (story) =>
-          !this.config.excludeStories!.some((pattern) => {
-            const lowerPattern = pattern.toLowerCase();
-            const lowerStoryId = story.id.toLowerCase();
-            const lowerTitle = story.title.toLowerCase();
-
-            // Try glob pattern matching first, fallback to includes for backward compatibility
-            try {
-              const matcher = picomatch(lowerPattern, { nocase: true });
-              return matcher(lowerStoryId) || matcher(lowerTitle);
-            } catch {
-              // Fallback to simple includes matching for backward compatibility
-              return lowerStoryId.includes(lowerPattern) || lowerTitle.includes(lowerPattern);
-            }
-          }),
-      );
-    }
-
-    return filtered;
+  } catch {
+    // best-effort only
   }
 
-  private getBrowserType(): typeof chromium | typeof firefox | typeof webkit {
-    switch (this.config.browser) {
-      case 'firefox':
-        return firefox;
-      case 'webkit':
-        return webkit;
-      case 'chromium':
-      default:
-        return chromium;
-    }
-  }
-}
+  // Discover viewports if enabled
+  const detected = await detectViewports(config);
+  const effectiveViewports = detected.viewportSizes?.length
+    ? detected.viewportSizes
+    : config.viewportSizes;
 
-function formatDuration(durationMs: number): string {
-  if (durationMs < 1000) {
-    return `${durationMs}ms`;
+  // Prepare runtime options for playwright spec consumption at a stable path inside this package
+  const here = path.dirname(fileURLToPath(new URL(import.meta.url)));
+  const packageRoot = path.resolve(here, '..'); // dist/
+  const runtimePath = getRuntimeOptionsPath(packageRoot);
+  writeRuntimeOptions({ ...config, stories: baseStories }, runtimePath);
+
+  // Run tests directly in parallel using Promise.all like the example
+  const originalCwd = process.cwd();
+
+  // Debug logging
+  if (config.debug) {
+    process.stdout.write(`SVR Runner: Running ${baseStories.length} stories in parallel\n`);
+    process.stdout.write(`SVR Runner: runtimePath=${runtimePath}\n`);
   }
-  const seconds = durationMs / 1000;
-  if (seconds < 60) {
-    return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.round(seconds % 60);
-  return `${minutes}m ${remainingSeconds}s`;
-}
+
+  // Import and run the parallel test runner
+  const { runParallelTests } = await import('../parallel-runner.js');
+  const exitCode = await runParallelTests({
+    stories: baseStories,
+    config: {
+      ...config,
+      snapshotPath: path.resolve(originalCwd, config.snapshotPath),
+      resultsPath: path.resolve(originalCwd, config.resultsPath),
+    },
+    runtimePath,
+    debug: config.debug,
+  });
+
+  return exitCode;
+};

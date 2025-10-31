@@ -1,126 +1,193 @@
-import { defineConfig } from '@playwright/test';
-import { mkdirSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
-import type { VisualRegressionConfig } from './types/index.js';
-import { createDefaultConfig } from './config/defaultConfig.js';
-import { tryLoadRuntimeOptions } from './runtime/runtime-options.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { defaultConfig, type VisualRegressionConfig } from './config/defaultConfig.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+export type CliFlags = {
+	config?: string;
+	url?: string;
+	output?: string;
+	workers?: number;
+	command?: string;
+	webserverTimeout?: number;
+	retries?: number;
+	maxFailures?: number;
+	timezone?: string;
+	locale?: string;
+	quiet?: boolean;
+	debug?: boolean;
+	logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'debug';
+	printUrls?: boolean;
+	progress?: boolean;
+	browser?: 'chromium' | 'firefox' | 'webkit';
+	threshold?: number;
+	maxDiffPixels?: number;
+	fullPage?: boolean;
+	overlayTimeout?: number;
+	testTimeout?: number;
+	snapshotRetries?: number;
+	snapshotDelay?: number;
+	mutationWait?: number;
+	mutationTimeout?: number;
+	grep?: string;
+	include?: string;
+	exclude?: string;
+	installBrowsers?: string | boolean;
+	installDeps?: boolean;
+	notFoundCheck?: boolean;
+	notFoundRetryDelay?: number;
+	update?: boolean;
+	missingOnly?: boolean;
+	failedOnly?: boolean;
+	saveConfig?: boolean;
+	summary?: boolean;
+};
 
-function ensureDirectory(path: string): void {
-  try {
-    mkdirSync(path, { recursive: true });
-  } catch (error) {
-    throw new Error(
-      `Unable to create directory at ${path}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-}
+export type RuntimeConfig = VisualRegressionConfig & {
+	resolvePath: (p: string) => string;
+	flags: CliFlags;
+	command?: string;
+	webserverTimeout?: number;
+	quiet: boolean;
+	debug: boolean;
+	logLevel: 'silent' | 'error' | 'warn' | 'info' | 'debug';
+	printUrls: boolean;
+	progress: boolean;
+	installBrowsers?: string | boolean;
+	installDeps?: boolean;
+	notFoundCheck: boolean;
+	notFoundRetryDelay: number;
+	update: boolean;
+	missingOnly: boolean;
+	failedOnly: boolean;
+	testTimeout?: number;
+	overlayTimeout?: number;
+	summary: boolean;
+};
 
-export function createPlaywrightConfig(
-  userConfig: VisualRegressionConfig,
-  updateMode: boolean = false,
-) {
-  ensureDirectory(userConfig.snapshotPath);
-  ensureDirectory(userConfig.resultsPath);
+export const loadJsonFile = (maybePath?: string): Record<string, unknown> | undefined => {
+	if (!maybePath) return undefined;
+	const full = path.resolve(process.cwd(), maybePath);
+	if (!fs.existsSync(full)) return undefined;
+	const raw = fs.readFileSync(full, 'utf8');
+	try {
+		return JSON.parse(raw) as Record<string, unknown>;
+	} catch (err) {
+		throw new Error(`Invalid JSON at ${full}: ${(err as Error).message}`);
+	}
+};
 
-  const storybookIndexUrl = `${userConfig.storybookUrl.replace(/\/$/, '')}/index.json`;
-  // Ensure the Storybook webServer runs in the caller's project directory, not this tool's repo
-  // This is sourced from runtime options written by the CLI before invoking Playwright
-  const runtimeOptions = tryLoadRuntimeOptions();
-  const webServerCwd = runtimeOptions?.originalCwd ?? process.cwd();
-  const isDockerEnvironment = runtimeOptions?.isDocker ?? false;
+const normalizePatterns = (val?: string | string[]): string[] | undefined => {
+	if (!val) return undefined;
+	const list = Array.isArray(val) ? val : String(val).split(',');
+	return list.map((s) => s.trim()).filter(Boolean);
+};
 
-  // Wrap command in shell to ensure proper npm/pnpm/yarn resolution with version managers
-  const wrappedCommand = userConfig.storybookCommand
-    ? `${process.env.SHELL || '/bin/sh'} -c "${userConfig.storybookCommand.replace(/"/g, '\\"')}"`
-    : undefined;
+export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
+	const base = defaultConfig();
+	const fileConfigRaw = loadJsonFile(flags.config);
+	const fileVisual = (fileConfigRaw?.visualRegression ?? {}) as Partial<VisualRegressionConfig>;
 
-  // Get test timeout from runtime options if available, otherwise use a sensible default
-  const testTimeout = runtimeOptions?.testTimeout ?? 60000; // Default to 60s
+	const merged: VisualRegressionConfig = {
+		...base,
+		...fileVisual,
+		url: flags.url ?? fileVisual.url ?? base.url,
+		browser: (flags.browser ?? fileVisual.browser ?? base.browser) as RuntimeConfig['browser'],
+		workers: flags.workers ?? fileVisual.workers ?? base.workers,
+		threshold: flags.threshold ?? fileVisual.threshold ?? base.threshold,
+		maxDiffPixels: flags.maxDiffPixels ?? fileVisual.maxDiffPixels ?? base.maxDiffPixels,
+		fullPage: flags.fullPage ?? fileVisual.fullPage ?? base.fullPage,
+		mutationWait: flags.mutationWait ?? fileVisual.mutationWait ?? base.mutationWait,
+		mutationTimeout: flags.mutationTimeout ?? fileVisual.mutationTimeout ?? base.mutationTimeout,
+		snapshotRetries: flags.snapshotRetries ?? fileVisual.snapshotRetries ?? base.snapshotRetries,
+		snapshotDelay: flags.snapshotDelay ?? fileVisual.snapshotDelay ?? base.snapshotDelay,
+		viewportSizes: fileVisual.viewportSizes ?? base.viewportSizes,
+		defaultViewport: fileVisual.defaultViewport ?? base.defaultViewport,
+		discoverViewports: fileVisual.discoverViewports ?? base.discoverViewports,
+		includeStories: normalizePatterns(flags.include ?? fileVisual.includeStories),
+		excludeStories: normalizePatterns(flags.exclude ?? fileVisual.excludeStories),
+		grep: flags.grep ?? fileVisual.grep ?? base.grep,
+		disableAnimations: fileVisual.disableAnimations ?? base.disableAnimations,
+		snapshotPath: ((): string => {
+			const rootOut = flags.output ?? fileVisual.outputDir ?? base.outputDir;
+			return path.join(rootOut, 'snapshots');
+		})(),
+		resultsPath: ((): string => {
+			const rootOut = flags.output ?? fileVisual.outputDir ?? base.outputDir;
+			return path.join(rootOut, 'results');
+		})(),
+		locale: fileVisual.locale ?? base.locale,
+		timezone: fileVisual.timezone ?? base.timezone,
+		frozenTime: fileVisual.frozenTime ?? base.frozenTime,
+		masks: fileVisual.masks ?? base.masks,
+		perStory: fileVisual.perStory ?? base.perStory,
+		retries: flags.retries ?? fileVisual.retries ?? base.retries,
+		maxFailures: flags.maxFailures ?? fileVisual.maxFailures ?? base.maxFailures
+	};
 
-  return defineConfig({
-    testDir: join(__dirname, 'tests'),
-    outputDir: userConfig.resultsPath,
-    fullyParallel: true,
-    retries: userConfig.retries,
-    workers: userConfig.workers,
-    ...(userConfig.maxFailures !== undefined && { maxFailures: userConfig.maxFailures }),
-    reporter: 'list',
-    updateSnapshots: updateMode ? 'all' : 'none',
-    timeout: testTimeout, // Set per-test timeout to prevent "Test timeout exceeded" errors
-    globalSetup: join(__dirname, 'tests', 'global-setup.js'),
-    projects: [
-      {
-        name: userConfig.browser,
-        outputDir: userConfig.resultsPath,
-        use: {
-          ...(userConfig.browser === 'chromium' && { channel: 'chromium' }),
-          ...(userConfig.browser === 'firefox' && { channel: 'firefox' }),
-          ...(userConfig.browser === 'webkit' && { channel: 'webkit' }),
-          baseURL: userConfig.storybookUrl,
-          headless: userConfig.headless,
-          timezoneId: userConfig.timezone,
-          locale: userConfig.locale,
-          screenshot: 'only-on-failure',
-        },
-      },
-    ],
-    snapshotPathTemplate: join(userConfig.snapshotPath, '{arg}{ext}'),
-    expect: {
-      toHaveScreenshot: {
-        threshold: userConfig.threshold,
-        animations: userConfig.disableAnimations ? 'disabled' : 'allow',
-        maxDiffPixels: userConfig.maxDiffPixels ?? 0,
-      },
-    },
-    webServer: wrappedCommand
-      ? {
-          command: wrappedCommand,
-          url: storybookIndexUrl,
-          reuseExistingServer: true,
-          timeout: isDockerEnvironment
-            ? Math.max(userConfig.serverTimeout, 300000)
-            : userConfig.serverTimeout, // 5 minutes for Docker
-          cwd: webServerCwd,
-          stdout: isDockerEnvironment ? 'ignore' : 'pipe',
-          stderr: isDockerEnvironment ? 'ignore' : 'pipe',
-          env: {
-            ...process.env,
-            NODE_ENV: 'development',
-            NODE_NO_WARNINGS: '1',
-            // Suppress npm warnings
-            npm_config_loglevel: 'error',
-            npm_config_silent: 'true',
-            npm_config_progress: 'false',
-            npm_config_audit: 'false',
-            npm_config_fund: 'false',
-          },
-          ignoreHTTPSErrors: true,
-        }
-      : undefined,
-  });
-}
+	const envLog = (process.env.SVR_LOG_LEVEL as RuntimeConfig['logLevel']) || undefined;
+	const logLevel: RuntimeConfig['logLevel'] = flags.logLevel || envLog || (flags.debug ? 'debug' : (flags.quiet ? 'silent' : 'info'));
 
-function resolveConfigFromRuntime(): { config: VisualRegressionConfig; updateMode: boolean } {
-  const runtimeOptions = tryLoadRuntimeOptions();
-  if (runtimeOptions) {
-    return {
-      config: runtimeOptions.visualRegression,
-      updateMode: runtimeOptions.updateSnapshots,
-    };
-  }
+	const runtime: RuntimeConfig = {
+		...merged,
+		resolvePath: (p: string) => path.resolve(process.cwd(), p),
+		flags,
+		command: flags.command,
+		webserverTimeout: flags.webserverTimeout,
+		quiet: logLevel === 'silent' || Boolean(flags.quiet),
+		debug: logLevel === 'debug' || Boolean(process.env.SVR_DEBUG || flags.debug),
+		logLevel,
+		printUrls: Boolean(flags.printUrls),
+		progress: process.env.SVR_NO_PROGRESS ? false : flags.progress ?? true,
+		installBrowsers: flags.installBrowsers,
+		installDeps: flags.installDeps,
+		notFoundCheck: Boolean(flags.notFoundCheck),
+		notFoundRetryDelay: flags.notFoundRetryDelay ?? 200,
+		update: Boolean(flags.update),
+		missingOnly: Boolean(flags.missingOnly),
+		failedOnly: Boolean(flags.failedOnly),
+		testTimeout: flags.testTimeout,
+		overlayTimeout: flags.overlayTimeout,
+		summary: Boolean(flags.summary)
+	};
 
-  return {
-    config: createDefaultConfig(),
-    updateMode: false,
-  };
-}
+	return runtime;
+};
 
-const { config, updateMode } = resolveConfigFromRuntime();
+export const saveEffectiveConfig = (config: RuntimeConfig, filePath: string): void => {
+	const data = {
+		visualRegression: {
+			url: config.url,
+			outputDir: config.outputDir,
+			snapshotPath: config.snapshotPath,
+			resultsPath: config.resultsPath,
+			browser: config.browser,
+			workers: config.workers,
+			retries: config.retries,
+			maxFailures: config.maxFailures,
+			threshold: config.threshold,
+			maxDiffPixels: config.maxDiffPixels,
+			fullPage: config.fullPage,
+			viewportSizes: config.viewportSizes,
+			defaultViewport: config.defaultViewport,
+			discoverViewports: config.discoverViewports,
+			mutationWait: config.mutationWait,
+			mutationTimeout: config.mutationTimeout,
+			snapshotRetries: config.snapshotRetries,
+			snapshotDelay: config.snapshotDelay,
+			includeStories: config.includeStories,
+			excludeStories: config.excludeStories,
+			grep: config.grep,
+			disableAnimations: config.disableAnimations,
+			frozenTime: config.frozenTime,
+			timezone: config.timezone,
+			locale: config.locale,
+			masks: config.masks,
+			perStory: config.perStory
+		}
+	};
+	const dest = path.resolve(process.cwd(), filePath);
+	fs.mkdirSync(path.dirname(dest), { recursive: true });
+	fs.writeFileSync(dest, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+};
 
-export default createPlaywrightConfig(config, updateMode);
+

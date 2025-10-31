@@ -1,64 +1,40 @@
-import { existsSync, readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import type { VisualRegressionConfig } from '../types/index.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { type RuntimeConfig } from '../config.js';
 
-export type RuntimeOptions = {
-  originalCwd: string;
-  storybookUrl: string;
-  outputDir: string;
-  visualRegression: VisualRegressionConfig;
-  include: string[];
-  exclude: string[];
-  grep?: string;
-  waitTimeout: number;
-  overlayTimeout: number;
-  testTimeout: number;
-  snapshotRetries: number;
-  snapshotDelay: number;
-  mutationTimeout: number;
-  mutationMaxWait: number;
-  waitUntil: 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
-  missingOnly: boolean;
-  clean: boolean;
-  failedOnly: boolean;
-  notFoundCheck: boolean;
-  notFoundRetryDelay: number;
-  debug: boolean;
-  updateSnapshots: boolean;
-  noProgress: boolean;
-  printUrls: boolean;
-  isCI: boolean;
-  isDocker: boolean;
-  fullPage?: boolean;
-  storybookMode: boolean;
+export const getRuntimeOptionsPath = (baseDir: string): string =>
+	path.resolve(baseDir, '.cache/storybook-visual-regression/runtime-options.json');
+
+export const writeRuntimeOptions = (
+	config: RuntimeConfig & { stories: Array<{ id: string; title: string; name: string; url: string; snapshotRelPath: string }> },
+	outputPath: string
+): void => {
+	fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+	fs.writeFileSync(
+		outputPath,
+		`${JSON.stringify({
+			config: {
+				url: config.url,
+				resultsPath: config.resultsPath,
+				snapshotPath: config.snapshotPath,
+				threshold: config.threshold,
+				maxDiffPixels: config.maxDiffPixels,
+				fullPage: config.fullPage,
+				mutationWait: config.mutationWait,
+				mutationTimeout: config.mutationTimeout,
+				snapshotRetries: config.snapshotRetries,
+				snapshotDelay: config.snapshotDelay,
+				disableAnimations: config.disableAnimations,
+				frozenTime: config.frozenTime,
+				timezone: config.timezone,
+				locale: config.locale,
+				masks: config.masks,
+				perStory: config.perStory
+			},
+			stories: config.stories
+		}, null, 2)}\n`,
+		'utf8'
+	);
 };
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const RUNTIME_OPTIONS_PATH = join(__dirname, '..', 'runtime-options.json');
 
-let cachedOptions: RuntimeOptions | null = null;
-
-export function tryLoadRuntimeOptions(): RuntimeOptions | null {
-  if (cachedOptions) {
-    return cachedOptions;
-  }
-  if (!existsSync(RUNTIME_OPTIONS_PATH)) {
-    return null;
-  }
-
-  const raw = readFileSync(RUNTIME_OPTIONS_PATH, 'utf8');
-  cachedOptions = JSON.parse(raw) as RuntimeOptions;
-  return cachedOptions;
-}
-
-export function loadRuntimeOptions(): RuntimeOptions {
-  const options = tryLoadRuntimeOptions();
-  if (!options) {
-    throw new Error(
-      `Runtime options file not found at ${RUNTIME_OPTIONS_PATH}. Please run the CLI to generate it.`,
-    );
-  }
-  return options;
-}
