@@ -924,7 +924,14 @@ export async function runParallelTests(options: {
     }
   };
 
-  const pool = new WorkerPool(numWorkers, config, stories, ui || undefined, printUnderSpinner, callbacks);
+  const pool = new WorkerPool(
+    numWorkers,
+    config,
+    stories,
+    ui || undefined,
+    printUnderSpinner,
+    callbacks,
+  );
 
   const startTime = Date.now();
 

@@ -1,10 +1,13 @@
-FROM node:18 AS cli-builder
+FROM node:20 AS cli-builder
 
 WORKDIR /app/cli
 
-# Install dependencies for local CLI build
+# Install SSL certificates for npm downloads
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies for local CLI build (skip playwright browser installation in Docker)
 COPY cli/package.json ./
-RUN npm install
+RUN DOCKER_BUILD=1 npm install
 
 # Copy CLI source and build it
 COPY cli/ ./

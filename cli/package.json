@@ -23,7 +23,7 @@
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
     "prepublishOnly": "npm run build",
     "prepare": "npm run build",
-    "postinstall": "playwright install chromium",
+    "postinstall": "if [ \"$DOCKER_BUILD\" != \"1\" ]; then playwright install chromium; fi",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "rm -rf dist"

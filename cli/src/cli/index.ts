@@ -262,7 +262,9 @@ const runJsonRpcMode = async (flags: CliFlags): Promise<number> => {
 
       // Create a promise that can be cancelled
       let cancelled = false;
-      const cancel = () => { cancelled = true; };
+      const cancel = () => {
+        cancelled = true;
+      };
 
       currentRun = { cancel };
 
@@ -299,10 +301,9 @@ const runJsonRpcMode = async (flags: CliFlags): Promise<number> => {
 
       server.notify(CLI_EVENTS.COMPLETE, { code, cancelled });
       return { code, cancelled };
-
     } catch (error) {
       server.notify(CLI_EVENTS.ERROR, {
-        message: error instanceof Error ? error.message : 'Unknown error'
+        message: error instanceof Error ? error.message : 'Unknown error',
       });
       throw error;
     } finally {
