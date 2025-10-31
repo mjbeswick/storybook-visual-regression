@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { resolveConfig, saveEffectiveConfig, type CliFlags } from '../config.js';
+import { Command } from 'commander';
 import { run } from '../core/VisualRegressionRunner.js';
 
 const parseArgs = (argv: string[]): CliFlags => {
@@ -68,6 +69,9 @@ const parseArgs = (argv: string[]): CliFlags => {
         break;
       case '--progress':
         out.showProgress = true;
+        break;
+      case '--summary':
+        out.summary = true;
         break;
       case '--browser':
         out.browser = getVal(i) as any;
@@ -155,36 +159,44 @@ const parseArgs = (argv: string[]): CliFlags => {
 
 const main = async (): Promise<number> => {
   const argv = process.argv.slice(2);
-  if (argv.includes('--help') || argv.includes('-h')) {
-    process.stdout.write(
-      `storybook-visual-regression\n\n` +
-        `Usage:\n  svr [options]\n\n` +
-        `Options:\n` +
-        `  -u, --url <url>                 Storybook URL (default http://localhost:6006)\n` +
-        `  -o, --output <dir>              Output root (default visual-regression)\n` +
-        `  -w, --workers <n>               Parallel workers\n` +
-        `  --retries <n>                   Playwright retries\n` +
-        `  --max-failures <n>              Bail after N failures\n` +
-        `  --browser <name>                chromium|firefox|webkit\n` +
-        `  --threshold <0..1>              Diff threshold (default 0.2)\n` +
-        `  --max-diff-pixels <n>           Max differing pixels (default 0)\n` +
-        `  --full-page                     Full page screenshots\n` +
-        `  --mutation-wait <ms>            Quiet window wait (default 200)\n` +
-        `  --mutation-timeout <ms>         Quiet wait cap (default 1000)\n` +
-        `  --snapshot-retries <n>          Capture retries (default 1)\n` +
-        `  --snapshot-delay <ms>           Delay between retries\n` +
-        `  --include <patterns>            Comma-separated include filters\n` +
-        `  --exclude <patterns>            Comma-separated exclude filters\n` +
-        `  --grep <regex>                  Filter by storyId\n` +
-        `  --update                        Update baselines\n` +
-        `  --missing-only                  Create only missing baselines\n` +
-        `  --failed-only                   Rerun only previously failed\n` +
-        `  --progress                      Show progress during run\n` +
-        `  --log-level <level>             silent|error|warn|info|debug\n` +
-        `  --save-config                   Write effective config JSON\n` +
-        `  -h, --help                      Show help\n`,
-    );
-    return 0;
+
+  // Use commander for help/usage output and basic option declarations
+  const program = new Command();
+  program
+    .name('svr')
+    .description('Storybook Visual Regression CLI')
+    .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
+    .option('-o, --output <dir>', 'Output root (default visual-regression)')
+    .option('-w, --workers <n>', 'Parallel workers')
+    .option('--retries <n>', 'Playwright retries')
+    .option('--max-failures <n>', 'Bail after N failures')
+    .option('--browser <name>', 'chromium|firefox|webkit')
+    .option('--threshold <0..1>', 'Diff threshold (default 0.2)')
+    .option('--max-diff-pixels <n>', 'Max differing pixels (default 0)')
+    .option('--full-page', 'Full page screenshots')
+    .option('--mutation-wait <ms>', 'Quiet window wait (default 200)')
+    .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)')
+    .option('--snapshot-retries <n>', 'Capture retries (default 1)')
+    .option('--snapshot-delay <ms>', 'Delay between retries')
+    .option('--include <patterns>', 'Comma-separated include filters')
+    .option('--exclude <patterns>', 'Comma-separated exclude filters')
+    .option('--grep <regex>', 'Filter by storyId')
+    .option('--update', 'Update baselines')
+    .option('--missing-only', 'Create only missing baselines')
+    .option('--failed-only', 'Rerun only previously failed')
+    .option('--progress', 'Show progress during run')
+    .option('--summary', 'Show summary at the end')
+    .option('--log-level <level>', 'silent|error|warn|info|debug')
+    .option('--save-config', 'Write effective config JSON')
+    .option('--quiet', 'Suppress per-test output')
+    .helpOption('-h, --help', 'Show help');
+
+  program.exitOverride();
+  try {
+    program.parse(['node', 'svr', ...argv]);
+  } catch (err: any) {
+    if (err?.code === 'commander.helpDisplayed') return 0;
+    throw err;
   }
   const flags = parseArgs(argv);
   const config = resolveConfig(flags);

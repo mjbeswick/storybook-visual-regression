@@ -39,6 +39,7 @@ export type CliFlags = {
 	failedOnly?: boolean;
 	saveConfig?: boolean;
 	showProgress?: boolean;
+	summary?: boolean;
 };
 
 export type RuntimeConfig = VisualRegressionConfig & {
@@ -60,6 +61,7 @@ export type RuntimeConfig = VisualRegressionConfig & {
 	testTimeout?: number;
 	overlayTimeout?: number;
 	showProgress: boolean;
+	summary: boolean;
 };
 
 export const loadJsonFile = (maybePath?: string): Record<string, unknown> | undefined => {
@@ -123,7 +125,7 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
 	};
 
 	const envLog = (process.env.SVR_LOG_LEVEL as RuntimeConfig['logLevel']) || undefined;
-	const logLevel: RuntimeConfig['logLevel'] = flags.logLevel || envLog || (flags.debug ? 'debug' : (flags.quiet ? 'silent' : 'info'));
+	const logLevel: RuntimeConfig['logLevel'] = flags.logLevel || envLog || (flags.debug ? 'debug' : 'info');
 
 	const runtime: RuntimeConfig = {
 		...merged,
@@ -131,7 +133,7 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
 		flags,
 		command: flags.command,
 		webserverTimeout: flags.webserverTimeout,
-		quiet: logLevel === 'silent' || Boolean(flags.quiet),
+		quiet: Boolean(flags.quiet),
 		debug: logLevel === 'debug' || Boolean(process.env.SVR_DEBUG || flags.debug),
 		logLevel,
 		progress: process.env.SVR_NO_PROGRESS ? false : flags.progress ?? true,
@@ -144,7 +146,8 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
 		failedOnly: Boolean(flags.failedOnly),
 		testTimeout: flags.testTimeout,
 		overlayTimeout: flags.overlayTimeout,
-		showProgress: Boolean(flags.showProgress)
+		showProgress: Boolean(flags.showProgress),
+		summary: Boolean(flags.summary)
 	};
 
 	return runtime;

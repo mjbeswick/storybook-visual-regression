@@ -7,6 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { chromium, Browser, Page } from 'playwright';
 import { compare as odiffCompare } from 'odiff-bin';
+import ora from 'ora';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
 import { TerminalUI } from './terminal-ui.js';
@@ -21,7 +22,9 @@ class WorkerPool {
   private queue: DiscoveredStory[] = [];
   private activeWorkers = 0;
   private maxWorkers: number;
-  private results: { [storyId: string]: { success: boolean; error?: string; duration: number; action?: string } } = {};
+  private results: {
+    [storyId: string]: { success: boolean; error?: string; duration: number; action?: string };
+  } = {};
   private startTime = Date.now();
   private completed = 0;
   private total: number;
@@ -42,7 +45,10 @@ class WorkerPool {
     return this.results;
   }
 
-  async run(onProgress?: (completed: number, total: number, results: any) => void, onComplete?: (results: any) => void): Promise<{ success: boolean; failed: number }> {
+  async run(
+    onProgress?: (completed: number, total: number, results: any) => void,
+    onComplete?: (results: any) => void,
+  ): Promise<{ success: boolean; failed: number }> {
     this.onProgress = onProgress;
     this.onComplete = onComplete;
 
@@ -55,7 +61,7 @@ class WorkerPool {
       // Check for completion periodically
       const checkComplete = () => {
         if (this.completed >= this.total) {
-          const failed = Object.values(this.results).filter(r => !r.success).length;
+          const failed = Object.values(this.results).filter((r) => !r.success).length;
           const success = failed === 0;
           this.onComplete?.(this.results);
           resolve({ success, failed });
@@ -94,7 +100,7 @@ class WorkerPool {
 
     // Small random delay to stagger browser launches and reduce resource contention
     const delay = Math.random() * 50; // 0-50ms random delay
-    await new Promise(resolve => setTimeout(resolve, delay));
+    await new Promise((resolve) => setTimeout(resolve, delay));
 
     try {
       // Launch browser with aggressive memory optimization for parallel execution
@@ -126,8 +132,8 @@ class WorkerPool {
           '--disable-default-apps', // Disable default apps
           '--disable-sync', // Disable sync
           '--hide-crash-restore-bubble', // Hide crash restore
-          '--disable-component-update' // Disable component updates
-        ]
+          '--disable-component-update', // Disable component updates
+        ],
       });
 
       const viewport = this.config.perStory?.[story.id]?.viewport;
@@ -145,19 +151,22 @@ class WorkerPool {
       await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 10000 });
 
       // Wait for story content to actually load - Storybook specific waiting
-      await page.waitForFunction(() => {
-        const root = document.getElementById('storybook-root');
-        if (!root) return false;
+      await page.waitForFunction(
+        () => {
+          const root = document.getElementById('storybook-root');
+          if (!root) return false;
 
-        // Check if story has meaningful content (not just loading)
-        const hasContent = root.textContent && root.textContent.trim().length > 0;
-        const hasChildren = root.children.length > 0;
+          // Check if story has meaningful content (not just loading)
+          const hasContent = root.textContent && root.textContent.trim().length > 0;
+          const hasChildren = root.children.length > 0;
 
-        // For stories with canvas/charts, also check for canvas elements
-        const hasCanvas = root.querySelector('canvas');
+          // For stories with canvas/charts, also check for canvas elements
+          const hasCanvas = root.querySelector('canvas');
 
-        return hasContent || hasChildren || hasCanvas;
-      }, { timeout: 10000 });
+          return hasContent || hasChildren || hasCanvas;
+        },
+        { timeout: 10000 },
+      );
 
       // Additional wait for any story-specific loading states
       await page.evaluate(async () => {
@@ -165,11 +174,13 @@ class WorkerPool {
         const loadingOverlay = document.querySelector('.sb-loading, [data-testid="loading"]');
         if (loadingOverlay) {
           // Wait for it to be removed or hidden
-          await new Promise(resolve => {
+          await new Promise((resolve) => {
             const observer = new MutationObserver(() => {
-              if (!document.contains(loadingOverlay) ||
-                  loadingOverlay.classList.contains('hidden') ||
-                  getComputedStyle(loadingOverlay).display === 'none') {
+              if (
+                !document.contains(loadingOverlay) ||
+                loadingOverlay.classList.contains('hidden') ||
+                getComputedStyle(loadingOverlay).display === 'none'
+              ) {
                 observer.disconnect();
                 resolve(void 0);
               }
@@ -191,7 +202,7 @@ class WorkerPool {
         if (d.fonts?.ready) {
           await Promise.race([
             d.fonts.ready,
-            new Promise(resolve => setTimeout(resolve, 1000)) // Timeout after 1s
+            new Promise((resolve) => setTimeout(resolve, 1000)), // Timeout after 1s
           ]);
         }
       });
@@ -243,7 +254,9 @@ class WorkerPool {
       );
 
       if (!isStable && this.config.debug) {
-        console.log(`Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`);
+        console.log(
+          `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
+        );
       }
 
       // Optimized screenshot capture
@@ -258,7 +271,7 @@ class WorkerPool {
       await page.screenshot({
         path: actual,
         fullPage: this.config.fullPage,
-        type: 'png' // PNG format required for accurate odiff comparison
+        type: 'png', // PNG format required for accurate odiff comparison
       });
 
       // Handle baseline logic with odiff visual regression testing
@@ -266,7 +279,9 @@ class WorkerPool {
       let result: string;
 
       if (this.config.debug) {
-        console.log(`Story ${story.id}: expected=${expected}, actual=${actual}, missing=${missingBaseline}, update=${this.config.update}`);
+        console.log(
+          `Story ${story.id}: expected=${expected}, actual=${actual}, missing=${missingBaseline}, update=${this.config.update}`,
+        );
       }
 
       if (missingBaseline) {
@@ -281,15 +296,23 @@ class WorkerPool {
         } else {
           throw new Error(`Missing baseline: ${expected}`);
         }
+      } else if (this.config.update) {
+        // When --update is passed and baseline exists, update it without diffing
+        fs.mkdirSync(path.dirname(expected), { recursive: true });
+        fs.copyFileSync(actual, expected);
+        result = 'Updated baseline';
       } else {
         // Perform visual regression test using odiff
-        const diffPath = path.join(path.dirname(actual), `${path.basename(actual, path.extname(actual))}.diff.png`);
+        const diffPath = path.join(
+          path.dirname(actual),
+          `${path.basename(actual, path.extname(actual))}.diff.png`,
+        );
 
         try {
           // Run odiff comparison using Node.js bindings
           const odiffResult = await odiffCompare(expected, actual, diffPath, {
             threshold: this.config.threshold,
-            outputDiffMask: true
+            outputDiffMask: true,
           });
 
           if (odiffResult.match) {
@@ -312,7 +335,6 @@ class WorkerPool {
 
             throw new Error(`Visual regression failed: images differ (diff: ${diffPath})`);
           }
-
         } catch (error: any) {
           // odiff comparison failed
           if (error.message.includes('images differ')) {
@@ -329,10 +351,9 @@ class WorkerPool {
       // Finish test in UI
       if (this.ui) {
         this.ui.finishTest(story.id, true);
-      } else if (this.config.logLevel !== 'silent') {
+      } else if (!this.config.quiet) {
         console.log(`✓ ${story.id}`);
       }
-
     } catch (error) {
       const duration = Date.now() - startTime;
       this.results[story.id] = { success: false, error: String(error), duration, action: 'failed' };
@@ -340,7 +361,7 @@ class WorkerPool {
       // Finish test in UI
       if (this.ui) {
         this.ui.finishTest(story.id, false, String(error), story.url);
-      } else if (this.config.logLevel !== 'silent') {
+      } else if (!this.config.quiet) {
         // Extract diff image path from error message for visual regression failures
         const errorStr = String(error);
         const diffMatch = errorStr.match(/diff: ([^\)]+)/);
@@ -413,7 +434,7 @@ export async function runParallelTests(options: {
   }
 
   // Check if we can use the terminal UI
-  const useUI = TerminalUI.isSupported() && config.logLevel !== 'silent';
+  const useUI = TerminalUI.isSupported() && !config.quiet;
   const ui = useUI ? new TerminalUI(stories.length, config.showProgress) : null;
 
   // Default to number of CPU cores, with a reasonable cap
@@ -423,7 +444,7 @@ export async function runParallelTests(options: {
   const initialMessage = `Running ${stories.length} stories using ${numWorkers} concurrent workers`;
   if (ui) {
     ui.log(initialMessage);
-  } else {
+  } else if (!config.quiet) {
     console.log(initialMessage);
   }
 
@@ -431,12 +452,15 @@ export async function runParallelTests(options: {
 
   const startTime = Date.now();
 
+  // Create ora spinner when --progress or --summary is passed (even in quiet), and not using UI
+  const spinner = !ui && (config.showProgress || config.summary) ? ora().start() : null;
+
   // Progress callback
   const onProgress = (completed: number, total: number) => {
     if (ui) {
       ui.updateProgress(completed, total, Date.now() - startTime);
-    } else {
-      // Fallback to simple progress line with better formatting
+    } else if (spinner) {
+      // Update spinner with progress information
       const percent = Math.round((completed / total) * 100);
       const elapsed = Date.now() - startTime;
       const avgTimePerTest = elapsed / Math.max(completed, 1);
@@ -446,8 +470,11 @@ export async function runParallelTests(options: {
       const seconds = remainingSeconds % 60;
       const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 
-      // Clear line and position cursor to start, then print progress
-      process.stdout.write('\r\x1b[K' + `📊 ${completed}/${total} (${percent}%) • ${timeStr} remaining`);
+      // Stories per minute (rounded, min 1 when there is progress)
+      const elapsedMinutes = Math.max(elapsed / 60000, 0.001);
+      const storiesPerMinute = completed > 0 ? Math.round(completed / elapsedMinutes) : 0;
+
+      spinner.text = ` ${completed}/${total} (${percent}%) • ${timeStr} remaining • ${storiesPerMinute}/m`;
     }
   };
 
@@ -456,7 +483,10 @@ export async function runParallelTests(options: {
     const { success, failed } = await pool.run(onProgress);
 
     // Clear progress and show final summary
-    if (!ui) {
+    if (spinner) {
+      spinner.stop();
+      spinner.clear();
+    } else if (!ui) {
       process.stdout.write('\r\x1b[K\n'); // Clear line and move to next line
     }
 
@@ -464,32 +494,42 @@ export async function runParallelTests(options: {
 
     // Calculate summary statistics from results
     const allResults = Object.values(pool.getResults());
-    const passed = allResults.filter(r => r.action === 'Visual regression passed').length;
-    const updated = allResults.filter(r => r.action === 'Updated baseline').length;
-    const created = allResults.filter(r => r.action === 'Created baseline').length;
-    const failedCount = allResults.filter(r => r.action === 'failed').length;
-    const testsPerMinute = ((stories.length / (parseFloat(totalDuration) / 60))).toFixed(0);
+    const passed = allResults.filter((r) => r.action === 'Visual regression passed').length;
+    const updated = allResults.filter((r) => r.action === 'Updated baseline').length;
+    const created = allResults.filter((r) => r.action === 'Created baseline').length;
+    const failedCount = allResults.filter((r) => r.action === 'failed').length;
+    const testsPerMinute = (stories.length / (parseFloat(totalDuration) / 60)).toFixed(0);
 
-    // Always show detailed summary at the end
-    const summaryLines = [
-      `📊 Summary:`,
-      `  ✅ Passed: ${passed}`,
-      `  ❌ Failed: ${failedCount}`,
-      `  📸 Created: ${created}`,
-      `  🔄 Updated: ${updated}`,
-      `  ⏱️  Total time: ${totalDuration}s`,
-      `  ⚡ Tests/min: ${testsPerMinute}`
-    ];
+    // Show detailed summary at the end when --summary is passed
+    if (config.summary) {
+      const summaryLines = [
+        `📊 Summary:`,
+        `  ✅ Passed: ${passed}`,
+        `  ❌ Failed: ${failedCount}`,
+        `  📸 Created: ${created}`,
+        `  🔄 Updated: ${updated}`,
+        `  ⏱️  Total time: ${totalDuration}s`,
+        `  ⚡ Tests/min: ${testsPerMinute}`,
+      ];
 
-    if (ui) {
-      summaryLines.forEach(line => ui.log(line));
-      ui.destroy();
+      if (ui) {
+        summaryLines.forEach((line) => ui.log(line));
+        ui.destroy();
+      } else {
+        summaryLines.forEach((line) => console.log(line));
+      }
     } else {
-      summaryLines.forEach(line => console.log(line));
+      if (ui) {
+        ui.destroy();
+      }
     }
 
     return success ? 0 : 1;
   } catch (error) {
+    if (spinner) {
+      spinner.stop();
+      spinner.clear();
+    }
     if (ui) {
       ui.error(`Unexpected error: ${error}`);
       ui.destroy();
