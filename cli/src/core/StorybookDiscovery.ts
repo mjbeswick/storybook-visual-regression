@@ -66,21 +66,33 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
   ];
 
   let indexData: any;
+  const attemptedUrls: string[] = [];
+  const errors: string[] = [];
+
   for (const candidate of candidates) {
     if (candidate.startsWith('http')) {
+      attemptedUrls.push(candidate);
       try {
         if (config.debug) process.stdout.write(`Discovery: GET ${candidate}\n`);
-        const res = await fetch(candidate);
+        const res = await fetch(candidate, {
+          signal: AbortSignal.timeout(10000), // 10 second timeout
+        });
         if (res.ok) {
           indexData = await res.json();
           if (config.debug) process.stdout.write(`Discovery: loaded ${candidate}\n`);
           break;
-        } else if (config.debug) {
-          process.stdout.write(`Discovery: ${candidate} -> HTTP ${res.status}\n`);
+        } else {
+          const errorMsg = `HTTP ${res.status} ${res.statusText}`;
+          errors.push(`${candidate}: ${errorMsg}`);
+          if (config.debug) {
+            process.stdout.write(`Discovery: ${candidate} -> ${errorMsg}\n`);
+          }
         }
       } catch (e) {
+        const errorMsg = (e as Error).message;
+        errors.push(`${candidate}: ${errorMsg}`);
         if (config.debug)
-          process.stdout.write(`Discovery: failed ${candidate} -> ${(e as Error).message}\n`);
+          process.stdout.write(`Discovery: failed ${candidate} -> ${errorMsg}\n`);
       }
     } else {
       const data = readJsonSafe(candidate);
@@ -88,12 +100,41 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
         indexData = data;
         if (config.debug) process.stdout.write(`Discovery: loaded ${candidate}\n`);
         break;
+      } else {
+        errors.push(`${candidate}: File not found or invalid JSON`);
       }
     }
   }
 
   if (!indexData) {
-    throw new Error('Could not load Storybook index.json from server or static files');
+    // Check if we're likely running in Docker
+    const isLikelyDocker = process.env.DOCKER_CONTAINER === 'true' ||
+                          fs.existsSync('/.dockerenv') ||
+                          (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker'));
+
+    const errorMsg = [
+      'Could not load Storybook index.json from server or static files.',
+      '',
+      'Attempted locations:',
+      ...attemptedUrls.map(url => `  • ${url}`),
+      ...candidates.filter(c => !c.startsWith('http')).map(file => `  • ${file} (static file)`),
+      '',
+      'Common issues:',
+      '  • Storybook server is not running or accessible',
+      isLikelyDocker ? '  • When running in Docker, use host.docker.internal instead of localhost' : '  • Wrong URL or port (check that Storybook is running)',
+      '  • Storybook static build not found in expected location',
+      '  • Network connectivity or firewall issues',
+      '',
+      'Troubleshooting steps:',
+      isLikelyDocker ? '  • Use --url http://host.docker.internal:9009 (replace 9009 with your Storybook port)' : '  • Check that Storybook is running: curl http://localhost:6006',
+      '  • Verify Storybook index.json is accessible',
+      '  • Try with --debug flag for more detailed output',
+      '',
+      'Recent errors:',
+      ...errors.slice(-3).map(err => `  • ${err}`), // Show last 3 errors
+    ].join('\n');
+
+    throw new Error(errorMsg);
   }
 
   const source = ((): any[] => {

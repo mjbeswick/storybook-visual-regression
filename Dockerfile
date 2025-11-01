@@ -5,12 +5,13 @@ WORKDIR /app/cli
 # Install SSL certificates for npm downloads
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
+# Copy CLI source and package.json
+COPY cli/ ./
+
 # Install dependencies for local CLI build (skip playwright browser installation in Docker)
-COPY cli/package.json ./
 RUN DOCKER_BUILD=1 npm install
 
-# Copy CLI source and build it
-COPY cli/ ./
+# Build the CLI (prepare script already ran during install)
 RUN npm run build
 
 # Pack the CLI into a tarball for global install in final image

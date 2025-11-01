@@ -20,6 +20,7 @@
     "publish:addon": "npm run build --workspace addon && npm publish --workspace addon",
     "unpublish:cli": "node ./scripts/unpublish-old-versions.mjs @storybook-visual-regression/cli",
     "unpublish:addon": "node ./scripts/unpublish-old-versions.mjs @storybook-visual-regression/addon",
+    "docker:build": "docker build -t storybook-visual-regression .",
     "docker:build:nocache": "docker build --no-cache -t storybook-visual-regression ."
   },
   "keywords": [
