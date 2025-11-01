@@ -5,14 +5,22 @@ import { discoverStories } from './StorybookDiscovery.js';
 import { detectViewports } from './StorybookConfigDetector.js';
 import { writeRuntimeOptions, getRuntimeOptionsPath } from '../runtime/runtime-options.js';
 import { fileURLToPath } from 'node:url';
+import { logger } from '../logger.js';
 
 export const ensureDirs = (config: RuntimeConfig): void => {
+  logger.debug(
+    `Ensuring directories exist: snapshots=${config.snapshotPath}, results=${config.resultsPath}`,
+  );
   fs.mkdirSync(config.resolvePath(config.snapshotPath), { recursive: true });
   fs.mkdirSync(config.resolvePath(config.resultsPath), { recursive: true });
 };
 
 export const cleanStaleArtifacts = (resultsPath: string): void => {
-  if (!fs.existsSync(resultsPath)) return;
+  logger.debug(`Cleaning stale artifacts in: ${resultsPath}`);
+  if (!fs.existsSync(resultsPath)) {
+    logger.debug(`Results path does not exist, skipping cleanup: ${resultsPath}`);
+    return;
+  }
   // Best-effort cleanup: remove orphaned empty directories
   const walk = (dir: string) => {
     for (const name of fs.readdirSync(dir)) {
@@ -31,12 +39,14 @@ export const cleanStaleSnapshots = (
   snapshotPath: string,
   discoveredStories: Array<{ snapshotRelPath: string }>,
 ): void => {
-  if (!fs.existsSync(snapshotPath)) return;
+  logger.debug(`Cleaning stale snapshots in: ${snapshotPath}`);
+  if (!fs.existsSync(snapshotPath)) {
+    logger.debug(`Snapshot path does not exist, skipping cleanup: ${snapshotPath}`);
+    return;
+  }
 
   // Collect all discovered snapshot paths (normalize to handle path separators)
-  const discoveredPaths = new Set(
-    discoveredStories.map((s) => path.normalize(s.snapshotRelPath)),
-  );
+  const discoveredPaths = new Set(discoveredStories.map((s) => path.normalize(s.snapshotRelPath)));
 
   // First pass: delete stale snapshot files
   const walkAndDelete = (dir: string, relDir: string = ''): void => {
@@ -95,30 +105,38 @@ export interface RunCallbacks {
 }
 
 export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Promise<number> => {
+  logger.info('Starting visual regression test run');
+  logger.debug(
+    `Configuration: url=${config.url}, update=${config.update}, workers=${config.workers}, threshold=${config.threshold}`,
+  );
+
   ensureDirs(config);
   cleanStaleArtifacts(config.resolvePath(config.resultsPath));
 
   // Discover stories
+  logger.debug('Discovering stories from Storybook');
   const baseStories = await discoverStories(config);
   if (baseStories.length === 0) {
-    process.stdout.write(
-      'No stories discovered. Ensure Storybook is running and /index.json is accessible.\n',
+    logger.warn(
+      'No stories discovered. Ensure Storybook is running and /index.json is accessible.',
     );
+  } else {
+    logger.info(`Discovered ${baseStories.length} stories`);
   }
 
   // Clean up stale snapshots when updating
   if (config.update) {
+    logger.debug('Cleaning stale snapshots during update mode');
     try {
       cleanStaleSnapshots(config.resolvePath(config.snapshotPath), baseStories);
     } catch (e) {
       // Best-effort only, don't fail the run if cleanup has issues
-      if (config.debug) {
-        process.stdout.write(`Warning: Failed to clean stale snapshots: ${(e as Error).message}\n`);
-      }
+      logger.warn(`Failed to clean stale snapshots: ${(e as Error).message}`);
     }
   }
 
   // Warn about missing baselines
+  logger.debug('Checking for missing baseline snapshots');
   try {
     const snapshotRoot = config.resolvePath(config.snapshotPath);
     let missing = 0;
@@ -127,35 +145,39 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
       if (!fs.existsSync(expected)) missing += 1;
     }
     if (missing > 0 && !config.update && !config.missingOnly) {
-      process.stdout.write(
-        `Warning: ${missing} stor${missing === 1 ? 'y has' : 'ies have'} no baseline snapshot. ` +
-          `Run again with --update --missing-only to create only the missing baselines.\n`,
+      logger.warn(
+        `${missing} stor${missing === 1 ? 'y has' : 'ies have'} no baseline snapshot. ` +
+          `Run with --update --missing-only to create missing baselines.`,
       );
+    } else if (missing === 0) {
+      logger.debug('All stories have baseline snapshots');
     }
-  } catch {
-    // best-effort only
+  } catch (e) {
+    logger.warn(`Failed to check for missing baselines: ${(e as Error).message}`);
   }
 
   // Discover viewports if enabled
+  logger.debug('Detecting viewport configurations');
   const detected = await detectViewports(config);
   const effectiveViewports = detected.viewportSizes?.length
     ? detected.viewportSizes
     : config.viewportSizes;
+  logger.debug(`Using ${effectiveViewports.length} viewport configurations`);
 
   // Prepare runtime options for playwright spec consumption at a stable path inside this package
+  logger.debug('Preparing runtime options for test execution');
   const here = path.dirname(fileURLToPath(new URL(import.meta.url)));
   const packageRoot = path.resolve(here, '..'); // dist/
   const runtimePath = getRuntimeOptionsPath(packageRoot);
   writeRuntimeOptions({ ...config, stories: baseStories }, runtimePath);
+  logger.debug(`Runtime options written to: ${runtimePath}`);
 
   // Run tests directly in parallel using Promise.all like the example
   const originalCwd = process.cwd();
 
-  // Debug logging
-  if (config.debug) {
-    process.stdout.write(`SVR Runner: Running ${baseStories.length} stories in parallel\n`);
-    process.stdout.write(`SVR Runner: runtimePath=${runtimePath}\n`);
-  }
+  logger.info(`Starting test execution for ${baseStories.length} stories`);
+  logger.debug(`Working directory: ${originalCwd}`);
+  logger.debug(`Runtime path: ${runtimePath}`);
 
   // Import and run the parallel test runner
   const { runParallelTests } = await import('../parallel-runner.js');
@@ -171,5 +193,6 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     callbacks,
   });
 
+  logger.info(`Test execution completed with exit code: ${exitCode}`);
   return exitCode;
 };

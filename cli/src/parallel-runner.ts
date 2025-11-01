@@ -13,35 +13,7 @@ import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
 import { TerminalUI } from './terminal-ui.js';
 import type { RunCallbacks } from './core/VisualRegressionRunner.js';
-
-// Logging helper based on logLevel
-const createLogger = (logLevel: RuntimeConfig['logLevel']) => {
-  const levels = ['silent', 'error', 'warn', 'info', 'debug'];
-  const currentLevel = levels.indexOf(logLevel);
-
-  return {
-    error: (...args: any[]) => {
-      if (currentLevel >= levels.indexOf('error')) {
-        console.error(...args);
-      }
-    },
-    warn: (...args: any[]) => {
-      if (currentLevel >= levels.indexOf('warn')) {
-        console.warn(...args);
-      }
-    },
-    info: (...args: any[]) => {
-      if (currentLevel >= levels.indexOf('info')) {
-        console.log(...args);
-      }
-    },
-    debug: (...args: any[]) => {
-      if (currentLevel >= levels.indexOf('debug')) {
-        console.log(chalk.dim('[DEBUG]'), ...args);
-      }
-    },
-  };
-};
+import { createLogger, setGlobalLogger } from './logger.js';
 
 // Summary message helper
 type SummaryParams = {
@@ -323,7 +295,7 @@ class WorkerPool {
         if (this.printUnderSpinner) {
           this.printUnderSpinner(line);
         } else {
-          console.log(line);
+          this.log.info(line);
         }
       }
     } else {
@@ -363,7 +335,7 @@ class WorkerPool {
           if (this.printUnderSpinner) {
             this.printUnderSpinner(line);
           } else {
-            console.log(line);
+            this.log.info(line);
           }
         }
       } else {
@@ -422,18 +394,40 @@ class WorkerPool {
           const diffMatch = errorStr.match(/diff: (.+)\)/);
           const diffPath = diffMatch ? diffMatch[1] : null;
 
+          // Extract a user-friendly error message
+          let errorReason = 'Unknown error';
+          if (lastError) {
+            const errorStr = String(lastError);
+            if (errorStr.includes('Missing baseline')) {
+              errorReason = 'No baseline snapshot found';
+            } else if (errorStr.includes('odiff')) {
+              errorReason = 'Visual differences detected';
+            } else if (errorStr.includes('timeout')) {
+              errorReason = 'Operation timed out';
+            } else if (errorStr.includes('network')) {
+              errorReason = 'Network error';
+            } else if (errorStr.includes('Screenshot capture failed')) {
+              errorReason = 'Failed to capture screenshot';
+            } else {
+              // Use the first line of the error as a summary
+              errorReason = errorStr.split('\n')[0];
+            }
+          }
+
           const first = `${chalk.red('✗')} ${displayName} ${colorDuration(duration)}`;
           if (this.printUnderSpinner) {
             this.printUnderSpinner(first);
+            this.printUnderSpinner(`  ${chalk.red('Reason:')} ${errorReason}`);
             this.printUnderSpinner(`  ${chalk.blue(escapePath(story.url))}`);
             if (diffPath) {
               this.printUnderSpinner(`  ${chalk.blue(escapePath(diffPath))}`);
             }
           } else {
-            console.error(first);
-            console.error(`  ${chalk.blue(escapePath(story.url))}`);
+            this.log.error(first);
+            this.log.error(`  ${chalk.red('Reason:')} ${errorReason}`);
+            this.log.error(`  ${chalk.blue(escapePath(story.url))}`);
             if (diffPath) {
-              console.error(`  ${chalk.blue(escapePath(diffPath))}`);
+              this.log.error(`  ${chalk.blue(escapePath(diffPath))}`);
             }
           }
         }
@@ -682,11 +676,11 @@ class WorkerPool {
       // Pre-create directory to avoid contention
       fs.mkdirSync(actualDir, { recursive: true });
 
-      // Apply Date mock right before screenshot capture if enabled
+      // Apply Date fix right before screenshot capture if enabled
       // This is the safest point - page is fully loaded but screenshot not yet taken
-      if (this.config.mockDate && !page.isClosed()) {
+      if (this.config.fixDate && !page.isClosed()) {
         try {
-          const parseMockDate = (value: boolean | string | number | undefined): Date => {
+          const parseFixDate = (value: boolean | string | number | undefined): Date => {
             if (!value || value === true) {
               // Default: February 2, 2024, 10:00:00 UTC as requested
               return new Date('2024-02-02T10:00:00Z');
@@ -720,7 +714,7 @@ class WorkerPool {
             return new Date('2024-02-02T10:00:00Z');
           };
 
-          const fixedDate = parseMockDate(this.config.mockDate);
+          const fixedDate = parseFixDate(this.config.fixDate);
           this.log.debug(
             `Story ${story.id}: Setting fixed clock time to ${fixedDate.toISOString()}`,
           );
@@ -877,6 +871,8 @@ export async function runParallelTests(options: {
   callbacks?: RunCallbacks;
 }): Promise<number> {
   const { stories, config, debug, callbacks } = options;
+  // Initialize global logger
+  setGlobalLogger(config.logLevel);
   const log = createLogger(config.logLevel);
 
   log.debug(`Starting parallel test run with ${stories.length} stories`);
@@ -888,7 +884,7 @@ export async function runParallelTests(options: {
   );
 
   if (stories.length === 0) {
-    console.error('No stories to test');
+    log.error('No stories to test');
     return 1;
   }
 
@@ -904,11 +900,33 @@ export async function runParallelTests(options: {
   const numWorkers = config.workers || defaultWorkers;
   log.debug(`Worker pool: ${numWorkers} workers (${os.cpus().length} CPU cores available)`);
 
-  const initialMessage = `Running ${chalk.yellow(String(stories.length))} stories using ${chalk.yellow(String(numWorkers))} concurrent workers...`;
+  // In test mode, filter out stories that don't have snapshots
+  let filteredStories = stories;
+  if (!config.update) {
+    filteredStories = stories.filter((story) => {
+      const snapshotPath = path.join(config.snapshotPath, `${story.snapshotRelPath}.png`);
+      const hasSnapshot = fs.existsSync(snapshotPath);
+      if (!hasSnapshot) {
+        log.debug(`Skipping story ${story.id}: no baseline snapshot exists`);
+      }
+      return hasSnapshot;
+    });
+
+    const skippedCount = stories.length - filteredStories.length;
+    if (skippedCount > 0) {
+      log.info(
+        `Skipped ${skippedCount} stories with no baseline snapshots (use --update to create them)`,
+      );
+    }
+  }
+
+  const mode = config.update ? 'updating snapshots' : 'testing';
+  const storyCount = filteredStories.length;
+  const initialMessage = `Running ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(String(numWorkers))} concurrent workers (${chalk.cyan(mode)})...`;
   if (ui) {
     ui.log(initialMessage);
   } else if (!config.quiet) {
-    console.log(initialMessage);
+    log.info(initialMessage);
   }
 
   // Helper to print a line under the spinner and then resume spinner
@@ -917,17 +935,17 @@ export async function runParallelTests(options: {
       const currentText = spinnerText;
       spinner.stop();
       spinner.clear();
-      console.log(line);
+      log.info(line);
       spinner = ora(currentText).start();
     } else {
-      console.log(line);
+      log.info(line);
     }
   };
 
   const pool = new WorkerPool(
     numWorkers,
     config,
-    stories,
+    filteredStories,
     ui || undefined,
     printUnderSpinner,
     callbacks,
@@ -957,7 +975,7 @@ export async function runParallelTests(options: {
         spinner.clear();
       } catch {}
     }
-    console.error('^C Aborted by user. Visual regression run stopped.');
+    log.error('^C Aborted by user. Visual regression run stopped.');
     process.exit(130);
   };
   process.once('SIGINT', handleSigint);
@@ -1008,11 +1026,18 @@ export async function runParallelTests(options: {
     const updated = allResults.filter((r) => r.action === 'Updated baseline').length;
     const created = allResults.filter((r) => r.action === 'Created baseline').length;
     const failedCount = allResults.filter((r) => r.action === 'failed').length;
-    const skipped = allResults.filter((r) => r.action === 'skipped').length;
-    const testsPerMinute = (stories.length / (parseFloat(totalDuration) / 60)).toFixed(0);
+    // Calculate skipped as the difference between original stories and filtered stories
+    const skipped = stories.length - filteredStories.length;
+    // Calculate stories per minute based on actually processed stories (not skipped ones)
+    const actuallyProcessed = passed + failedCount + updated + created;
+    const testsPerMinute =
+      actuallyProcessed > 0
+        ? (actuallyProcessed / (parseFloat(totalDuration) / 60)).toFixed(0)
+        : '0';
 
     // Show detailed summary at the end when --summary is passed
     if (config.summary) {
+      // Use original story count as total, not filtered count
       const totalStories = stories.length;
       const context: 'update' | 'test' = config.update ? 'update' : 'test';
       const successPercent =
@@ -1037,7 +1062,7 @@ export async function runParallelTests(options: {
         message.split('\n').forEach((line) => ui.log(line));
         ui.destroy();
       } else {
-        console.log('\n' + message);
+        log.info('\n' + message);
       }
     } else {
       if (ui) {
@@ -1055,7 +1080,7 @@ export async function runParallelTests(options: {
       ui.error(`Unexpected error: ${error}`);
       ui.destroy();
     } else {
-      console.error('Unexpected error:', error);
+      log.error('Unexpected error:', error);
     }
     return 1;
   }

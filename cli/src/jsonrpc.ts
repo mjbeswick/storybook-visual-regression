@@ -105,7 +105,7 @@ export interface RunParams {
   showProgress?: boolean;
   summary?: boolean;
   logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'debug';
-  mockDate?: boolean | string | number;
+  fixDate?: boolean | string | number;
   timezone?: string;
   locale?: string;
   webserverTimeout?: number;
@@ -123,11 +123,14 @@ export interface RunParams {
 export class JsonRpcClient {
   private process: ChildProcess | null = null;
   private nextId = 1;
-  private pendingRequests = new Map<number | string, {
-    resolve: (value: any) => void;
-    reject: (error: any) => void;
-    timeout: NodeJS.Timeout;
-  }>();
+  private pendingRequests = new Map<
+    number | string,
+    {
+      resolve: (value: any) => void;
+      reject: (error: any) => void;
+      timeout: NodeJS.Timeout;
+    }
+  >();
   private listeners = new Map<string, Set<(params: any) => void>>();
 
   constructor(private cliCommand: string = 'npx @storybook-visual-regression/cli') {}
@@ -508,7 +511,7 @@ export class JsonRpcServer {
       if (handlers) {
         try {
           const result = await Promise.race([
-            ...Array.from(handlers).map(handler => handler(message.params)),
+            ...Array.from(handlers).map((handler) => handler(message.params)),
           ]);
           this.respond(message.id, result);
         } catch (error) {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type RuntimeConfig } from '../config.js';
 import chalk from 'chalk';
+import { logger } from '../logger.js';
 
 export type StoryIndexEntry = {
   id: string;
@@ -57,10 +58,29 @@ const readJsonSafe = (filePath: string): unknown | undefined => {
 };
 
 export const discoverStories = async (config: RuntimeConfig): Promise<DiscoveredStory[]> => {
+  logger.debug('Starting story discovery process');
+
+  // Use original URL for display purposes (shows localhost instead of host.docker.internal)
+  const displayUrl = config.originalUrl || config.url;
+  logger.debug(`Storybook URL: ${displayUrl}`);
+
+  // Extract port from display URL for troubleshooting
+  const urlObj = new URL(displayUrl);
+  const port = urlObj.port || (urlObj.protocol === 'https:' ? '443' : '80');
+
   // Prefer running server index.json; fallback to static
+  logger.debug('Preparing candidate locations for story index');
   const candidates = [
     new URL('index.json', config.url).toString(),
     new URL('stories.json', config.url).toString(),
+    config.resolvePath('storybook-static/index.json'),
+    config.resolvePath('storybook-static/stories.json'),
+  ];
+
+  // Create display versions of the HTTP candidates for error messages
+  const displayCandidates = [
+    new URL('index.json', displayUrl).toString(),
+    new URL('stories.json', displayUrl).toString(),
     config.resolvePath('storybook-static/index.json'),
     config.resolvePath('storybook-static/stories.json'),
   ];
@@ -69,69 +89,77 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
   const attemptedUrls: string[] = [];
   const errors: string[] = [];
 
-  for (const candidate of candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const displayCandidate = displayCandidates[i];
+
     if (candidate.startsWith('http')) {
-      attemptedUrls.push(candidate);
+      attemptedUrls.push(displayCandidate); // Use display URL in error messages
+      logger.debug(`Attempting to fetch story index from: ${displayCandidate}`);
       try {
-        if (config.debug) process.stdout.write(`Discovery: GET ${candidate}\n`);
         const res = await fetch(candidate, {
           signal: AbortSignal.timeout(10000), // 10 second timeout
         });
         if (res.ok) {
           indexData = await res.json();
-          if (config.debug) process.stdout.write(`Discovery: loaded ${candidate}\n`);
+          logger.debug(`Successfully loaded story index from: ${displayCandidate}`);
           break;
         } else {
           const errorMsg = `HTTP ${res.status} ${res.statusText}`;
-          errors.push(`${candidate}: ${errorMsg}`);
-          if (config.debug) {
-            process.stdout.write(`Discovery: ${candidate} -> ${errorMsg}\n`);
-          }
+          errors.push(`${displayCandidate}: ${errorMsg}`);
+          logger.debug(`${displayCandidate} -> ${errorMsg}`);
         }
       } catch (e) {
         const errorMsg = (e as Error).message;
-        errors.push(`${candidate}: ${errorMsg}`);
-        if (config.debug)
-          process.stdout.write(`Discovery: failed ${candidate} -> ${errorMsg}\n`);
+        errors.push(`${displayCandidate}: ${errorMsg}`);
+        logger.debug(`Failed to fetch ${displayCandidate}: ${errorMsg}`);
       }
     } else {
+      logger.debug(`Attempting to load static story index from: ${displayCandidate}`);
       const data = readJsonSafe(candidate);
       if (data) {
         indexData = data;
-        if (config.debug) process.stdout.write(`Discovery: loaded ${candidate}\n`);
+        logger.debug(`Successfully loaded story index from static file: ${displayCandidate}`);
         break;
       } else {
-        errors.push(`${candidate}: File not found or invalid JSON`);
+        errors.push(`${displayCandidate}: File not found or invalid JSON`);
+        logger.debug(`Failed to load static file: ${displayCandidate}`);
       }
     }
   }
 
   if (!indexData) {
+    logger.error('Failed to load story index from any candidate location');
     // Check if we're likely running in Docker
-    const isLikelyDocker = process.env.DOCKER_CONTAINER === 'true' ||
-                          fs.existsSync('/.dockerenv') ||
-                          (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker'));
+    const isLikelyDocker =
+      process.env.DOCKER_CONTAINER === 'true' ||
+      fs.existsSync('/.dockerenv') ||
+      (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker'));
 
     const errorMsg = [
       'Could not load Storybook index.json from server or static files.',
       '',
       'Attempted locations:',
-      ...attemptedUrls.map(url => `  • ${url}`),
-      ...candidates.filter(c => !c.startsWith('http')).map(file => `  • ${file} (static file)`),
+      ...attemptedUrls.map((url) => `  • ${url}`),
+      ...candidates.filter((c) => !c.startsWith('http')).map((file) => `  • ${file} (static file)`),
       '',
       'Common issues:',
       '  • Storybook server is not running or accessible',
-      isLikelyDocker ? '  • When running in Docker, use host.docker.internal instead of localhost' : '  • Wrong URL or port (check that Storybook is running)',
+      isLikelyDocker
+        ? '  • When running in Docker, use host.docker.internal instead of localhost'
+        : '  • Wrong URL or port (check that Storybook is running)',
       '  • Storybook static build not found in expected location',
       '  • Network connectivity or firewall issues',
       '',
       'Troubleshooting steps:',
-      isLikelyDocker ? '  • Use --url http://host.docker.internal:9009 (replace 9009 with your Storybook port)' : '  • Check that Storybook is running: curl http://localhost:6006',
+      isLikelyDocker
+        ? `  • Use --url http://host.docker.internal:${port} (or check that Storybook is running on host.docker.internal:${port})`
+        : `  • Check that Storybook is running: curl http://localhost:${port}`,
       '  • Verify Storybook index.json is accessible',
       '  • Try with --debug flag for more detailed output',
       '',
       'Recent errors:',
-      ...errors.slice(-3).map(err => `  • ${err}`), // Show last 3 errors
+      ...errors.slice(-3).map((err) => `  • ${err}`), // Show last 3 errors
     ].join('\n');
 
     throw new Error(errorMsg);
@@ -151,6 +179,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
     return [];
   })();
 
+  logger.debug(`Processing ${source.length} raw story entries from index`);
   const stories: StoryIndexEntry[] = source
     .map((s: any) => ({
       id: String(s.id ?? s.sid ?? ''),
@@ -158,6 +187,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       name: String(s.name ?? s.story ?? ''),
     }))
     .filter((s) => s.id && s.title && s.name);
+  logger.debug(`Parsed ${stories.length} valid story entries`);
 
   const filtered = stories.filter((s) => {
     const hay = `${s.id} ${s.title} ${s.name}`.toLowerCase();
@@ -184,11 +214,10 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
     snapshotRelPath: toSnapshotPath(s),
   }));
 
-  if (config.debug) {
-    process.stdout.write(
-      `Discovery: total stories in index=${stories.length}, after filters=${mapped.length}\n`,
-    );
-  }
+  logger.info(
+    `Discovered ${mapped.length} stories (${stories.length} total, ${stories.length - mapped.length} filtered out)`,
+  );
+  logger.debug(`Story filtering: total=${stories.length}, after filters=${mapped.length}`);
 
   return mapped;
 };

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import path from 'node:path';
 import { resolveConfig, saveEffectiveConfig, type CliFlags } from '../config.js';
 import { Command } from '@commander-js/extra-typings';
 import { run } from '../core/VisualRegressionRunner.js';
 import { JsonRpcServer, CLI_METHODS, CLI_EVENTS } from '../jsonrpc.js';
+import { setGlobalLogger, logger } from '../logger.js';
 
 const parseArgs = (argv: string[]): CliFlags => {
   const out: CliFlags = {};
@@ -151,15 +153,16 @@ const parseArgs = (argv: string[]): CliFlags => {
       case '--save-config':
         out.saveConfig = true;
         break;
-      case '--mock-date':
-        const mockDateVal = getVal(i);
-        if (mockDateVal && mockDateVal !== 'true' && mockDateVal !== 'false') {
+      case '--fix-date':
+        const fixDateVal = getVal(i);
+        // Check if the next argument looks like a date value (not another flag)
+        if (fixDateVal && !fixDateVal.startsWith('-')) {
           // If a value is provided, use it (could be timestamp or date string)
-          out.mockDate = mockDateVal;
+          out.fixDate = fixDateVal;
           i += 1;
         } else {
-          // Just --mock-date without value means use default
-          out.mockDate = true;
+          // Just --fix-date without value means use default
+          out.fixDate = true;
         }
         break;
       case '--json-rpc':
@@ -211,8 +214,8 @@ const main = async (): Promise<number> => {
     .option('--save-config', 'Write effective config JSON')
     .option('--quiet', 'Suppress per-test output')
     .option(
-      '--mock-date [date]',
-      'Mock Date object with fixed date (timestamp or ISO string, or omit for default)',
+      '--fix-date [date]',
+      'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
     )
     .helpOption('-h, --help', 'Show help');
 
@@ -221,18 +224,55 @@ const main = async (): Promise<number> => {
     program.parse(['node', 'svr', ...argv]);
   } catch (err: any) {
     if (err?.code === 'commander.helpDisplayed') return 0;
+    if (err?.code === 'commander.unknownOption') {
+      console.error('');
+      if (err.message?.includes('--mock-date')) {
+        console.error('Did you mean to use --fix-date instead of --mock-date?');
+        console.error('The --mock-date flag has been renamed to --fix-date.');
+      } else {
+        console.error('Unknown option provided.');
+      }
+      console.error('');
+      console.error('Run with --help to see all available options.');
+      return 1;
+    }
     throw err;
   }
-  const config = resolveConfig(flags);
-  if (flags.saveConfig) {
-    saveEffectiveConfig(config, 'storybook-visual-regression.config.json');
+
+  let config;
+  try {
+    config = resolveConfig(flags);
+    // Initialize global logger with resolved log level
+    setGlobalLogger(config.logLevel);
+
+    if (flags.saveConfig) {
+      const configPath = path.join(config.outputDir, 'config.json');
+      saveEffectiveConfig(config, flags, configPath);
+    }
+    const code = await run(config);
+    return code;
+  } catch (err) {
+    // Determine if debug logging is enabled
+    const isDebug = flags.debug || flags.logLevel === 'debug';
+
+    if (isDebug) {
+      // Show full error with stack trace for debugging
+      logger.error('Debug mode enabled, showing full error:');
+      logger.error(err);
+    } else {
+      // Show only user-friendly error message
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`Error: ${message}`);
+    }
+
+    return 2;
   }
-  const code = await run(config);
-  return code;
 };
 
 const runJsonRpcMode = async (flags: CliFlags): Promise<number> => {
   const config = resolveConfig(flags);
+  // Initialize global logger with resolved log level
+  setGlobalLogger(config.logLevel);
   const server = new JsonRpcServer();
 
   // Current run state
@@ -353,9 +393,5 @@ const runJsonRpcMode = async (flags: CliFlags): Promise<number> => {
   });
 };
 
-main()
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error(err);
-    process.exit(2);
-  });
+// Main function now handles its own errors and exits
+main().then((code) => process.exit(code));
