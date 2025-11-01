@@ -103,14 +103,26 @@ export class TerminalUI {
 
     let linesPrinted = 0;
 
+    // Helper to format duration with performance-based coloring (matches parallel-runner.ts)
+    const colorDuration = (durationMs: number): string => {
+      const secs = durationMs / 1000;
+      const secsStr = secs.toFixed(1);
+      const unit = chalk.dim('s');
+      if (secs < 2) {
+        return `${chalk.green(secsStr)}${unit}`;
+      } else if (secs < 4) {
+        return `${chalk.yellow(secsStr)}${unit}`;
+      } else {
+        return `${chalk.red(secsStr)}${unit}`;
+      }
+    };
+
     // Show only completed tests
     for (const test of allTests) {
       if (test.status === 'pass') {
-        const duration = (test.duration / 1000).toFixed(1);
-        console.log(`${chalk.green('✓')} ${test.name} ${chalk.dim(`(${duration}s)`)}`);
+        console.log(`${chalk.green('✓')} ${test.name} ${colorDuration(test.duration)}`);
       } else if (test.status === 'fail') {
-        const duration = (test.duration / 1000).toFixed(1);
-        console.log(`${chalk.red('✗')} ${test.name} ${chalk.dim(`(${duration}s)`)}`);
+        console.log(`${chalk.red('✗')} ${test.name} ${colorDuration(test.duration)}`);
         if (test.storyUrl) {
           console.log(`  ${chalk.dim(test.storyUrl)}`);
         }

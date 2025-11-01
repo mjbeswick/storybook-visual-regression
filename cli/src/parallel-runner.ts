@@ -154,18 +154,17 @@ class WorkerPool {
       return;
     }
 
-    // Helper to format duration with performance-based coloring and braces
+    // Helper to format duration with performance-based coloring
     const colorDuration = (durationMs: number): string => {
       const secs = durationMs / 1000;
       const secsStr = secs.toFixed(1);
-      const unit = 's';
-      const formatted = `[${secsStr}${unit}]`;
+      const unit = chalk.dim('s');
       if (secs < 2) {
-        return chalk.green(formatted);
+        return `${chalk.green(secsStr)}${unit}`;
       } else if (secs < 4) {
-        return chalk.yellow(formatted);
+        return `${chalk.yellow(secsStr)}${unit}`;
       } else {
-        return chalk.red(formatted);
+        return `${chalk.red(secsStr)}${unit}`;
       }
     };
 
