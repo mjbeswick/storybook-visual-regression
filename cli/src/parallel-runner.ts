@@ -135,6 +135,103 @@ class WorkerPool {
     this.log = createLogger(config.logLevel);
   }
 
+  // Unified method for printing story results
+  private printStoryResult(
+    story: DiscoveredStory,
+    displayName: string,
+    result: 'success' | 'skipped' | 'failed',
+    duration: number,
+    errorDetails?: { reason: string; url: string; diffPath?: string },
+  ): void {
+    // Handle UI mode
+    if (this.ui) {
+      this.ui.finishTest(story.id, result !== 'failed', errorDetails?.reason);
+      return;
+    }
+
+    // Skip output if quiet mode
+    if (this.config.quiet) {
+      return;
+    }
+
+    // Helper to format duration with performance-based coloring and braces
+    const colorDuration = (durationMs: number): string => {
+      const secs = durationMs / 1000;
+      const secsStr = secs.toFixed(1);
+      const unit = 's';
+      const formatted = `[${secsStr}${unit}]`;
+      if (secs < 2) {
+        return chalk.green(formatted);
+      } else if (secs < 4) {
+        return chalk.yellow(formatted);
+      } else {
+        return chalk.red(formatted);
+      }
+    };
+
+    // Build the result line
+    let line: string;
+    let logLevel: 'info' | 'error' = 'info';
+
+    switch (result) {
+      case 'success':
+        line = `${chalk.green('✓')} ${displayName} ${colorDuration(duration)}`;
+        break;
+      case 'skipped':
+        line = `${chalk.yellow('○')} ${displayName} ${colorDuration(duration)} ${chalk.dim('(no snapshot)')}`;
+        break;
+      case 'failed':
+        line = `${chalk.red('✗')} ${displayName} ${colorDuration(duration)}`;
+        logLevel = 'error';
+        break;
+    }
+
+    // Print the main result line
+    if (this.printUnderSpinner) {
+      this.printUnderSpinner(line);
+    } else {
+      if (logLevel === 'error') {
+        this.log.error(line);
+      } else {
+        this.log.info(line);
+      }
+    }
+
+    // Print error details for failed tests
+    if (result === 'failed' && errorDetails) {
+      // Color the error reason based on type
+      let coloredReason: string;
+      const reason = errorDetails.reason;
+      if (reason === 'Network error') {
+        coloredReason = chalk.red(reason);
+      } else if (reason === 'Operation timed out') {
+        coloredReason = chalk.yellow(reason);
+      } else if (reason === 'Failed to capture screenshot') {
+        coloredReason = chalk.magenta(reason);
+      } else if (reason === 'Visual differences detected') {
+        coloredReason = chalk.blue(reason);
+      } else if (reason === 'No baseline snapshot found') {
+        coloredReason = chalk.cyan(reason);
+      } else {
+        coloredReason = chalk.red(reason); // Default to red for unknown errors
+      }
+
+      const detailLines = [`  ${coloredReason}`, `  ${chalk.gray(`URL: ${errorDetails.url}`)}`];
+
+      if (errorDetails.diffPath) {
+        detailLines.push(`  ${chalk.gray(`Diff: ${errorDetails.diffPath}`)}`);
+      }
+
+      for (const detailLine of detailLines) {
+        if (this.printUnderSpinner) {
+          this.printUnderSpinner(detailLine);
+        } else {
+          this.log.error(detailLine);
+        }
+      }
+    }
+  }
+
   getResults() {
     return this.results;
   }
@@ -201,19 +298,6 @@ class WorkerPool {
       return story.title ? `${story.title}/${story.name}` : story.name;
     };
     const displayName = toDisplayName();
-
-    // Helper to color duration number by speed, unit rendered separately in a lighter color
-    const colorDuration = (durationMs: number): string => {
-      const secs = durationMs / 1000;
-      const secsStr = secs.toFixed(1);
-      if (secs < 2) {
-        return `${chalk.green(secsStr)}${chalk.dim(chalk.green('s'))}`;
-      } else if (secs < 4) {
-        return `${chalk.yellow(secsStr)}${chalk.dim(chalk.yellow('s'))}`;
-      } else {
-        return `${chalk.red(secsStr)}${chalk.dim(chalk.red('s'))}`;
-      }
-    };
 
     // Start test in UI
     if (this.ui) {
@@ -287,17 +371,8 @@ class WorkerPool {
         action: 'passed',
       });
 
-      // Finish test in UI
-      if (this.ui) {
-        this.ui.finishTest(story.id, true);
-      } else if (!this.config.quiet) {
-        const line = `${chalk.green('✓')} ${displayName} ${colorDuration(duration)}`;
-        if (this.printUnderSpinner) {
-          this.printUnderSpinner(line);
-        } else {
-          this.log.info(line);
-        }
-      }
+      // Print result using unified method
+      this.printStoryResult(story, displayName, 'success', duration);
     } else {
       // Check if this is a missing baseline (should be skipped)
       const isMissingBaseline = lastError && String(lastError).includes('Missing baseline');
@@ -327,17 +402,8 @@ class WorkerPool {
           action: 'skipped',
         });
 
-        // Finish test in UI
-        if (this.ui) {
-          this.ui.finishTest(story.id, true);
-        } else if (!this.config.quiet) {
-          const line = `${chalk.yellow('○')} ${displayName} ${colorDuration(duration)} ${chalk.dim('(no snapshot)')}`;
-          if (this.printUnderSpinner) {
-            this.printUnderSpinner(line);
-          } else {
-            this.log.info(line);
-          }
-        }
+        // Print result using unified method
+        this.printStoryResult(story, displayName, 'skipped', duration);
       } else {
         // Failed after all retries
         this.results[story.id] = {
@@ -379,58 +445,49 @@ class WorkerPool {
           errorType: 'screenshot_mismatch',
         });
 
-        // Finish test in UI
-        if (this.ui) {
-          this.ui.finishTest(
-            story.id,
-            false,
-            lastError ? String(lastError) : 'Unknown error',
-            story.url,
-          );
-        } else if (!this.config.quiet) {
-          // Extract diff image path from error message for visual regression failures
-          const errorStr = lastError ? String(lastError) : '';
-          // Match everything after "diff: " until the last ")" (which closes the error message)
-          const diffMatch = errorStr.match(/diff: (.+)\)/);
-          const diffPath = diffMatch ? diffMatch[1] : null;
+        // Extract error details for printing
+        const printErrorStr = lastError ? String(lastError) : '';
+        const printDiffMatch = printErrorStr.match(/diff: (.+)\)/);
+        const printDiffPath = printDiffMatch ? printDiffMatch[1] : undefined;
 
-          // Extract a user-friendly error message
-          let errorReason = 'Unknown error';
-          if (lastError) {
-            const errorStr = String(lastError);
-            if (errorStr.includes('Missing baseline')) {
-              errorReason = 'No baseline snapshot found';
-            } else if (errorStr.includes('odiff')) {
-              errorReason = 'Visual differences detected';
-            } else if (errorStr.includes('timeout')) {
-              errorReason = 'Operation timed out';
-            } else if (errorStr.includes('network')) {
-              errorReason = 'Network error';
-            } else if (errorStr.includes('Screenshot capture failed')) {
-              errorReason = 'Failed to capture screenshot';
-            } else {
-              // Use the first line of the error as a summary
-              errorReason = errorStr.split('\n')[0];
-            }
-          }
-
-          const first = `${chalk.red('✗')} ${displayName} ${colorDuration(duration)}`;
-          if (this.printUnderSpinner) {
-            this.printUnderSpinner(first);
-            this.printUnderSpinner(`  ${chalk.red('Reason:')} ${errorReason}`);
-            this.printUnderSpinner(`  ${chalk.blue(escapePath(story.url))}`);
-            if (diffPath) {
-              this.printUnderSpinner(`  ${chalk.blue(escapePath(diffPath))}`);
-            }
+        // Extract a user-friendly error message
+        let errorReason = 'Unknown error';
+        if (lastError) {
+          const errorStr = String(lastError);
+          if (errorStr.includes('Missing baseline')) {
+            errorReason = 'No baseline snapshot found';
+          } else if (errorStr.includes('odiff')) {
+            errorReason = 'Visual differences detected';
+          } else if (errorStr.includes('timeout')) {
+            errorReason = 'Operation timed out';
+          } else if (errorStr.includes('network')) {
+            errorReason = 'Network error';
+          } else if (errorStr.includes('Screenshot capture failed')) {
+            errorReason = 'Failed to capture screenshot';
           } else {
-            this.log.error(first);
-            this.log.error(`  ${chalk.red('Reason:')} ${errorReason}`);
-            this.log.error(`  ${chalk.blue(escapePath(story.url))}`);
-            if (diffPath) {
-              this.log.error(`  ${chalk.blue(escapePath(diffPath))}`);
-            }
+            // Use the first line of the error as a summary
+            errorReason = errorStr.split('\n')[0];
           }
         }
+
+        // Print result using unified method
+        // Use original URL (localhost) for display instead of transformed URL (host.docker.internal)
+        let displayUrl = story.url;
+        if (this.config.originalUrl) {
+          try {
+            const originalUrlObj = new URL(this.config.originalUrl);
+            const storyUrlObj = new URL(story.url);
+            displayUrl = story.url.replace(storyUrlObj.origin, originalUrlObj.origin);
+          } catch {
+            // Fall back to original URL if parsing fails
+            displayUrl = story.url;
+          }
+        }
+        this.printStoryResult(story, displayName, 'failed', duration, {
+          reason: errorReason,
+          url: displayUrl,
+          diffPath: printDiffPath,
+        });
       }
     }
 
@@ -475,6 +532,10 @@ class WorkerPool {
           '--disable-sync', // Disable sync
           '--hide-crash-restore-bubble', // Hide crash restore
           '--disable-component-update', // Disable component updates
+          '--font-render-hinting=none', // Disable font hinting for consistency
+          '--disable-font-subpixel-positioning', // Disable subpixel positioning
+          '--disable-lcd-text', // Disable LCD text rendering
+          '--force-device-scale-factor=1', // Force consistent device scale
         ],
       });
       this.log.debug(`Story ${story.id}: Browser launched in ${Date.now() - browserStart}ms`);
@@ -664,17 +725,33 @@ class WorkerPool {
         this.log.debug(`Story ${story.id}: DOM is stable`);
       }
 
+      // Additional wait for animations and transitions to complete
+      // Many UI components have CSS animations that start after DOM is ready
+      this.log.debug(`Story ${story.id}: Waiting for animations to settle...`);
+      await page.waitForTimeout(500); // Wait 500ms for animations to complete
+
       // Optimized screenshot capture
       const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
-      const actualDir = path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath));
-      const actual = path.join(actualDir, path.basename(story.snapshotRelPath));
+
+      // In update mode, capture directly to expected location to avoid writing to results
+      const actual = this.config.update
+        ? expected
+        : path.join(
+            path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+            path.basename(story.snapshotRelPath),
+          );
 
       this.log.debug(
         `Story ${story.id}: Screenshot paths - expected: ${expected}, actual: ${actual}`,
       );
 
-      // Pre-create directory to avoid contention
-      fs.mkdirSync(actualDir, { recursive: true });
+      // Pre-create directory to avoid contention (skip in update mode since we capture directly)
+      if (!this.config.update) {
+        const actualDir = path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath));
+        fs.mkdirSync(actualDir, { recursive: true });
+      } else {
+        fs.mkdirSync(path.dirname(expected), { recursive: true });
+      }
 
       // Apply Date fix right before screenshot capture if enabled
       // This is the safest point - page is fully loaded but screenshot not yet taken
@@ -749,27 +826,13 @@ class WorkerPool {
         `Story ${story.id}: Baseline check - expected: ${expected}, missing: ${missingBaseline}, update mode: ${this.config.update}`,
       );
 
-      if (missingBaseline) {
-        if (this.config.update && this.config.missingOnly) {
-          this.log.debug(`Story ${story.id}: Creating missing baseline snapshot`);
-          fs.mkdirSync(path.dirname(expected), { recursive: true });
-          fs.copyFileSync(actual, expected);
-          result = 'Created baseline';
-        } else if (this.config.update) {
-          this.log.debug(`Story ${story.id}: Creating baseline snapshot (update mode)`);
-          fs.mkdirSync(path.dirname(expected), { recursive: true });
-          fs.copyFileSync(actual, expected);
-          result = 'Updated baseline';
-        } else {
-          this.log.debug(`Story ${story.id}: Missing baseline, skipping test`);
-          throw new Error(`Missing baseline: ${expected}`);
-        }
-      } else if (this.config.update) {
-        // When --update is passed and baseline exists, update it without diffing
-        this.log.debug(`Story ${story.id}: Updating existing baseline snapshot`);
-        fs.mkdirSync(path.dirname(expected), { recursive: true });
-        fs.copyFileSync(actual, expected);
-        result = 'Updated baseline';
+      if (this.config.update) {
+        // In update mode, screenshot is already captured directly to expected location
+        result = missingBaseline ? 'Created baseline' : 'Updated baseline';
+        this.log.debug(`Story ${story.id}: ${result}`);
+      } else if (missingBaseline) {
+        this.log.debug(`Story ${story.id}: Missing baseline, skipping test`);
+        throw new Error(`Missing baseline: ${expected}`);
       } else {
         // Perform visual regression test using odiff
         const diffPath = path.join(
@@ -904,7 +967,7 @@ export async function runParallelTests(options: {
   let filteredStories = stories;
   if (!config.update) {
     filteredStories = stories.filter((story) => {
-      const snapshotPath = path.join(config.snapshotPath, `${story.snapshotRelPath}.png`);
+      const snapshotPath = path.join(config.snapshotPath, story.snapshotRelPath);
       const hasSnapshot = fs.existsSync(snapshotPath);
       if (!hasSnapshot) {
         log.debug(`Skipping story ${story.id}: no baseline snapshot exists`);
@@ -975,7 +1038,7 @@ export async function runParallelTests(options: {
         spinner.clear();
       } catch {}
     }
-    log.error('^C Aborted by user. Visual regression run stopped.');
+    log.error('Aborted by user. Visual regression run stopped.');
     process.exit(130);
   };
   process.once('SIGINT', handleSigint);

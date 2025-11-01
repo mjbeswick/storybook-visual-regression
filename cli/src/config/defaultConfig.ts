@@ -34,17 +34,19 @@ export type VisualRegressionConfig = {
     string,
     Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>
   >;
-  perStory?: Record<
-    string,
-    Partial<{
-      threshold: number;
-      viewport: string | { width: number; height: number };
-      snapshotDelay: number;
-      mutationWait: number;
-      mutationTimeout: number;
-      masks: Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>;
-    }>
-  >;
+	perStory?: Record<
+		string,
+		Partial<{
+			threshold: number;
+			viewport: string | { width: number; height: number };
+			snapshotDelay: number;
+			mutationWait: number;
+			mutationTimeout: number;
+			masks: Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>;
+		}>
+	>;
+	showProgress: boolean;
+	summary: boolean;
 };
 
 export const defaultConfig = (): VisualRegressionConfig => {
@@ -76,12 +78,14 @@ export const defaultConfig = (): VisualRegressionConfig => {
     excludeStories: undefined,
     grep: undefined,
     disableAnimations: true,
-    fixDate: false,
-    frozenTime: undefined,
-    timezone: undefined,
-    locale: undefined,
-    masks: undefined,
-    perStory: undefined,
+		fixDate: false,
+		frozenTime: undefined,
+		timezone: undefined,
+		locale: undefined,
+		masks: undefined,
+		perStory: undefined,
+		showProgress: true,
+		summary: true,
   };
 };
 

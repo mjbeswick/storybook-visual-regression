@@ -73,8 +73,14 @@ const parseArgs = (argv: string[]): CliFlags => {
       case '--progress':
         out.showProgress = true;
         break;
+      case '--no-progress':
+        out.showProgress = false;
+        break;
       case '--summary':
         out.summary = true;
+        break;
+      case '--no-summary':
+        out.summary = false;
         break;
       case '--browser':
         out.browser = getVal(i) as any;
@@ -209,7 +215,9 @@ const main = async (): Promise<number> => {
     .option('--missing-only', 'Create only missing baselines')
     .option('--failed-only', 'Rerun only previously failed')
     .option('--progress', 'Show progress during run')
+    .option('--no-progress', 'Disable progress display')
     .option('--summary', 'Show summary at the end')
+    .option('--no-summary', 'Disable summary display')
     .option('--log-level <level>', 'silent|error|warn|info|debug')
     .option('--save-config', 'Write effective config JSON')
     .option('--quiet', 'Suppress per-test output')

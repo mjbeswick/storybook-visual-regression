@@ -2,8 +2,7 @@ FROM node:20 AS cli-builder
 
 WORKDIR /app/cli
 
-# Install SSL certificates for npm downloads
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+# Node.js 20 base image already includes SSL certificates, skip apt operations that are causing GPG issues
 
 # Copy CLI source and package.json
 COPY cli/ ./

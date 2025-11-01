@@ -18,8 +18,18 @@ export const createLogger = (logLevel: LogLevel): Logger => {
   const levels = ['silent', 'error', 'warn', 'info', 'debug'];
   const currentLevel = levels.indexOf(logLevel);
 
+  // Check if message contains ANSI color codes
+  const hasAnsiColors = (message: string): boolean => {
+    return /\x1b\[[0-9;]*m/.test(message);
+  };
+
   const formatMessage = (level: FormatLevel, ...args: unknown[]) => {
     const message = args.join(' ');
+
+    // If message already has colors, don't apply additional coloring
+    if (hasAnsiColors(message)) {
+      return message;
+    }
 
     switch (level) {
       case 'silent':

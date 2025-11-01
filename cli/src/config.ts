@@ -105,7 +105,14 @@ const transformDockerUrl = (url: string): string => {
 
 export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   const base = defaultConfig();
-  const fileConfigRaw = loadJsonFile(flags.config);
+
+  // If no config file specified, use 'config.json' if it exists
+  let configPath = flags.config;
+  if (!configPath && fs.existsSync('config.json')) {
+    configPath = 'config.json';
+  }
+
+  const fileConfigRaw = configPath ? loadJsonFile(configPath) : undefined;
 
   // Handle both old format (with visualRegression wrapper) and new format (direct properties)
   let fileVisual: Partial<VisualRegressionConfig>;
@@ -186,8 +193,11 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     failedOnly: Boolean(flags.failedOnly),
     testTimeout: flags.testTimeout,
     overlayTimeout: flags.overlayTimeout,
-    showProgress: Boolean(flags.showProgress),
-    summary: Boolean(flags.summary),
+    showProgress:
+      flags.showProgress !== undefined
+        ? Boolean(flags.showProgress)
+        : (merged.showProgress ?? true),
+    summary: flags.summary !== undefined ? Boolean(flags.summary) : (merged.summary ?? true),
     fixDate: merged.fixDate ?? false,
     originalUrl,
   };
@@ -195,7 +205,11 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   return runtime;
 };
 
-export const saveEffectiveConfig = (config: RuntimeConfig, flags: CliFlags, filePath: string): void => {
+export const saveEffectiveConfig = (
+  config: RuntimeConfig,
+  flags: CliFlags,
+  filePath: string,
+): void => {
   const visualRegression: Record<string, any> = {};
 
   // Only include properties that were explicitly set via command line flags
@@ -209,8 +223,10 @@ export const saveEffectiveConfig = (config: RuntimeConfig, flags: CliFlags, file
   if (flags.maxDiffPixels !== undefined) visualRegression.maxDiffPixels = config.maxDiffPixels;
   if (flags.fullPage !== undefined) visualRegression.fullPage = config.fullPage;
   if (flags.mutationWait !== undefined) visualRegression.mutationWait = config.mutationWait;
-  if (flags.mutationTimeout !== undefined) visualRegression.mutationTimeout = config.mutationTimeout;
-  if (flags.snapshotRetries !== undefined) visualRegression.snapshotRetries = config.snapshotRetries;
+  if (flags.mutationTimeout !== undefined)
+    visualRegression.mutationTimeout = config.mutationTimeout;
+  if (flags.snapshotRetries !== undefined)
+    visualRegression.snapshotRetries = config.snapshotRetries;
   if (flags.snapshotDelay !== undefined) visualRegression.snapshotDelay = config.snapshotDelay;
   if (flags.include !== undefined) visualRegression.includeStories = config.includeStories;
   if (flags.exclude !== undefined) visualRegression.excludeStories = config.excludeStories;
