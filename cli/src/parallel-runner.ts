@@ -7,7 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { chromium, Browser, Page } from 'playwright';
 import ora from 'ora';
-import { compareWithSharp } from './image-compare.js';
+import { compare as odiffCompare } from 'odiff-bin';
 import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
@@ -835,35 +835,42 @@ class WorkerPool {
         );
 
         try {
-          const threshold = this.config.threshold;
+          // Run odiff comparison using Node.js bindings
           this.log.debug(
-            `Story ${story.id}: Comparing images with Sharp (threshold: ${threshold})`,
+            `Story ${story.id}: Comparing images with odiff (threshold: ${this.config.threshold})`,
           );
           const compareStart = Date.now();
-          const sharpResult = await compareWithSharp(expected, actual, diffPath, { threshold });
+          const odiffResult = await odiffCompare(expected, actual, diffPath, {
+            threshold: this.config.threshold,
+            outputDiffMask: true,
+          });
           this.log.debug(
-            `Story ${story.id}: Sharp comparison completed in ${Date.now() - compareStart}ms, match: ${sharpResult.match} (${sharpResult.reason || ''})`,
+            `Story ${story.id}: odiff comparison completed in ${Date.now() - compareStart}ms, match: ${odiffResult.match}`,
           );
 
-          if (sharpResult.match) {
+          if (odiffResult.match) {
+            // Images are identical within threshold
             result = 'Visual regression passed';
             this.log.debug(`Story ${story.id}: Visual regression test passed`);
-            // If a diff got generated but images matched within threshold, remove it
+
+            // Clean up diff file if it exists (odiff may create it)
             if (fs.existsSync(diffPath)) {
               try {
                 fs.unlinkSync(diffPath);
               } catch {}
             }
           } else {
-            this.log.debug(`Story ${story.id}: Images differ`);
+            // Images differ beyond threshold
+            this.log.debug(`Story ${story.id}: Images differ - reason: ${odiffResult.reason}`);
             this.log.debug(`Story ${story.id}: Diff image saved to: ${diffPath}`);
             throw new Error(`Visual regression failed: images differ (diff: ${diffPath})`);
           }
         } catch (error: any) {
+          // odiff comparison failed
           if (error.message.includes('images differ')) {
-            throw error;
+            throw error; // Re-throw our own error
           }
-          throw new Error(`image comparison failed: ${error.message}`);
+          throw new Error(`odiff comparison failed: ${error.message}`);
         }
       }
 
