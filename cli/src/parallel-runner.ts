@@ -6,12 +6,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { chromium, Browser, Page } from 'playwright';
-import { compare as odiffCompare } from 'odiff-bin';
 import ora from 'ora';
+import { compare as odiffCompare } from 'odiff-bin';
 import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
-import { TerminalUI } from './terminal-ui.js';
 import type { RunCallbacks } from './core/VisualRegressionRunner.js';
 import { createLogger, setGlobalLogger } from './logger.js';
 
@@ -108,7 +107,6 @@ class WorkerPool {
   private completed = 0;
   private total: number;
   private config: TestConfig;
-  private ui?: TerminalUI;
   private onProgress?: (completed: number, total: number, results: any) => void;
   private onComplete?: (results: any) => void;
   private singleLineMode: boolean;
@@ -120,7 +118,6 @@ class WorkerPool {
     maxWorkers: number,
     config: TestConfig,
     stories: DiscoveredStory[],
-    ui?: TerminalUI,
     printUnderSpinner?: (line: string) => void,
     callbacks?: RunCallbacks,
   ) {
@@ -128,7 +125,6 @@ class WorkerPool {
     this.config = config;
     this.total = stories.length;
     this.queue = [...stories];
-    this.ui = ui;
     this.callbacks = callbacks;
     this.singleLineMode = Boolean(config.summary || config.showProgress);
     this.printUnderSpinner = printUnderSpinner;
@@ -143,12 +139,6 @@ class WorkerPool {
     duration: number,
     errorDetails?: { reason: string; url: string; diffPath?: string },
   ): void {
-    // Handle UI mode
-    if (this.ui) {
-      this.ui.finishTest(story.id, result !== 'failed', errorDetails?.reason);
-      return;
-    }
-
     // Skip output if quiet mode
     if (this.config.quiet) {
       return;
@@ -208,7 +198,10 @@ class WorkerPool {
       } else if (reason === 'Failed to capture screenshot') {
         coloredReason = chalk.magenta(reason);
       } else if (reason === 'Visual differences detected') {
-        coloredReason = chalk.blue(reason);
+        // Make the most common error more actionable by inlining the diff path
+        coloredReason = errorDetails.diffPath
+          ? `${chalk.blue('Visual regression failed')}: ${chalk.gray(`diff → ${errorDetails.diffPath}`)}`
+          : chalk.blue(reason);
       } else if (reason === 'No baseline snapshot found') {
         coloredReason = chalk.cyan(reason);
       } else {
@@ -218,7 +211,10 @@ class WorkerPool {
       const detailLines = [`  ${coloredReason}`, `  ${chalk.gray(`URL: ${errorDetails.url}`)}`];
 
       if (errorDetails.diffPath) {
+        // Keep a separate diff line as well for easy parsing/copying
         detailLines.push(`  ${chalk.gray(`Diff: ${errorDetails.diffPath}`)}`);
+      } else {
+        detailLines.push(`  ${chalk.gray('Diff: not generated')}`);
       }
 
       for (const detailLine of detailLines) {
@@ -297,11 +293,6 @@ class WorkerPool {
       return story.title ? `${story.title}/${story.name}` : story.name;
     };
     const displayName = toDisplayName();
-
-    // Start test in UI
-    if (this.ui) {
-      this.ui.startTest(story.id, displayName);
-    }
 
     // Retry logic: attempt up to retries + 1 times (initial attempt + retries)
     const maxAttempts = (this.config.retries || 0) + 1;
@@ -453,13 +444,17 @@ class WorkerPool {
         let errorReason = 'Unknown error';
         if (lastError) {
           const errorStr = String(lastError);
+          const isImagesDiffer = /images differ/i.test(errorStr);
+          const isOdiffFailed = /odiff comparison failed/i.test(errorStr);
           if (errorStr.includes('Missing baseline')) {
             errorReason = 'No baseline snapshot found';
-          } else if (errorStr.includes('odiff')) {
+          } else if (isImagesDiffer) {
             errorReason = 'Visual differences detected';
-          } else if (errorStr.includes('timeout')) {
+          } else if (isOdiffFailed) {
+            errorReason = 'Image comparison failed (odiff)';
+          } else if (/timeout/i.test(errorStr)) {
             errorReason = 'Operation timed out';
-          } else if (errorStr.includes('network')) {
+          } else if (/network/i.test(errorStr)) {
             errorReason = 'Network error';
           } else if (errorStr.includes('Screenshot capture failed')) {
             errorReason = 'Failed to capture screenshot';
@@ -950,12 +945,7 @@ export async function runParallelTests(options: {
     return 1;
   }
 
-  // Prefer single-line spinner when --summary or --progress is passed; otherwise allow TUI
-  // Disable TUI in quiet mode as well
-  const useUI =
-    TerminalUI.isSupported() && !config.quiet && !config.summary && !config.showProgress;
-  const ui = useUI ? new TerminalUI(stories.length, config.showProgress) : null;
-  log.debug(`UI mode: ${useUI ? 'TerminalUI' : ui === null ? 'none' : 'spinner'}`);
+  log.debug(`Output mode: ${config.showProgress || config.summary ? 'spinner' : 'streaming'}`);
 
   // Default to number of CPU cores, with a reasonable cap
   const defaultWorkers = Math.min(os.cpus().length, 8); // Cap at 8 to avoid overwhelming the system
@@ -985,9 +975,7 @@ export async function runParallelTests(options: {
   const mode = config.update ? 'updating snapshots' : 'testing';
   const storyCount = filteredStories.length;
   const initialMessage = `Running ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(String(numWorkers))} concurrent workers (${chalk.cyan(mode)})...`;
-  if (ui) {
-    ui.log(initialMessage);
-  } else if (!config.quiet) {
+  if (!config.quiet) {
     log.info(initialMessage);
   }
 
@@ -1004,19 +992,12 @@ export async function runParallelTests(options: {
     }
   };
 
-  const pool = new WorkerPool(
-    numWorkers,
-    config,
-    filteredStories,
-    ui || undefined,
-    printUnderSpinner,
-    callbacks,
-  );
+  const pool = new WorkerPool(numWorkers, config, filteredStories, printUnderSpinner, callbacks);
 
   const startTime = Date.now();
 
-  // Create ora spinner when --progress or --summary is passed (even in quiet), and not using UI
-  let spinner = !ui && (config.showProgress || config.summary) ? ora() : null;
+  // Create ora spinner when --progress or --summary is passed
+  let spinner = config.showProgress || config.summary ? ora() : null;
   let spinnerText = '';
   if (spinner) {
     // Initialize with a starting line so users see it immediately
@@ -1044,9 +1025,7 @@ export async function runParallelTests(options: {
 
   // Progress callback
   const onProgress = (completed: number, total: number) => {
-    if (ui) {
-      ui.updateProgress(completed, total, Date.now() - startTime);
-    } else if (spinner) {
+    if (spinner) {
       // Update spinner with progress information
       const percent = Math.round((completed / total) * 100);
       const elapsed = Date.now() - startTime;
@@ -1076,8 +1055,6 @@ export async function runParallelTests(options: {
     if (spinner) {
       spinner.stop();
       spinner.clear();
-    } else if (!ui) {
-      process.stdout.write('\r\x1b[K\n'); // Clear line and move to next line
     }
 
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1120,16 +1097,7 @@ export async function runParallelTests(options: {
         testsPerMinute,
       });
 
-      if (ui) {
-        message.split('\n').forEach((line) => ui.log(line));
-        ui.destroy();
-      } else {
-        log.info('\n' + message);
-      }
-    } else {
-      if (ui) {
-        ui.destroy();
-      }
+      log.info('\n' + message);
     }
 
     return success ? 0 : 1;
@@ -1138,12 +1106,7 @@ export async function runParallelTests(options: {
       spinner.stop();
       spinner.clear();
     }
-    if (ui) {
-      ui.error(`Unexpected error: ${error}`);
-      ui.destroy();
-    } else {
-      log.error('Unexpected error:', error);
-    }
+    log.error('Unexpected error:', error);
     return 1;
   }
 }

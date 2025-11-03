@@ -1,27 +1,27 @@
-FROM node:20 AS cli-builder
-
-WORKDIR /app/cli
-
-# Node.js 20 base image already includes SSL certificates, skip apt operations that are causing GPG issues
-
-# Copy CLI source and package.json
-COPY cli/ ./
-
-# Install dependencies for local CLI build (skip playwright browser installation in Docker)
-RUN DOCKER_BUILD=1 npm install
-
-# Build the CLI (prepare script already ran during install)
-RUN npm run build
-
-# Pack the CLI into a tarball for global install in final image
-RUN npm pack
-
-
+# Simple, single-stage image that installs the CLI from GitHub and bakes deps into the image
 FROM mcr.microsoft.com/playwright:v1.56.1-jammy
 
-# Install the locally built CLI tarball globally
-COPY --from=cli-builder /app/cli/*.tgz /tmp/cli.tgz
-RUN npm install -g /tmp/cli.tgz && rm -f /tmp/cli.tgz
+# Install git for cloning the repository
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
-# Set entrypoint
+# Build args to allow pinning a specific ref (tag/branch/commit)
+ARG CLI_REPO=https://github.com/mjbeswick/storybook-visual-regression.git
+ARG CLI_REF=main
+
+# Clone only the requested ref (shallow) and install the CLI
+WORKDIR /opt/svr/src
+RUN git clone --depth 1 --branch ${CLI_REF} ${CLI_REPO} .
+
+WORKDIR /opt/svr/src/cli
+
+# Install deps (skip playwright browser download in Docker), build, and install globally
+ENV DOCKER_BUILD=1
+RUN npm ci || npm install
+RUN npm run build
+RUN npm install -g .
+
+# Set a clean working directory for mounting user project files without masking installed deps
+WORKDIR /work
+
+# Default entrypoint uses globally installed CLI (with its own node_modules inside the image)
 ENTRYPOINT ["storybook-visual-regression"]

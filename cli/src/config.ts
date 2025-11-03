@@ -106,10 +106,17 @@ const transformDockerUrl = (url: string): string => {
 export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   const base = defaultConfig();
 
-  // If no config file specified, use 'config.json' if it exists
+  // If no config file specified, try common default locations
   let configPath = flags.config;
-  if (!configPath && fs.existsSync('config.json')) {
-    configPath = 'config.json';
+  if (!configPath) {
+    if (fs.existsSync('config.json')) {
+      configPath = 'config.json';
+    } else {
+      const vrConfig = path.join('visual-regression', 'config.json');
+      if (fs.existsSync(vrConfig)) {
+        configPath = vrConfig;
+      }
+    }
   }
 
   const fileConfigRaw = configPath ? loadJsonFile(configPath) : undefined;
