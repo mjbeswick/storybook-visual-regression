@@ -497,40 +497,46 @@ class WorkerPool {
       const browserStart = Date.now();
       this.log.debug(`Story ${story.id}: Launching browser...`);
       // Launch browser with aggressive memory optimization for parallel execution
+      // Add proxy-related flags for CI environments behind proxies
+      const browserArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--memory-pressure-off', // Prevent memory pressure handling
+        '--max_old_space_size=4096', // Increase Node.js heap size
+        '--disable-features=VizDisplayCompositor', // Reduce GPU memory usage
+        '--disable-web-security', // Reduce security checks
+        '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer',
+        '--disable-ipc-flooding-protection', // Reduce IPC overhead
+        '--disable-hang-monitor', // Disable hang monitoring
+        '--disable-prompt-on-repost', // Disable repost prompts
+        '--force-color-profile=srgb', // Force color profile
+        '--disable-component-extensions-with-background-pages', // Reduce extensions
+        '--no-default-browser-check', // Skip default browser check
+        '--no-first-run', // Skip first run checks
+        '--disable-default-apps', // Disable default apps
+        '--disable-sync', // Disable sync
+        '--hide-crash-restore-bubble', // Hide crash restore
+        '--disable-component-update', // Disable component updates
+        '--font-render-hinting=none', // Disable font hinting for consistency
+        '--disable-font-subpixel-positioning', // Disable subpixel positioning
+        '--disable-lcd-text', // Disable LCD text rendering
+        '--force-device-scale-factor=1', // Force consistent device scale
+        '--ignore-certificate-errors', // Ignore certificate errors (for proxy environments)
+        '--ignore-certificate-errors-spki-list', // Ignore certificate errors
+        '--ignore-ssl-errors', // Ignore SSL errors
+      ];
+
       browser = await chromium.launch({
         headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--disable-gpu',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
-          '--memory-pressure-off', // Prevent memory pressure handling
-          '--max_old_space_size=4096', // Increase Node.js heap size
-          '--disable-features=VizDisplayCompositor', // Reduce GPU memory usage
-          '--disable-web-security', // Reduce security checks
-          '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer',
-          '--disable-ipc-flooding-protection', // Reduce IPC overhead
-          '--disable-hang-monitor', // Disable hang monitoring
-          '--disable-prompt-on-repost', // Disable repost prompts
-          '--force-color-profile=srgb', // Force color profile
-          '--disable-component-extensions-with-background-pages', // Reduce extensions
-          '--no-default-browser-check', // Skip default browser check
-          '--no-first-run', // Skip first run checks
-          '--disable-default-apps', // Disable default apps
-          '--disable-sync', // Disable sync
-          '--hide-crash-restore-bubble', // Hide crash restore
-          '--disable-component-update', // Disable component updates
-          '--font-render-hinting=none', // Disable font hinting for consistency
-          '--disable-font-subpixel-positioning', // Disable subpixel positioning
-          '--disable-lcd-text', // Disable LCD text rendering
-          '--force-device-scale-factor=1', // Force consistent device scale
-        ],
+        args: browserArgs,
       });
       this.log.debug(`Story ${story.id}: Browser launched in ${Date.now() - browserStart}ms`);
 
@@ -538,13 +544,23 @@ class WorkerPool {
       this.log.debug(
         `Story ${story.id}: Creating browser context${viewport ? ` with viewport: ${JSON.stringify(viewport)}` : ''}...`,
       );
-      const context = await browser.newContext({
+      // Configure context with proxy settings if available (for CI environments)
+      const contextOptions: Parameters<typeof browser.newContext>[0] = {
         viewport: typeof viewport === 'object' ? viewport : undefined,
-        // Reuse context for performance
-      });
+        // Ignore HTTPS errors in CI - proxy might interfere
+        ignoreHTTPSErrors: true,
+      };
+
+      const context = await browser.newContext(contextOptions);
 
       page = await context.newPage();
       this.log.debug(`Story ${story.id}: New page created`);
+
+      // Set page-level timeouts to prevent hanging in CI environments
+      // Use testTimeout config or default to 60 seconds for slower environments
+      const pageTimeout = this.config.testTimeout ?? 60000;
+      page.setDefaultNavigationTimeout(pageTimeout);
+      page.setDefaultTimeout(pageTimeout);
 
       // Date mocking will be applied after navigation to avoid interfering with page initialization
 
@@ -595,9 +611,35 @@ class WorkerPool {
       }
 
       // Navigate and wait for story to load
+      // Page-level timeouts are already set above
+      // Use 'commit' first - it fires immediately when response headers are received
+      // This avoids hanging if domcontentloaded is blocked by something in CI
       this.log.debug(`Story ${story.id}: Navigating to ${story.url}...`);
       const navStart = Date.now();
-      await page.goto(story.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      // Start navigation with 'commit' - fastest, doesn't wait for body
+      await page.goto(story.url, { waitUntil: 'commit', timeout: 5000 });
+      this.log.debug(`Story ${story.id}: Navigation committed in ${Date.now() - navStart}ms`);
+
+      // Now wait for the page to actually be ready, but with a timeout to avoid hanging
+      // Try domcontentloaded first, but fall back to just checking readyState if it hangs
+      try {
+        await page.waitForLoadState('domcontentloaded', { timeout: 5000 });
+        this.log.debug(`Story ${story.id}: DOMContentLoaded reached in ${Date.now() - navStart}ms`);
+      } catch {
+        // domcontentloaded might be blocked, check readyState directly instead
+        this.log.debug(
+          `Story ${story.id}: Waiting for DOMContentLoaded timed out, checking readyState directly...`,
+        );
+        await page.waitForFunction(
+          () => document.readyState === 'complete' || document.readyState === 'interactive',
+          { timeout: 5000 },
+        );
+        this.log.debug(
+          `Story ${story.id}: Document readyState confirmed in ${Date.now() - navStart}ms`,
+        );
+      }
+
       this.log.debug(`Story ${story.id}: Navigation completed in ${Date.now() - navStart}ms`);
 
       // Wait for Storybook root to be attached
@@ -959,7 +1001,7 @@ export async function runParallelTests(options: {
     return 1;
   }
 
-  log.debug(`Output mode: ${config.showProgress || config.summary ? 'spinner' : 'streaming'}`);
+  log.debug(`Output mode: ${config.showProgress ? 'spinner' : 'streaming'}`);
 
   // Default to number of CPU cores, with a reasonable cap
   const defaultWorkers = Math.min(os.cpus().length, 8); // Cap at 8 to avoid overwhelming the system
@@ -1010,8 +1052,8 @@ export async function runParallelTests(options: {
 
   const startTime = Date.now();
 
-  // Create ora spinner when --progress or --summary is passed
-  let spinner = config.showProgress || config.summary ? ora() : null;
+  // Create ora spinner when --progress is passed (not when only --summary is passed)
+  let spinner = config.showProgress ? ora() : null;
   let spinnerText = '';
   if (spinner) {
     // Initialize with a starting line so users see it immediately
