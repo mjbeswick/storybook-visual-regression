@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.56.1-jammy
+FROM --platform=linux/amd64 mcr.microsoft.com/playwright:v1.56.1-jammy
 
 WORKDIR /opt/svr/src/cli
 COPY cli/ ./
