@@ -867,10 +867,29 @@ class WorkerPool {
           }
         } catch (error: any) {
           // odiff comparison failed
-          if (error.message.includes('images differ')) {
+          if (error?.message && error.message.includes('images differ')) {
             throw error; // Re-throw our own error
           }
-          throw new Error(`odiff comparison failed: ${error.message}`);
+
+          // Emit full diagnostic details to help identify the exact failure cause
+          const diagLines: string[] = [];
+          const errMsg = error?.message || String(error);
+          diagLines.push(`odiff error: ${errMsg}`);
+          if (typeof error?.code !== 'undefined') diagLines.push(`code: ${error.code}`);
+          if (typeof error?.exitCode !== 'undefined') diagLines.push(`exitCode: ${error.exitCode}`);
+          if (error?.stderr) diagLines.push(`stderr: ${String(error.stderr).trim()}`);
+          if (error?.stdout) diagLines.push(`stdout: ${String(error.stdout).trim()}`);
+          if (error?.stack) diagLines.push(`stack: ${String(error.stack).trim()}`);
+          if (error?.cause) {
+            const causeMsg =
+              typeof error.cause === 'object'
+                ? error.cause?.message || String(error.cause)
+                : String(error.cause);
+            diagLines.push(`cause: ${causeMsg}`);
+          }
+          this.log.error(`Story ${story.id}: odiff failed\n  ${diagLines.join('\n  ')}`);
+
+          throw new Error(`odiff comparison failed: ${errMsg}`);
         }
       }
 

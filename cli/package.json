@@ -1,6 +1,6 @@
 {
   "name": "@storybook-visual-regression/cli",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "A comprehensive visual regression testing tool for any Storybook project",
   "main": "dist/cli/index.js",
   "type": "module",
@@ -55,7 +55,7 @@
     "commander": "^12.1.0",
     "execa": "^9.0.0",
     "log-update": "^7.0.1",
-    "odiff-bin": "^2.6.1",
+    "odiff-bin": "^4.1.1",
     "ora": "^8.2.0",
     "picomatch": "^4.0.3",
     "playwright": "^1.40.0"
