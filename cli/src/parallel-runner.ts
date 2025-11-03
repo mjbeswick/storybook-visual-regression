@@ -8,6 +8,7 @@ import os from 'node:os';
 import { chromium, Browser, Page } from 'playwright';
 import ora from 'ora';
 import { compare as odiffCompare } from 'odiff-bin';
+import { compareWithSharp } from './image-compare.js';
 import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
@@ -835,47 +836,67 @@ class WorkerPool {
         );
 
         try {
-          // Run odiff comparison using Node.js bindings
-          this.log.debug(
-            `Story ${story.id}: Comparing images with threshold: ${this.config.threshold}`,
-          );
-          const compareStart = Date.now();
-          const odiffResult = await odiffCompare(expected, actual, diffPath, {
-            threshold: this.config.threshold,
-            outputDiffMask: true,
-          });
-          this.log.debug(
-            `Story ${story.id}: Image comparison completed in ${Date.now() - compareStart}ms, match: ${odiffResult.match}`,
-          );
+          const forceSharp = process.env.SVR_FORCE_SHARP === '1';
+          const threshold = this.config.threshold;
 
-          if (odiffResult.match) {
-            // Images are identical within threshold
+          const runSharp = async () => {
+            this.log.debug(
+              `Story ${story.id}: Comparing images with Sharp (threshold: ${threshold})`,
+            );
+            const compareStart = Date.now();
+            const sharpResult = await compareWithSharp(expected, actual, diffPath, { threshold });
+            this.log.debug(
+              `Story ${story.id}: Sharp comparison completed in ${Date.now() - compareStart}ms, match: ${sharpResult.match} (${sharpResult.reason || ''})`,
+            );
+            return sharpResult.match;
+          };
+
+          let passed = false;
+          if (!forceSharp) {
+            try {
+              // Prefer odiff when available
+              this.log.debug(
+                `Story ${story.id}: Comparing images with odiff (threshold: ${threshold})`,
+              );
+              const compareStart = Date.now();
+              const odiffResult = await odiffCompare(expected, actual, diffPath, {
+                threshold,
+                outputDiffMask: true,
+              });
+              this.log.debug(
+                `Story ${story.id}: odiff comparison completed in ${Date.now() - compareStart}ms, match: ${odiffResult.match}`,
+              );
+              passed = odiffResult.match;
+            } catch (e: any) {
+              this.log.debug(
+                `Story ${story.id}: odiff failed (${e?.message || e}), falling back to Sharp`,
+              );
+              passed = await runSharp();
+            }
+          } else {
+            passed = await runSharp();
+          }
+
+          if (passed) {
             result = 'Visual regression passed';
             this.log.debug(`Story ${story.id}: Visual regression test passed`);
-
-            // Clean up diff file if it exists (odiff creates it even for identical images)
+            // If a diff got generated but images matched within threshold, remove it
             if (fs.existsSync(diffPath)) {
               try {
                 fs.unlinkSync(diffPath);
-                this.log.debug(`Story ${story.id}: Cleaned up diff file`);
-              } catch (e) {
-                // Ignore cleanup errors
-              }
+              } catch {}
             }
           } else {
-            // Images differ beyond threshold
-            this.log.debug(`Story ${story.id}: Images differ - reason: ${odiffResult.reason}`);
+            this.log.debug(`Story ${story.id}: Images differ`);
             this.log.debug(`Story ${story.id}: Diff image saved to: ${diffPath}`);
-
             throw new Error(`Visual regression failed: images differ (diff: ${diffPath})`);
           }
         } catch (error: any) {
-          // odiff comparison failed
+          // Standardize error message
           if (error.message.includes('images differ')) {
-            throw error; // Re-throw our own error
-          } else {
-            throw new Error(`odiff comparison failed: ${error.message}`);
+            throw error;
           }
+          throw new Error(`image comparison failed: ${error.message}`);
         }
       }
 
