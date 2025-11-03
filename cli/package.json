@@ -55,7 +55,6 @@
     "commander": "^12.1.0",
     "execa": "^9.0.0",
     "log-update": "^7.0.1",
-    "odiff-bin": "^2.6.1",
     "ora": "^8.2.0",
     "picomatch": "^4.0.3",
     "playwright": "^1.40.0",

@@ -7,7 +7,6 @@ import path from 'node:path';
 import os from 'node:os';
 import { chromium, Browser, Page } from 'playwright';
 import ora from 'ora';
-import { compare as odiffCompare } from 'odiff-bin';
 import { compareWithSharp } from './image-compare.js';
 import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
@@ -836,48 +835,17 @@ class WorkerPool {
         );
 
         try {
-          const forceSharp = process.env.SVR_FORCE_SHARP === '1';
           const threshold = this.config.threshold;
+          this.log.debug(
+            `Story ${story.id}: Comparing images with Sharp (threshold: ${threshold})`,
+          );
+          const compareStart = Date.now();
+          const sharpResult = await compareWithSharp(expected, actual, diffPath, { threshold });
+          this.log.debug(
+            `Story ${story.id}: Sharp comparison completed in ${Date.now() - compareStart}ms, match: ${sharpResult.match} (${sharpResult.reason || ''})`,
+          );
 
-          const runSharp = async () => {
-            this.log.debug(
-              `Story ${story.id}: Comparing images with Sharp (threshold: ${threshold})`,
-            );
-            const compareStart = Date.now();
-            const sharpResult = await compareWithSharp(expected, actual, diffPath, { threshold });
-            this.log.debug(
-              `Story ${story.id}: Sharp comparison completed in ${Date.now() - compareStart}ms, match: ${sharpResult.match} (${sharpResult.reason || ''})`,
-            );
-            return sharpResult.match;
-          };
-
-          let passed = false;
-          if (!forceSharp) {
-            try {
-              // Prefer odiff when available
-              this.log.debug(
-                `Story ${story.id}: Comparing images with odiff (threshold: ${threshold})`,
-              );
-              const compareStart = Date.now();
-              const odiffResult = await odiffCompare(expected, actual, diffPath, {
-                threshold,
-                outputDiffMask: true,
-              });
-              this.log.debug(
-                `Story ${story.id}: odiff comparison completed in ${Date.now() - compareStart}ms, match: ${odiffResult.match}`,
-              );
-              passed = odiffResult.match;
-            } catch (e: any) {
-              this.log.debug(
-                `Story ${story.id}: odiff failed (${e?.message || e}), falling back to Sharp`,
-              );
-              passed = await runSharp();
-            }
-          } else {
-            passed = await runSharp();
-          }
-
-          if (passed) {
+          if (sharpResult.match) {
             result = 'Visual regression passed';
             this.log.debug(`Story ${story.id}: Visual regression test passed`);
             // If a diff got generated but images matched within threshold, remove it
@@ -892,7 +860,6 @@ class WorkerPool {
             throw new Error(`Visual regression failed: images differ (diff: ${diffPath})`);
           }
         } catch (error: any) {
-          // Standardize error message
           if (error.message.includes('images differ')) {
             throw error;
           }
