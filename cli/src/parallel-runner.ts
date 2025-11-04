@@ -348,6 +348,7 @@ class WorkerPool {
     const maxAttempts = (this.config.retries || 0) + 1;
     let lastError: Error | null = null;
     let result: string | null = null;
+    let page: Page | undefined; // Store page reference for DOM dumping on timeout
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -365,13 +366,26 @@ class WorkerPool {
         }
 
         const attemptStart = Date.now();
-        result = await this.executeSingleTestAttempt(story);
+        const testResult = await this.executeSingleTestAttempt(story);
+        result = testResult.result;
+        page = testResult.page; // Store page reference for potential DOM dump
         const attemptDuration = Date.now() - attemptStart;
         this.log.debug(`Story ${story.id}: Attempt ${attempt} succeeded in ${attemptDuration}ms`);
         lastError = null;
         break; // Success, exit retry loop
       } catch (error) {
         lastError = error as Error;
+        
+        // Dump DOM if timeout occurred (on any attempt, not just last)
+        const isTimeout = lastError && /timeout|Timed out|Operation timed out/i.test(String(lastError));
+        if (isTimeout && page) {
+          try {
+            await this.dumpPageStateOnTimeout(story, page);
+          } catch (dumpError) {
+            this.log.debug(`Story ${story.id}: Failed to dump DOM on timeout:`, dumpError);
+          }
+        }
+        
         if (attempt < maxAttempts) {
           // Will retry, log if debug mode
           this.log.debug(
@@ -548,7 +562,64 @@ class WorkerPool {
     this.onProgress?.(this.completed, this.total, this.results);
   }
 
-  private async executeSingleTestAttempt(story: DiscoveredStory): Promise<string> {
+  private async dumpPageStateOnTimeout(story: DiscoveredStory, page: Page): Promise<void> {
+    try {
+      const dumpDir = path.join(this.config.resultsPath, 'timeout-dumps');
+      fs.mkdirSync(dumpDir, { recursive: true });
+      
+      const dumpPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.html`);
+      const infoPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.json`);
+      
+      // Get page HTML
+      const html = await page.content();
+      
+      // Get page state information
+      const pageInfo = await page.evaluate(() => {
+        const root = document.getElementById('storybook-root');
+        return {
+          url: window.location.href,
+          readyState: document.readyState,
+          title: document.title,
+          storybookRoot: {
+            exists: !!root,
+            childrenCount: root?.children.length ?? 0,
+            textContentLength: root?.textContent?.length ?? 0,
+            innerHTMLLength: root?.innerHTML.length ?? 0,
+            hasCanvas: !!root?.querySelector('canvas'),
+          },
+          consoleErrors: (window as any).__consoleErrors || [],
+          networkErrors: (window as any).__networkErrors || [],
+        };
+      });
+      
+      // Write HTML dump
+      fs.writeFileSync(dumpPath, html, 'utf8');
+      
+      // Write info dump
+      fs.writeFileSync(infoPath, JSON.stringify(pageInfo, null, 2), 'utf8');
+      
+      // Try to get console messages
+      const consoleMessages = await page.evaluate(() => {
+        return (window as any).__consoleMessages || [];
+      }).catch(() => []);
+      
+      if (consoleMessages.length > 0) {
+        const consolePath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.console.txt`);
+        fs.writeFileSync(consolePath, consoleMessages.map((m: any) => `${m.type}: ${m.text}`).join('\n'), 'utf8');
+      }
+      
+      this.log.warn(
+        `Story ${story.id}: Timeout detected. DOM dump saved to: ${dumpPath}`,
+      );
+      this.log.warn(
+        `Story ${story.id}: Page state info saved to: ${infoPath}`,
+      );
+    } catch (error) {
+      this.log.debug(`Story ${story.id}: Failed to dump page state:`, error);
+    }
+  }
+
+  private async executeSingleTestAttempt(story: DiscoveredStory): Promise<{ result: string; page?: Page }> {
     let browser: Browser | undefined;
     let page: Page | undefined;
 
@@ -810,7 +881,10 @@ class WorkerPool {
         });
         this.log.debug(`Story ${story.id}: Content check failed. Root state:`, contentInfo);
         // If root exists with content, continue anyway - don't fail the test
-        if (contentInfo.exists && (contentInfo.childrenCount > 0 || contentInfo.innerHTMLLength > 0)) {
+        if (
+          contentInfo.exists &&
+          ((contentInfo.childrenCount ?? 0) > 0 || (contentInfo.innerHTMLLength ?? 0) > 0)
+        ) {
           this.log.warn(
             `Story ${story.id}: Content check timed out but root has content. Continuing anyway...`,
           );
@@ -1053,30 +1127,14 @@ class WorkerPool {
         }
       }
 
-      return result;
+      return { result, page };
     } finally {
       // Aggressive cleanup to prevent memory leaks
-      if (page) {
+      // Note: We don't close page/browser here anymore - let the caller handle cleanup
+      // so DOM dumps can access the page on timeout
+      if (browser && !page) {
+        // Only close browser if page was already closed
         try {
-          // Close all contexts and pages
-          const context = page.context();
-          await page.close();
-
-          // Close context if it exists
-          try {
-            await context.close();
-          } catch (e) {
-            // Context might already be closed
-          }
-        } catch (e) {
-          // Ignore cleanup errors but log for debugging
-          this.log.debug(`Warning: Failed to close page for ${story.id}:`, e);
-        }
-      }
-
-      if (browser) {
-        try {
-          // Ensure browser is fully closed
           if (browser.isConnected()) {
             await browser.close();
           }
