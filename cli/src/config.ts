@@ -179,8 +179,14 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   };
 
   const envLog = (process.env.SVR_LOG_LEVEL as RuntimeConfig['logLevel']) || undefined;
+  // Resolve logLevel: flags override, then env var, then config file, then default
   const logLevel: RuntimeConfig['logLevel'] =
-    flags.logLevel || envLog || (flags.debug ? 'debug' : 'info');
+    flags.logLevel ||
+    envLog ||
+    (fileConfigRaw && typeof fileConfigRaw.logLevel === 'string'
+      ? (fileConfigRaw.logLevel as RuntimeConfig['logLevel'])
+      : undefined) ||
+    (flags.debug ? 'debug' : 'info');
 
   // Resolve testTimeout: flags override, then config file, then undefined
   const resolvedTestTimeout =
@@ -195,6 +201,12 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     debugLog.debug(`Config file loaded from: ${configPath}`);
     debugLog.debug(
       `testTimeout resolution: flags=${flags.testTimeout ?? 'not set'}, file=${fileConfigRaw?.testTimeout ?? 'not set'}, resolved=${resolvedTestTimeout ?? 'not set'}`,
+    );
+    debugLog.debug(
+      `logLevel resolution: flags=${flags.logLevel ?? 'not set'}, env=${envLog ?? 'not set'}, file=${fileConfigRaw?.logLevel ?? 'not set'}, resolved=${logLevel}`,
+    );
+    debugLog.debug(
+      `maxFailures resolution: flags=${flags.maxFailures ?? 'not set'}, file=${fileVisual.maxFailures ?? 'not set'}, resolved=${merged.maxFailures ?? 'not set'}`,
     );
   }
 
