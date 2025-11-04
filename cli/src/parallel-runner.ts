@@ -588,6 +588,45 @@ class WorkerPool {
 
       const context = await browser.newContext(contextOptions);
 
+      // Fix date using context addInitScript - this runs before any page JavaScript executes
+      // This ensures React components see the fixed date from the start
+      if (this.config.fixDate) {
+        const fixedDate = parseFixDate(this.config.fixDate);
+        const fixedTimestamp = fixedDate.getTime();
+        await context.addInitScript((timestamp: number) => {
+          const fixedTime = timestamp;
+          const OriginalDate = window.Date;
+
+          // Override Date.now() immediately
+          OriginalDate.now = function () {
+            return fixedTime;
+          };
+
+          // Replace Date constructor
+          function MockDate(this: any, ...args: any[]) {
+            if (this instanceof MockDate) {
+              if (args.length === 0) {
+                return new OriginalDate(fixedTime);
+              }
+              return new (OriginalDate as any)(...args);
+            }
+            return new OriginalDate(fixedTime).toString();
+          }
+
+          Object.setPrototypeOf(MockDate, OriginalDate);
+          MockDate.prototype = OriginalDate.prototype;
+          MockDate.now = () => fixedTime;
+          MockDate.parse = OriginalDate.parse;
+          MockDate.UTC = OriginalDate.UTC;
+
+          (window as any).Date = MockDate;
+          (globalThis as any).Date = MockDate;
+        }, fixedTimestamp);
+        this.log.debug(
+          `Story ${story.id}: Date fix init script added to context (${fixedDate.toISOString()})`,
+        );
+      }
+
       page = await context.newPage();
       this.log.debug(`Story ${story.id}: New page created`);
 
@@ -596,8 +635,6 @@ class WorkerPool {
       const pageTimeout = this.config.testTimeout ?? 60000;
       page.setDefaultNavigationTimeout(pageTimeout);
       page.setDefaultTimeout(pageTimeout);
-
-      // Date mocking will be applied after navigation to avoid interfering with page initialization
 
       // Disable animations if configured
       if (this.config.disableAnimations) {
@@ -649,6 +686,7 @@ class WorkerPool {
       // Page-level timeouts are already set above
       // Use 'commit' first - it fires immediately when response headers are received
       // This avoids hanging if domcontentloaded is blocked by something in CI
+      // Note: Date fix is already applied via context.addInitScript above
       this.log.debug(`Story ${story.id}: Navigating to ${story.url}...`);
       const navStart = Date.now();
 
@@ -682,8 +720,25 @@ class WorkerPool {
       await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 10000 });
       this.log.debug(`Story ${story.id}: Storybook root found`);
 
-      // Date mocking temporarily disabled - causing application hangs
-      // TODO: Implement safer Date mocking approach if needed
+      // Verify Date mock is working (it was injected via evaluateOnNewDocument before navigation)
+      if (this.config.fixDate && !page.isClosed()) {
+        try {
+          const fixedDate = parseFixDate(this.config.fixDate);
+          const verification = await page.evaluate((expectedTime: number) => {
+            return {
+              newDate: new Date().toISOString(),
+              dateNow: Date.now(),
+              expected: expectedTime,
+              matches: Date.now() === expectedTime,
+            };
+          }, fixedDate.getTime());
+          this.log.debug(
+            `Story ${story.id}: Date mock verification - new Date(): ${verification.newDate}, Date.now(): ${verification.dateNow}, matches: ${verification.matches}`,
+          );
+        } catch (e) {
+          this.log.debug(`Story ${story.id}: Date mock verification failed:`, e);
+        }
+      }
 
       // Wait for story content to actually load - Storybook specific waiting
       await page.waitForFunction(
@@ -749,11 +804,12 @@ class WorkerPool {
       const isStable = await page.evaluate(
         ({ quietPeriodMs, maxWaitMs }) => {
           return new Promise<boolean>((resolve) => {
-            const start = Date.now();
-            let lastMutation = Date.now();
+            // Use performance.now() for timing to avoid issues with mocked Date.now()
+            const start = performance.now();
+            let lastMutation = performance.now();
 
             const obs = new MutationObserver(() => {
-              lastMutation = Date.now();
+              lastMutation = performance.now();
             });
 
             obs.observe(document.body, {
@@ -764,7 +820,7 @@ class WorkerPool {
             });
 
             const checkStability = () => {
-              const now = Date.now();
+              const now = performance.now();
               const timeSinceLastMutation = now - lastMutation;
               const totalTime = now - start;
 
@@ -824,25 +880,7 @@ class WorkerPool {
         fs.mkdirSync(path.dirname(expected), { recursive: true });
       }
 
-      // Apply Date fix right before screenshot capture if enabled
-      // This is the safest point - page is fully loaded but screenshot not yet taken
-      if (this.config.fixDate && !page.isClosed()) {
-        try {
-          const fixedDate = parseFixDate(this.config.fixDate);
-
-          // Use Playwright's built-in clock API for reliable time mocking
-          await page.clock.setFixedTime(fixedDate);
-
-          this.log.debug(`Story ${story.id}: Clock time set to ${fixedDate.toISOString()}`);
-        } catch (e) {
-          this.log.warn(`Story ${story.id}: Failed to set clock time:`, e);
-          // Don't throw - continue with screenshot even if clock setting fails
-        }
-      } else {
-        this.log.debug(
-          `Story ${story.id}: Date fix not applied - fixDate: ${JSON.stringify(this.config.fixDate)}, page closed: ${page.isClosed()}`,
-        );
-      }
+      // Date is already fixed via context.addInitScript, no need for clock API
 
       // Capture screenshot with settings optimized for visual regression
       this.log.debug(
