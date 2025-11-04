@@ -148,6 +148,7 @@ class WorkerPool {
   private printUnderSpinner?: (line: string) => void;
   private callbacks?: RunCallbacks;
   private log: ReturnType<typeof createLogger>;
+  private maxFailuresReached = false;
 
   constructor(
     maxWorkers: number,
@@ -281,6 +282,15 @@ class WorkerPool {
 
       // Check for completion periodically
       const checkComplete = () => {
+        // Check if maxFailures is reached and no workers are active
+        if (this.maxFailuresReached && this.activeWorkers === 0) {
+          const failed = Object.values(this.results).filter((r) => !r.success).length;
+          const success = failed === 0;
+          this.onComplete?.(this.results);
+          resolve({ success, failed });
+          return;
+        }
+
         if (this.completed >= this.total) {
           const failed = Object.values(this.results).filter((r) => !r.success).length;
           const success = failed === 0;
@@ -296,7 +306,12 @@ class WorkerPool {
 
   private spawnWorker() {
     // Continuously spawn workers until we reach capacity or run out of work
-    while (this.queue.length > 0 && this.activeWorkers < this.maxWorkers) {
+    // Stop spawning if maxFailures is reached
+    while (
+      this.queue.length > 0 &&
+      this.activeWorkers < this.maxWorkers &&
+      !this.maxFailuresReached
+    ) {
       this.activeWorkers++;
       const story = this.queue.shift()!;
 
@@ -437,6 +452,15 @@ class WorkerPool {
           duration,
           action: 'failed',
         };
+
+        // Check if maxFailures is reached
+        const failedCount = Object.values(this.results).filter((r) => r.action === 'failed').length;
+        if (this.config.maxFailures && failedCount >= this.config.maxFailures) {
+          this.maxFailuresReached = true;
+          this.log.warn(
+            `Max failures (${this.config.maxFailures}) reached. Stopping test execution.`,
+          );
+        }
 
         // Extract diff image path from error message for visual regression failures
         const errorStr = lastError ? String(lastError) : '';
@@ -633,6 +657,9 @@ class WorkerPool {
       // Set page-level timeouts to prevent hanging in CI environments
       // Use testTimeout config or default to 60 seconds for slower environments
       const pageTimeout = this.config.testTimeout ?? 60000;
+      this.log.debug(
+        `Story ${story.id}: Setting page timeouts to ${pageTimeout}ms (config.testTimeout: ${this.config.testTimeout ?? 'not set'})`,
+      );
       page.setDefaultNavigationTimeout(pageTimeout);
       page.setDefaultTimeout(pageTimeout);
 
@@ -918,14 +945,26 @@ class WorkerPool {
 
         try {
           // Run odiff comparison using Node.js bindings
-          this.log.debug(
-            `Story ${story.id}: Comparing images with odiff (threshold: ${this.config.threshold})`,
-          );
+          // Wrap in a timeout to prevent hanging in CI environments
           const compareStart = Date.now();
-          const odiffResult = await odiffCompare(expected, actual, diffPath, {
-            threshold: this.config.threshold,
-            outputDiffMask: true,
-          });
+          const odiffTimeout = 30000; // 30 second timeout for odiff comparison
+          this.log.debug(
+            `Story ${story.id}: Comparing images with odiff (threshold: ${this.config.threshold}, timeout: ${odiffTimeout}ms)`,
+          );
+
+          const odiffResult = await Promise.race([
+            odiffCompare(expected, actual, diffPath, {
+              threshold: this.config.threshold,
+              outputDiffMask: true,
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`odiff comparison timed out after ${odiffTimeout}ms`)),
+                odiffTimeout,
+              ),
+            ),
+          ]);
+
           this.log.debug(
             `Story ${story.id}: odiff comparison completed in ${Date.now() - compareStart}ms, match: ${odiffResult.match}`,
           );
@@ -1042,6 +1081,9 @@ export async function runParallelTests(options: {
   }
 
   log.debug(`Output mode: ${config.showProgress ? 'spinner' : 'streaming'}`);
+  log.debug(
+    `Timeouts: testTimeout=${config.testTimeout ?? 'default (60000ms)'}, overlayTimeout=${config.overlayTimeout ?? 'default'}`,
+  );
 
   // Default to number of CPU cores, with a reasonable cap
   const defaultWorkers = Math.min(os.cpus().length, 8); // Cap at 8 to avoid overwhelming the system

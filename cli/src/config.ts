@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { defaultConfig, type VisualRegressionConfig } from './config/defaultConfig.js';
+import { createLogger } from './logger.js';
 
 export type CliFlags = {
   config?: string;
@@ -181,6 +182,22 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   const logLevel: RuntimeConfig['logLevel'] =
     flags.logLevel || envLog || (flags.debug ? 'debug' : 'info');
 
+  // Resolve testTimeout: flags override, then config file, then undefined
+  const resolvedTestTimeout =
+    flags.testTimeout ??
+    (fileConfigRaw && typeof fileConfigRaw.testTimeout === 'number'
+      ? fileConfigRaw.testTimeout
+      : undefined);
+
+  // Debug logging for config resolution
+  if (configPath && logLevel === 'debug') {
+    const debugLog = createLogger(logLevel);
+    debugLog.debug(`Config file loaded from: ${configPath}`);
+    debugLog.debug(
+      `testTimeout resolution: flags=${flags.testTimeout ?? 'not set'}, file=${fileConfigRaw?.testTimeout ?? 'not set'}, resolved=${resolvedTestTimeout ?? 'not set'}`,
+    );
+  }
+
   const runtime: RuntimeConfig = {
     ...merged,
     resolvePath: (p: string) => path.resolve(process.cwd(), p),
@@ -198,8 +215,12 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     update: Boolean(flags.update),
     missingOnly: Boolean(flags.missingOnly),
     failedOnly: Boolean(flags.failedOnly),
-    testTimeout: flags.testTimeout,
-    overlayTimeout: flags.overlayTimeout,
+    testTimeout: resolvedTestTimeout,
+    overlayTimeout:
+      flags.overlayTimeout ??
+      (fileConfigRaw && typeof fileConfigRaw.overlayTimeout === 'number'
+        ? fileConfigRaw.overlayTimeout
+        : undefined),
     showProgress:
       flags.showProgress !== undefined
         ? Boolean(flags.showProgress)
