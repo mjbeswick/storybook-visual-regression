@@ -579,7 +579,11 @@ class WorkerPool {
         const infoPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.json`);
         fs.writeFileSync(
           infoPath,
-          JSON.stringify({ error: 'Page closed before dump', storyId: story.id, url: story.url }, null, 2),
+          JSON.stringify(
+            { error: 'Page closed before dump', storyId: story.id, url: story.url },
+            null,
+            2,
+          ),
           'utf8',
         );
         return;
@@ -902,20 +906,21 @@ class WorkerPool {
         `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
       );
       try {
+        // Use a simpler, more robust check to avoid crashes
+        // Simple checks reduce the chance of browser crashes in CI environments
         await page.waitForFunction(
           () => {
-            const root = document.getElementById('storybook-root');
-            if (!root) return false;
-
-            // Check if story has meaningful content (not just loading)
-            // More lenient checks - if root exists and has any innerHTML, consider it ready
-            const hasContent = root.textContent && root.textContent.trim().length > 0;
-            const hasChildren = root.children.length > 0;
-            const hasCanvas = root.querySelector('canvas');
-            const hasAnyHTML = root.innerHTML.trim().length > 0;
-
-            // If root has any HTML content, consider it ready (stories might be loading but root exists)
-            return hasContent || hasChildren || hasCanvas || hasAnyHTML;
+            try {
+              const root = document.getElementById('storybook-root');
+              if (!root) return false;
+              
+              // Simple check: if root exists and has any children or innerHTML, it's ready
+              // Avoid complex operations that might cause crashes
+              return root.children.length > 0 || root.innerHTML.trim().length > 0;
+            } catch {
+              // If anything fails in the check, return false
+              return false;
+            }
           },
           { timeout: contentWaitTimeout },
         );
