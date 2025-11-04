@@ -206,6 +206,8 @@ const main = async (): Promise<number> => {
     .option('--full-page', 'Full page screenshots')
     .option('--mutation-wait <ms>', 'Quiet window wait (default 200)')
     .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)')
+    .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)')
+    .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds')
     .option('--snapshot-retries <n>', 'Capture retries (default 1)')
     .option('--snapshot-delay <ms>', 'Delay between retries')
     .option('--include <patterns>', 'Comma-separated include filters')
