@@ -913,7 +913,7 @@ class WorkerPool {
             try {
               const root = document.getElementById('storybook-root');
               if (!root) return false;
-              
+
               // Simple check: if root exists and has any children or innerHTML, it's ready
               // Avoid complex operations that might cause crashes
               return root.children.length > 0 || root.innerHTML.trim().length > 0;
