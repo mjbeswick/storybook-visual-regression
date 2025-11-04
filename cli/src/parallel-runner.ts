@@ -527,6 +527,8 @@ class WorkerPool {
           const isOdiffFailed = /odiff comparison failed/i.test(errorStr);
           if (errorStr.includes('Missing baseline')) {
             errorReason = 'No baseline snapshot found';
+          } else if (errorStr.includes('Could not load base image')) {
+            errorReason = 'Baseline snapshot file not found or corrupted';
           } else if (isImagesDiffer) {
             errorReason = 'Visual differences detected';
           } else if (isOdiffFailed) {
@@ -1136,6 +1138,12 @@ class WorkerPool {
         this.log.debug(`Story ${story.id}: ${result}`);
       } else if (missingBaseline) {
         this.log.debug(`Story ${story.id}: Missing baseline, skipping test`);
+        // Check if actual screenshot was captured successfully
+        if (fs.existsSync(actual)) {
+          this.log.warn(
+            `Story ${story.id}: Baseline missing but screenshot captured. Consider running with --update to create baseline.`,
+          );
+        }
         throw new Error(`Missing baseline: ${expected}`);
       } else {
         // Perform visual regression test using odiff
@@ -1193,9 +1201,26 @@ class WorkerPool {
             throw error; // Re-throw our own error
           }
 
+          // Check for missing baseline file error
+          const errMsg = error?.message || String(error);
+          if (errMsg.includes('Could not load base image')) {
+            // Verify if baseline file exists
+            if (!fs.existsSync(expected)) {
+              this.log.error(
+                `Story ${story.id}: Baseline file does not exist: ${expected}. Consider running with --update to create baseline.`,
+              );
+              throw new Error(`Missing baseline: ${expected}`);
+            } else {
+              // File exists but odiff can't load it - might be corrupted
+              this.log.error(
+                `Story ${story.id}: Baseline file exists but cannot be loaded (possibly corrupted): ${expected}`,
+              );
+              throw new Error(`Could not load base image: ${expected}`);
+            }
+          }
+
           // Emit full diagnostic details to help identify the exact failure cause
           const diagLines: string[] = [];
-          const errMsg = error?.message || String(error);
           diagLines.push(`odiff error: ${errMsg}`);
           if (typeof error?.code !== 'undefined') diagLines.push(`code: ${error.code}`);
           if (typeof error?.exitCode !== 'undefined') diagLines.push(`exitCode: ${error.exitCode}`);
