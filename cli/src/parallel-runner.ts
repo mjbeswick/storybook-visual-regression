@@ -435,7 +435,10 @@ class WorkerPool {
       this.printStoryResult(story, displayName, 'success', duration);
     } else {
       // Check if this is a missing baseline (should be skipped)
-      const isMissingBaseline = lastError && String(lastError).includes('Missing baseline');
+      const isMissingBaseline =
+        lastError &&
+        (String(lastError).includes('Missing baseline') ||
+          String(lastError).includes('Could not load base image'));
 
       if (isMissingBaseline) {
         // Skipped - no snapshot exists
