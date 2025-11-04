@@ -205,7 +205,7 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
         ? Boolean(flags.showProgress)
         : (merged.showProgress ?? true),
     summary: flags.summary !== undefined ? Boolean(flags.summary) : (merged.summary ?? true),
-    fixDate: merged.fixDate ?? false,
+    fixDate: merged.fixDate,
     originalUrl,
   };
 
