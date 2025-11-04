@@ -120,8 +120,6 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     logger.warn(
       'No stories discovered. Ensure Storybook is running and /index.json is accessible.',
     );
-  } else {
-    logger.info(`Discovered ${baseStories.length} stories`);
   }
 
   // Clean up stale snapshots when updating

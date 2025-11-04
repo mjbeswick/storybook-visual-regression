@@ -828,18 +828,24 @@ class WorkerPool {
           };
 
           const fixedDate = parseFixDate(this.config.fixDate);
-          this.log.debug(
-            `Story ${story.id}: Setting fixed clock time to ${fixedDate.toISOString()}`,
+          this.log.info(
+            `Story ${story.id}: Fixing date - config value: ${JSON.stringify(this.config.fixDate)}, fixed date: ${fixedDate.toISOString()}`,
           );
 
           // Use Playwright's built-in clock API for reliable time mocking
           await page.clock.setFixedTime(fixedDate);
 
-          this.log.debug(`Story ${story.id}: Clock time set successfully`);
+          this.log.info(
+            `Story ${story.id}: Clock time set successfully to ${fixedDate.toISOString()}`,
+          );
         } catch (e) {
-          this.log.debug(`Story ${story.id}: Failed to set clock time:`, e);
+          this.log.warn(`Story ${story.id}: Failed to set clock time:`, e);
           // Don't throw - continue with screenshot even if clock setting fails
         }
+      } else {
+        this.log.debug(
+          `Story ${story.id}: Date fix not applied - fixDate: ${JSON.stringify(this.config.fixDate)}, page closed: ${page.isClosed()}`,
+        );
       }
 
       // Capture screenshot with settings optimized for visual regression
