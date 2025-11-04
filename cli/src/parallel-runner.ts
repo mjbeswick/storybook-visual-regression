@@ -814,14 +814,19 @@ class WorkerPool {
         }
       });
 
-      // Font loading wait
+      // Font loading wait - ensure fonts are fully loaded before screenshot
+      // This is critical for consistent rendering between local and CI
       await page.evaluate(async () => {
         const d = document as unknown as { fonts?: { ready?: Promise<void> } };
         if (d.fonts?.ready) {
-          await Promise.race([
-            d.fonts.ready,
-            new Promise((resolve) => setTimeout(resolve, 1000)), // Timeout after 1s
-          ]);
+          try {
+            await Promise.race([
+              d.fonts.ready,
+              new Promise((resolve) => setTimeout(resolve, 2000)), // Increased timeout for CI
+            ]);
+          } catch {
+            // Font loading failed, continue anyway
+          }
         }
       });
 
