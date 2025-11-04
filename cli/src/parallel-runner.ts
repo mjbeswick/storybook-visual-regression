@@ -718,13 +718,14 @@ class WorkerPool {
       const navStart = Date.now();
 
       // Start navigation with 'commit' - fastest, doesn't wait for body
-      await page.goto(story.url, { waitUntil: 'commit', timeout: 5000 });
+      // Use pageTimeout from config (or default 60s)
+      await page.goto(story.url, { waitUntil: 'commit', timeout: pageTimeout });
       this.log.debug(`Story ${story.id}: Navigation committed in ${Date.now() - navStart}ms`);
 
       // Now wait for the page to actually be ready, but with a timeout to avoid hanging
       // Try domcontentloaded first, but fall back to just checking readyState if it hangs
       try {
-        await page.waitForLoadState('domcontentloaded', { timeout: 5000 });
+        await page.waitForLoadState('domcontentloaded', { timeout: pageTimeout });
         this.log.debug(`Story ${story.id}: DOMContentLoaded reached in ${Date.now() - navStart}ms`);
       } catch {
         // domcontentloaded might be blocked, check readyState directly instead
@@ -733,7 +734,7 @@ class WorkerPool {
         );
         await page.waitForFunction(
           () => document.readyState === 'complete' || document.readyState === 'interactive',
-          { timeout: 5000 },
+          { timeout: pageTimeout },
         );
         this.log.debug(
           `Story ${story.id}: Document readyState confirmed in ${Date.now() - navStart}ms`,
@@ -744,7 +745,7 @@ class WorkerPool {
 
       // Wait for Storybook root to be attached
       this.log.debug(`Story ${story.id}: Waiting for #storybook-root...`);
-      await page.waitForSelector('#storybook-root', { state: 'attached', timeout: 10000 });
+      await page.waitForSelector('#storybook-root', { state: 'attached', timeout: pageTimeout });
       this.log.debug(`Story ${story.id}: Storybook root found`);
 
       // Verify Date mock is working (it was injected via evaluateOnNewDocument before navigation)
@@ -782,7 +783,7 @@ class WorkerPool {
 
           return hasContent || hasChildren || hasCanvas;
         },
-        { timeout: 10000 },
+        { timeout: pageTimeout },
       );
 
       // Additional wait for any story-specific loading states
