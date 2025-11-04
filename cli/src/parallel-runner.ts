@@ -14,6 +14,41 @@ import type { DiscoveredStory } from './core/StorybookDiscovery.js';
 import type { RunCallbacks } from './core/VisualRegressionRunner.js';
 import { createLogger, setGlobalLogger } from './logger.js';
 
+// Helper to parse fixDate config value into a Date object
+function parseFixDate(value: boolean | string | number | undefined): Date {
+  if (!value || value === true) {
+    // Default: February 2, 2024, 10:00:00 UTC as requested
+    return new Date('2024-02-02T10:00:00Z');
+  }
+
+  if (typeof value === 'number') {
+    // If it's a number, assume it's already a timestamp
+    if (value < 946684800000) {
+      // Looks like seconds, convert to milliseconds
+      return new Date(value * 1000);
+    }
+    return new Date(value);
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (!isNaN(parsed)) {
+      return new Date(parsed);
+    }
+    // Try as numeric string
+    const numValue = Number(value);
+    if (!isNaN(numValue)) {
+      if (numValue < 946684800000) {
+        return new Date(numValue * 1000);
+      }
+      return new Date(numValue);
+    }
+  }
+
+  // Fallback to default
+  return new Date('2024-02-02T10:00:00Z');
+}
+
 // Summary message helper
 type SummaryParams = {
   passed: number;
@@ -793,51 +828,12 @@ class WorkerPool {
       // This is the safest point - page is fully loaded but screenshot not yet taken
       if (this.config.fixDate && !page.isClosed()) {
         try {
-          const parseFixDate = (value: boolean | string | number | undefined): Date => {
-            if (!value || value === true) {
-              // Default: February 2, 2024, 10:00:00 UTC as requested
-              return new Date('2024-02-02T10:00:00Z');
-            }
-
-            if (typeof value === 'number') {
-              // If it's a number, assume it's already a timestamp
-              if (value < 946684800000) {
-                // Looks like seconds, convert to milliseconds
-                return new Date(value * 1000);
-              }
-              return new Date(value);
-            }
-
-            if (typeof value === 'string') {
-              const parsed = Date.parse(value);
-              if (!isNaN(parsed)) {
-                return new Date(parsed);
-              }
-              // Try as numeric string
-              const numValue = Number(value);
-              if (!isNaN(numValue)) {
-                if (numValue < 946684800000) {
-                  return new Date(numValue * 1000);
-                }
-                return new Date(numValue);
-              }
-            }
-
-            // Fallback to default
-            return new Date('2024-02-02T10:00:00Z');
-          };
-
           const fixedDate = parseFixDate(this.config.fixDate);
-          this.log.info(
-            `Story ${story.id}: Fixing date - config value: ${JSON.stringify(this.config.fixDate)}, fixed date: ${fixedDate.toISOString()}`,
-          );
 
           // Use Playwright's built-in clock API for reliable time mocking
           await page.clock.setFixedTime(fixedDate);
 
-          this.log.info(
-            `Story ${story.id}: Clock time set successfully to ${fixedDate.toISOString()}`,
-          );
+          this.log.debug(`Story ${story.id}: Clock time set to ${fixedDate.toISOString()}`);
         } catch (e) {
           this.log.warn(`Story ${story.id}: Failed to set clock time:`, e);
           // Don't throw - continue with screenshot even if clock setting fails
@@ -1039,6 +1035,14 @@ export async function runParallelTests(options: {
   const initialMessage = `Running ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(String(numWorkers))} concurrent workers (${chalk.cyan(mode)})...`;
   if (!config.quiet) {
     log.info(initialMessage);
+  }
+
+  // Log fixDate configuration once before tests start
+  if (config.fixDate) {
+    const fixedDate = parseFixDate(config.fixDate);
+    log.info(
+      `Date fixing enabled - config value: ${JSON.stringify(config.fixDate)}, fixed date: ${fixedDate.toISOString()}`,
+    );
   }
 
   // Helper to print a line under the spinner and then resume spinner
