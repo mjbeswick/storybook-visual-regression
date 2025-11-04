@@ -375,9 +375,10 @@ class WorkerPool {
         break; // Success, exit retry loop
       } catch (error) {
         lastError = error as Error;
-        
+
         // Dump DOM if timeout occurred (on any attempt, not just last)
-        const isTimeout = lastError && /timeout|Timed out|Operation timed out/i.test(String(lastError));
+        const isTimeout =
+          lastError && /timeout|Timed out|Operation timed out/i.test(String(lastError));
         if (isTimeout && page) {
           try {
             await this.dumpPageStateOnTimeout(story, page);
@@ -385,7 +386,7 @@ class WorkerPool {
             this.log.debug(`Story ${story.id}: Failed to dump DOM on timeout:`, dumpError);
           }
         }
-        
+
         if (attempt < maxAttempts) {
           // Will retry, log if debug mode
           this.log.debug(
@@ -566,13 +567,13 @@ class WorkerPool {
     try {
       const dumpDir = path.join(this.config.resultsPath, 'timeout-dumps');
       fs.mkdirSync(dumpDir, { recursive: true });
-      
+
       const dumpPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.html`);
       const infoPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.json`);
-      
+
       // Get page HTML
       const html = await page.content();
-      
+
       // Get page state information
       const pageInfo = await page.evaluate(() => {
         const root = document.getElementById('storybook-root');
@@ -591,35 +592,42 @@ class WorkerPool {
           networkErrors: (window as any).__networkErrors || [],
         };
       });
-      
+
       // Write HTML dump
       fs.writeFileSync(dumpPath, html, 'utf8');
-      
+
       // Write info dump
       fs.writeFileSync(infoPath, JSON.stringify(pageInfo, null, 2), 'utf8');
-      
+
       // Try to get console messages
-      const consoleMessages = await page.evaluate(() => {
-        return (window as any).__consoleMessages || [];
-      }).catch(() => []);
-      
+      const consoleMessages = await page
+        .evaluate(() => {
+          return (window as any).__consoleMessages || [];
+        })
+        .catch(() => []);
+
       if (consoleMessages.length > 0) {
-        const consolePath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.console.txt`);
-        fs.writeFileSync(consolePath, consoleMessages.map((m: any) => `${m.type}: ${m.text}`).join('\n'), 'utf8');
+        const consolePath = path.join(
+          dumpDir,
+          `${story.id.replace(/[^a-z0-9-]/gi, '_')}.console.txt`,
+        );
+        fs.writeFileSync(
+          consolePath,
+          consoleMessages.map((m: any) => `${m.type}: ${m.text}`).join('\n'),
+          'utf8',
+        );
       }
-      
-      this.log.warn(
-        `Story ${story.id}: Timeout detected. DOM dump saved to: ${dumpPath}`,
-      );
-      this.log.warn(
-        `Story ${story.id}: Page state info saved to: ${infoPath}`,
-      );
+
+      this.log.warn(`Story ${story.id}: Timeout detected. DOM dump saved to: ${dumpPath}`);
+      this.log.warn(`Story ${story.id}: Page state info saved to: ${infoPath}`);
     } catch (error) {
       this.log.debug(`Story ${story.id}: Failed to dump page state:`, error);
     }
   }
 
-  private async executeSingleTestAttempt(story: DiscoveredStory): Promise<{ result: string; page?: Page }> {
+  private async executeSingleTestAttempt(
+    story: DiscoveredStory,
+  ): Promise<{ result: string; page?: Page }> {
     let browser: Browser | undefined;
     let page: Page | undefined;
 
