@@ -376,14 +376,19 @@ class WorkerPool {
       } catch (error) {
         lastError = error as Error;
 
-        // Dump DOM if timeout occurred (on any attempt, not just last)
+        // Dump DOM if timeout or crash occurred (on any attempt, not just last)
         const isTimeout =
           lastError && /timeout|Timed out|Operation timed out/i.test(String(lastError));
-        if (isTimeout && page) {
+        const isCrash =
+          lastError && /Target crashed|crashed|Protocol error/i.test(String(lastError));
+        if ((isTimeout || isCrash) && page && !page.isClosed()) {
           try {
             await this.dumpPageStateOnTimeout(story, page);
           } catch (dumpError) {
-            this.log.debug(`Story ${story.id}: Failed to dump DOM on timeout:`, dumpError);
+            this.log.debug(
+              `Story ${story.id}: Failed to dump DOM on ${isTimeout ? 'timeout' : 'crash'}:`,
+              dumpError,
+            );
           }
         }
 
@@ -565,33 +570,75 @@ class WorkerPool {
 
   private async dumpPageStateOnTimeout(story: DiscoveredStory, page: Page): Promise<void> {
     try {
+      // Check if page is still valid
+      if (page.isClosed()) {
+        this.log.debug(`Story ${story.id}: Page is closed, cannot dump state`);
+        // Still create a minimal dump with error info
+        const dumpDir = path.join(this.config.resultsPath, 'timeout-dumps');
+        fs.mkdirSync(dumpDir, { recursive: true });
+        const infoPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.json`);
+        fs.writeFileSync(
+          infoPath,
+          JSON.stringify({ error: 'Page closed before dump', storyId: story.id, url: story.url }, null, 2),
+          'utf8',
+        );
+        return;
+      }
+
       const dumpDir = path.join(this.config.resultsPath, 'timeout-dumps');
       fs.mkdirSync(dumpDir, { recursive: true });
 
       const dumpPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.html`);
       const infoPath = path.join(dumpDir, `${story.id.replace(/[^a-z0-9-]/gi, '_')}.json`);
 
-      // Get page HTML
-      const html = await page.content();
+      // Get page HTML - wrap in try-catch in case page crashed
+      let html = '<html><body>Page crashed or closed</body></html>';
+      try {
+        html = await page.content();
+      } catch (err) {
+        this.log.debug(`Story ${story.id}: Failed to get page content:`, err);
+        html = `<html><body>Failed to get content: ${String(err)}</body></html>`;
+      }
 
-      // Get page state information
-      const pageInfo = await page.evaluate(() => {
-        const root = document.getElementById('storybook-root');
-        return {
-          url: window.location.href,
-          readyState: document.readyState,
-          title: document.title,
-          storybookRoot: {
-            exists: !!root,
-            childrenCount: root?.children.length ?? 0,
-            textContentLength: root?.textContent?.length ?? 0,
-            innerHTMLLength: root?.innerHTML.length ?? 0,
-            hasCanvas: !!root?.querySelector('canvas'),
-          },
-          consoleErrors: (window as any).__consoleErrors || [],
-          networkErrors: (window as any).__networkErrors || [],
+      // Get page state information - wrap in try-catch
+      let pageInfo: Record<string, unknown> = {
+        error: 'Failed to evaluate page state',
+        storyId: story.id,
+        url: story.url,
+      };
+      try {
+        pageInfo = await page.evaluate(() => {
+          try {
+            const root = document.getElementById('storybook-root');
+            return {
+              url: window.location.href,
+              readyState: document.readyState,
+              title: document.title,
+              storybookRoot: {
+                exists: !!root,
+                childrenCount: root?.children.length ?? 0,
+                textContentLength: root?.textContent?.length ?? 0,
+                innerHTMLLength: root?.innerHTML.length ?? 0,
+                hasCanvas: !!root?.querySelector('canvas'),
+              },
+              consoleErrors: (window as any).__consoleErrors || [],
+              networkErrors: (window as any).__networkErrors || [],
+            };
+          } catch (e) {
+            return {
+              error: `Evaluation error: ${String(e)}`,
+              url: window.location.href,
+            };
+          }
+        });
+      } catch (err) {
+        this.log.debug(`Story ${story.id}: Failed to evaluate page state:`, err);
+        pageInfo = {
+          error: `Evaluation failed: ${String(err)}`,
+          storyId: story.id,
+          url: story.url,
         };
-      });
+      }
 
       // Write HTML dump
       fs.writeFileSync(dumpPath, html, 'utf8');
@@ -875,19 +922,47 @@ class WorkerPool {
         this.log.debug(`Story ${story.id}: Story content loaded`);
       } catch (e: any) {
         // Log what we found for debugging
-        const contentInfo = await page.evaluate(() => {
-          const root = document.getElementById('storybook-root');
-          if (!root) return { exists: false };
-          return {
-            exists: true,
-            hasText: !!(root.textContent && root.textContent.trim().length > 0),
-            childrenCount: root.children.length,
-            hasCanvas: !!root.querySelector('canvas'),
-            innerHTMLLength: root.innerHTML.trim().length,
-            innerHTML: root.innerHTML.substring(0, 200), // First 200 chars for debugging
+        // Use try-catch around page.evaluate in case the page crashed
+        let contentInfo: {
+          exists: boolean;
+          hasText?: boolean;
+          childrenCount?: number;
+          hasCanvas?: boolean;
+          innerHTMLLength?: number;
+          innerHTML?: string;
+          error?: string;
+        } = { exists: false, error: 'Failed to evaluate' };
+
+        try {
+          if (!page.isClosed()) {
+            contentInfo = await page.evaluate(() => {
+              try {
+                const root = document.getElementById('storybook-root');
+                if (!root) return { exists: false };
+                return {
+                  exists: true,
+                  hasText: !!(root.textContent && root.textContent.trim().length > 0),
+                  childrenCount: root.children.length,
+                  hasCanvas: !!root.querySelector('canvas'),
+                  innerHTMLLength: root.innerHTML.trim().length,
+                  innerHTML: root.innerHTML.substring(0, 200), // First 200 chars for debugging
+                };
+              } catch (evalErr) {
+                return { exists: false, error: `Evaluation error: ${String(evalErr)}` };
+              }
+            });
+          } else {
+            contentInfo = { exists: false, error: 'Page is closed' };
+          }
+        } catch (evalError: any) {
+          contentInfo = {
+            exists: false,
+            error: `Evaluation failed: ${String(evalError)}`,
           };
-        });
-        this.log.debug(`Story ${story.id}: Content check failed. Root state:`, contentInfo);
+        }
+        this.log.debug(
+          `Story ${story.id}: Content check failed. Root state: ${JSON.stringify(contentInfo)}`,
+        );
         // If root exists with content, continue anyway - don't fail the test
         if (
           contentInfo.exists &&
