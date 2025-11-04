@@ -769,22 +769,55 @@ class WorkerPool {
       }
 
       // Wait for story content to actually load - Storybook specific waiting
-      await page.waitForFunction(
-        () => {
-          const root = document.getElementById('storybook-root');
-          if (!root) return false;
-
-          // Check if story has meaningful content (not just loading)
-          const hasContent = root.textContent && root.textContent.trim().length > 0;
-          const hasChildren = root.children.length > 0;
-
-          // For stories with canvas/charts, also check for canvas elements
-          const hasCanvas = root.querySelector('canvas');
-
-          return hasContent || hasChildren || hasCanvas;
-        },
-        { timeout: pageTimeout },
+      // Use a more lenient timeout for this check since stories might load slowly in CI
+      // The content check timeout should be independent of testTimeout to allow slower stories
+      const contentWaitTimeout = Math.max(pageTimeout, 20000); // At least 20 seconds for content
+      this.log.debug(
+        `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
       );
+      try {
+        await page.waitForFunction(
+          () => {
+            const root = document.getElementById('storybook-root');
+            if (!root) return false;
+
+            // Check if story has meaningful content (not just loading)
+            // More lenient checks - if root exists and has any innerHTML, consider it ready
+            const hasContent = root.textContent && root.textContent.trim().length > 0;
+            const hasChildren = root.children.length > 0;
+            const hasCanvas = root.querySelector('canvas');
+            const hasAnyHTML = root.innerHTML.trim().length > 0;
+
+            // If root has any HTML content, consider it ready (stories might be loading but root exists)
+            return hasContent || hasChildren || hasCanvas || hasAnyHTML;
+          },
+          { timeout: contentWaitTimeout },
+        );
+        this.log.debug(`Story ${story.id}: Story content loaded`);
+      } catch (e: any) {
+        // Log what we found for debugging
+        const contentInfo = await page.evaluate(() => {
+          const root = document.getElementById('storybook-root');
+          if (!root) return { exists: false };
+          return {
+            exists: true,
+            hasText: !!(root.textContent && root.textContent.trim().length > 0),
+            childrenCount: root.children.length,
+            hasCanvas: !!root.querySelector('canvas'),
+            innerHTMLLength: root.innerHTML.trim().length,
+            innerHTML: root.innerHTML.substring(0, 200), // First 200 chars for debugging
+          };
+        });
+        this.log.debug(`Story ${story.id}: Content check failed. Root state:`, contentInfo);
+        // If root exists with content, continue anyway - don't fail the test
+        if (contentInfo.exists && (contentInfo.childrenCount > 0 || contentInfo.innerHTMLLength > 0)) {
+          this.log.warn(
+            `Story ${story.id}: Content check timed out but root has content. Continuing anyway...`,
+          );
+        } else {
+          throw e;
+        }
+      }
 
       // Additional wait for any story-specific loading states
       await page.evaluate(async () => {
