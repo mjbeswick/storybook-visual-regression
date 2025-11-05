@@ -959,31 +959,57 @@ class WorkerPool {
       }
 
       // Wait for story content to actually load - Storybook specific waiting
+      // Use polling approach to avoid crashes during long waitForFunction evaluations
       // Respect testTimeout from config - if stories take longer than configured, fail fast
       const contentWaitTimeout = pageTimeout;
       this.log.debug(
         `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
       );
+      
+      let contentReady = false;
+      const pollInterval = 200; // Check every 200ms
+      const startTime = Date.now();
+      
       try {
-        // Use a simpler, more robust check to avoid crashes
-        // Simple checks reduce the chance of browser crashes in CI environments
-        await page.waitForFunction(
-          () => {
-            try {
-              const root = document.getElementById('storybook-root');
-              if (!root) return false;
-
-              // Simple check: if root exists and has any children or innerHTML, it's ready
-              // Avoid complex operations that might cause crashes
-              return root.children.length > 0 || root.innerHTML.trim().length > 0;
-            } catch {
-              // If anything fails in the check, return false
-              return false;
+        // Poll manually with shorter intervals to avoid crashes during long evaluations
+        while (Date.now() - startTime < contentWaitTimeout) {
+          if (page.isClosed()) {
+            throw new Error('Page closed during content check');
+          }
+          
+          try {
+            const hasContent = await page.evaluate(() => {
+              try {
+                const root = document.getElementById('storybook-root');
+                if (!root) return false;
+                // Check if content has loaded - either children or innerHTML
+                return root.children.length > 0 || root.innerHTML.trim().length > 0;
+              } catch {
+                return false;
+              }
+            });
+            
+            if (hasContent) {
+              contentReady = true;
+              this.log.debug(`Story ${story.id}: Story content loaded`);
+              break;
             }
-          },
-          { timeout: contentWaitTimeout },
-        );
-        this.log.debug(`Story ${story.id}: Story content loaded`);
+          } catch (evalError: any) {
+            // If evaluation fails, page might be crashing - try to capture screenshot early
+            if (/target crashed|page crashed/i.test(String(evalError))) {
+              this.log.debug(`Story ${story.id}: Page crashed during content polling`);
+              throw evalError;
+            }
+            // Other evaluation errors - continue polling
+          }
+          
+          // Wait before next poll
+          await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        }
+        
+        if (!contentReady) {
+          throw new Error(`Timeout waiting for story content after ${contentWaitTimeout}ms`);
+        }
       } catch (e: any) {
         // Log what we found for debugging
         // Use try-catch around page.evaluate in case the page crashed
@@ -1027,14 +1053,14 @@ class WorkerPool {
         this.log.debug(
           `Story ${story.id}: Content check failed. Root state: ${JSON.stringify(contentInfo)}`,
         );
-        // If root exists with content, continue anyway - don't fail the test
-        if (
-          contentInfo.exists &&
-          ((contentInfo.childrenCount ?? 0) > 0 || (contentInfo.innerHTMLLength ?? 0) > 0)
-        ) {
+        // If root exists (even if empty), try to continue - the story might be ready
+        // Empty states are valid - some stories might intentionally render empty
+        if (contentInfo.exists) {
           this.log.warn(
-            `Story ${story.id}: Content check timed out but root has content. Continuing anyway...`,
+            `Story ${story.id}: Content check timed out but root exists. Continuing anyway (may be empty state)...`,
           );
+          // Don't throw - continue to screenshot capture
+          contentReady = true;
         } else {
           // Capture a screenshot before throwing to help debug timeout issues
           // This ensures we have a diff even when content doesn't load
@@ -1087,6 +1113,11 @@ class WorkerPool {
           }
           throw e;
         }
+      }
+      
+      // Only proceed if content is ready (either loaded successfully or root exists)
+      if (!contentReady) {
+        throw new Error('Content check failed and root does not exist');
       }
 
       // Additional wait for any story-specific loading states
