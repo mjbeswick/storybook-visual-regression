@@ -958,247 +958,275 @@ class WorkerPool {
         }
       }
 
+      // Quick check: Is content already ready? (stories may load instantly)
+      let contentReady = false;
+      if (!page.isClosed()) {
+        try {
+          const hasContent = await page.evaluate(() => {
+            try {
+              const root = document.getElementById('storybook-root');
+              if (!root) return false;
+              return root.children.length > 0 || root.innerHTML.trim().length > 0;
+            } catch {
+              return false;
+            }
+          });
+          if (hasContent) {
+            contentReady = true;
+            this.log.debug(`Story ${story.id}: Content already ready (checked immediately after root found)`);
+          }
+        } catch (e: any) {
+          if (/target crashed|page crashed/i.test(String(e))) {
+            this.log.debug(`Story ${story.id}: Page crashed during immediate content check`);
+            throw e;
+          }
+          // Continue to wait if check fails
+        }
+      }
+
       // Wait for story content to actually load - Storybook specific waiting
       // Use fast waitForFunction first, then fall back to polling if needed
       // Respect testTimeout from config - if stories take longer than configured, fail fast
       const contentWaitTimeout = pageTimeout;
-      this.log.debug(
-        `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
-      );
-      
-      let contentReady = false;
       const startTime = Date.now();
       
-      try {
-        // First try: Use waitForFunction for fast path (optimized by Playwright)
-        // Use 80% of timeout for fast path, leaving 20% for polling fallback
-        const fastPathTimeout = Math.floor(contentWaitTimeout * 0.8);
-        try {
-          await page.waitForFunction(
-            () => {
-              try {
-                const root = document.getElementById('storybook-root');
-                if (!root) return false;
-                // Simple check: if root exists and has any children or innerHTML, it's ready
-                return root.children.length > 0 || root.innerHTML.trim().length > 0;
-              } catch {
-                return false;
-              }
-            },
-            { timeout: fastPathTimeout },
-          );
-          contentReady = true;
-          this.log.debug(`Story ${story.id}: Story content loaded (fast path)`);
-        } catch (fastPathError: any) {
-          // Fast path failed - check if page crashed or just timed out
-          if (/target crashed|page crashed/i.test(String(fastPathError))) {
-            this.log.debug(`Story ${story.id}: Page crashed during fast path check`);
-            throw fastPathError;
-          }
-          
-          // Fast path timed out, but we still have time - fall back to polling
-          const remainingTime = contentWaitTimeout - (Date.now() - startTime);
-          if (remainingTime > 0) {
-            this.log.debug(
-              `Story ${story.id}: Fast path timed out, falling back to polling (${remainingTime}ms remaining)...`,
-            );
-            
-            // Fallback: Manual polling with shorter intervals
-            const pollInterval = 200; // Check every 200ms
-            const pollStartTime = Date.now();
-            
-            while (Date.now() - pollStartTime < remainingTime) {
-              if (page.isClosed()) {
-                throw new Error('Page closed during content polling');
-              }
-              
-              try {
-                const hasContent = await page.evaluate(() => {
-                  try {
-                    const root = document.getElementById('storybook-root');
-                    if (!root) return false;
-                    return root.children.length > 0 || root.innerHTML.trim().length > 0;
-                  } catch {
-                    return false;
-                  }
-                });
-                
-                if (hasContent) {
-                  contentReady = true;
-                  this.log.debug(`Story ${story.id}: Story content loaded (polling fallback)`);
-                  break;
-                }
-              } catch (evalError: any) {
-                // If evaluation fails, page might be crashing
-                if (/target crashed|page crashed/i.test(String(evalError))) {
-                  this.log.debug(`Story ${story.id}: Page crashed during polling fallback`);
-                  throw evalError;
-                }
-                // Other evaluation errors - continue polling
-              }
-              
-              // Wait before next poll
-              await new Promise((resolve) => setTimeout(resolve, pollInterval));
-            }
-          }
-          
-          if (!contentReady) {
-            throw new Error(`Timeout waiting for story content after ${contentWaitTimeout}ms`);
-          }
-        }
-      } catch (e: any) {
-        // Log what we found for debugging
-        // Use try-catch around page.evaluate in case the page crashed
-        let contentInfo: {
-          exists: boolean;
-          hasText?: boolean;
-          childrenCount?: number;
-          hasCanvas?: boolean;
-          innerHTMLLength?: number;
-          innerHTML?: string;
-          error?: string;
-        } = { exists: false, error: 'Failed to evaluate' };
-
-        try {
-          if (!page.isClosed()) {
-            contentInfo = await page.evaluate(() => {
-              try {
-                const root = document.getElementById('storybook-root');
-                if (!root) return { exists: false };
-                return {
-                  exists: true,
-                  hasText: !!(root.textContent && root.textContent.trim().length > 0),
-                  childrenCount: root.children.length,
-                  hasCanvas: !!root.querySelector('canvas'),
-                  innerHTMLLength: root.innerHTML.trim().length,
-                  innerHTML: root.innerHTML.substring(0, 200), // First 200 chars for debugging
-                };
-              } catch (evalErr) {
-                return { exists: false, error: `Evaluation error: ${String(evalErr)}` };
-              }
-            });
-          } else {
-            contentInfo = { exists: false, error: 'Page is closed' };
-          }
-        } catch (evalError: any) {
-          contentInfo = {
-            exists: false,
-            error: `Evaluation failed: ${String(evalError)}`,
-          };
-        }
+      // Only wait if content isn't already ready from immediate check
+      if (!contentReady) {
         this.log.debug(
-          `Story ${story.id}: Content check failed. Root state: ${JSON.stringify(contentInfo)}`,
+          `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
         );
-        // If root exists (even if empty), wait a bit more to see if content appears
-        // Then proceed if content loads, or continue if it's truly empty
-        if (contentInfo.exists) {
-          const remainingTime = contentWaitTimeout - (Date.now() - startTime);
-          if (remainingTime > 1000) {
-            // Give it a bit more time to see if content appears
-            this.log.debug(
-              `Story ${story.id}: Root exists but empty, waiting ${Math.min(remainingTime, 2000)}ms more for content...`,
+        
+        try {
+          // First try: Use waitForFunction for fast path (optimized by Playwright)
+          // Use 80% of timeout for fast path, leaving 20% for polling fallback
+          const fastPathTimeout = Math.floor(contentWaitTimeout * 0.8);
+          try {
+            await page.waitForFunction(
+              () => {
+                try {
+                  const root = document.getElementById('storybook-root');
+                  if (!root) return false;
+                  // Simple check: if root exists and has any children or innerHTML, it's ready
+                  return root.children.length > 0 || root.innerHTML.trim().length > 0;
+                } catch {
+                  return false;
+                }
+              },
+              { timeout: fastPathTimeout },
             );
-            const extraWaitTime = Math.min(remainingTime, 2000); // Max 2 seconds extra
-            const checkInterval = 200;
-            const checkStart = Date.now();
-            
-            while (Date.now() - checkStart < extraWaitTime) {
-              if (page.isClosed()) {
-                break;
-              }
-              
-              try {
-                const hasContent = await page.evaluate(() => {
-                  try {
-                    const root = document.getElementById('storybook-root');
-                    if (!root) return false;
-                    return root.children.length > 0 || root.innerHTML.trim().length > 0;
-                  } catch {
-                    return false;
-                  }
-                });
-                
-                if (hasContent) {
-                  contentReady = true;
-                  this.log.debug(`Story ${story.id}: Content appeared after extra wait`);
-                  break;
-                }
-              } catch (evalError: any) {
-                if (/target crashed|page crashed/i.test(String(evalError))) {
-                  throw evalError;
-                }
-              }
-              
-              await new Promise((resolve) => setTimeout(resolve, checkInterval));
+            contentReady = true;
+            this.log.debug(`Story ${story.id}: Story content loaded (fast path)`);
+          } catch (fastPathError: any) {
+            // Fast path failed - check if page crashed or just timed out
+            if (/target crashed|page crashed/i.test(String(fastPathError))) {
+              this.log.debug(`Story ${story.id}: Page crashed during fast path check`);
+              throw fastPathError;
             }
             
-            // If still no content but root exists, proceed anyway (may be valid empty state)
+            // Fast path timed out, but we still have time - fall back to polling
+            const remainingTime = contentWaitTimeout - (Date.now() - startTime);
+            if (remainingTime > 0) {
+              this.log.debug(
+                `Story ${story.id}: Fast path timed out, falling back to polling (${remainingTime}ms remaining)...`,
+              );
+              
+              // Fallback: Manual polling with shorter intervals
+              const pollInterval = 200; // Check every 200ms
+              const pollStartTime = Date.now();
+              
+              while (Date.now() - pollStartTime < remainingTime) {
+                if (page.isClosed()) {
+                  throw new Error('Page closed during content polling');
+                }
+                
+                try {
+                  const hasContent = await page.evaluate(() => {
+                    try {
+                      const root = document.getElementById('storybook-root');
+                      if (!root) return false;
+                      return root.children.length > 0 || root.innerHTML.trim().length > 0;
+                    } catch {
+                      return false;
+                    }
+                  });
+                  
+                  if (hasContent) {
+                    contentReady = true;
+                    this.log.debug(`Story ${story.id}: Story content loaded (polling fallback)`);
+                    break;
+                  }
+                } catch (evalError: any) {
+                  // If evaluation fails, page might be crashing
+                  if (/target crashed|page crashed/i.test(String(evalError))) {
+                    this.log.debug(`Story ${story.id}: Page crashed during polling fallback`);
+                    throw evalError;
+                  }
+                  // Other evaluation errors - continue polling
+                }
+                
+                // Wait before next poll
+                await new Promise((resolve) => setTimeout(resolve, pollInterval));
+              }
+            }
+            
             if (!contentReady) {
+              throw new Error(`Timeout waiting for story content after ${contentWaitTimeout}ms`);
+            }
+          }
+        } catch (e: any) {
+          // Log what we found for debugging
+          // Use try-catch around page.evaluate in case the page crashed
+          let contentInfo: {
+            exists: boolean;
+            hasText?: boolean;
+            childrenCount?: number;
+            hasCanvas?: boolean;
+            innerHTMLLength?: number;
+            innerHTML?: string;
+            error?: string;
+          } = { exists: false, error: 'Failed to evaluate' };
+
+          try {
+            if (!page.isClosed()) {
+              contentInfo = await page.evaluate(() => {
+                try {
+                  const root = document.getElementById('storybook-root');
+                  if (!root) return { exists: false };
+                  return {
+                    exists: true,
+                    hasText: !!(root.textContent && root.textContent.trim().length > 0),
+                    childrenCount: root.children.length,
+                    hasCanvas: !!root.querySelector('canvas'),
+                    innerHTMLLength: root.innerHTML.trim().length,
+                    innerHTML: root.innerHTML.substring(0, 200), // First 200 chars for debugging
+                  };
+                } catch (evalErr) {
+                  return { exists: false, error: `Evaluation error: ${String(evalErr)}` };
+                }
+              });
+            } else {
+              contentInfo = { exists: false, error: 'Page is closed' };
+            }
+          } catch (evalError: any) {
+            contentInfo = {
+              exists: false,
+              error: `Evaluation failed: ${String(evalError)}`,
+            };
+          }
+          this.log.debug(
+            `Story ${story.id}: Content check failed. Root state: ${JSON.stringify(contentInfo)}`,
+          );
+          // If root exists (even if empty), wait a bit more to see if content appears
+          // Then proceed if content loads, or continue if it's truly empty
+          if (contentInfo.exists) {
+            const remainingTime = contentWaitTimeout - (Date.now() - startTime);
+            if (remainingTime > 1000) {
+              // Give it a bit more time to see if content appears
+              this.log.debug(
+                `Story ${story.id}: Root exists but empty, waiting ${Math.min(remainingTime, 2000)}ms more for content...`,
+              );
+              const extraWaitTime = Math.min(remainingTime, 2000); // Max 2 seconds extra
+              const checkInterval = 200;
+              const checkStart = Date.now();
+              
+              while (Date.now() - checkStart < extraWaitTime) {
+                if (page.isClosed()) {
+                  break;
+                }
+                
+                try {
+                  const hasContent = await page.evaluate(() => {
+                    try {
+                      const root = document.getElementById('storybook-root');
+                      if (!root) return false;
+                      return root.children.length > 0 || root.innerHTML.trim().length > 0;
+                    } catch {
+                      return false;
+                    }
+                  });
+                  
+                  if (hasContent) {
+                    contentReady = true;
+                    this.log.debug(`Story ${story.id}: Content appeared after extra wait`);
+                    break;
+                  }
+                } catch (evalError: any) {
+                  if (/target crashed|page crashed/i.test(String(evalError))) {
+                    throw evalError;
+                  }
+                }
+                
+                await new Promise((resolve) => setTimeout(resolve, checkInterval));
+              }
+              
+              // If still no content but root exists, proceed anyway (may be valid empty state)
+              if (!contentReady) {
+                this.log.warn(
+                  `Story ${story.id}: Root exists but remains empty after extra wait. Continuing (may be valid empty state)...`,
+                );
+                contentReady = true;
+              }
+            } else {
+              // No time left, but root exists - proceed anyway
               this.log.warn(
-                `Story ${story.id}: Root exists but remains empty after extra wait. Continuing (may be valid empty state)...`,
+                `Story ${story.id}: Root exists but empty, no time left. Continuing anyway (may be empty state)...`,
               );
               contentReady = true;
             }
           } else {
-            // No time left, but root exists - proceed anyway
-            this.log.warn(
-              `Story ${story.id}: Root exists but empty, no time left. Continuing anyway (may be empty state)...`,
-            );
-            contentReady = true;
-          }
-        } else {
-          // Capture a screenshot before throwing to help debug timeout issues
-          // This ensures we have a diff even when content doesn't load
-          try {
-            if (!page.isClosed()) {
-              const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
-              const actual = path.join(
-                path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-                path.basename(story.snapshotRelPath),
-              );
-              const actualDir = path.dirname(actual);
-              fs.mkdirSync(actualDir, { recursive: true });
-              this.log.debug(
-                `Story ${story.id}: Capturing screenshot on timeout - actual: ${actual}`,
-              );
-              await page.screenshot({
-                path: actual,
-                fullPage: this.config.fullPage,
-                type: 'png',
-              });
-              this.log.debug(`Story ${story.id}: Screenshot captured on timeout`);
-            } else {
-              this.log.debug(`Story ${story.id}: Page is closed, cannot capture screenshot on timeout`);
+            // Capture a screenshot before throwing to help debug timeout issues
+            // This ensures we have a diff even when content doesn't load
+            try {
+              if (!page.isClosed()) {
+                const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
+                const actual = path.join(
+                  path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+                  path.basename(story.snapshotRelPath),
+                );
+                const actualDir = path.dirname(actual);
+                fs.mkdirSync(actualDir, { recursive: true });
+                this.log.debug(
+                  `Story ${story.id}: Capturing screenshot on timeout - actual: ${actual}`,
+                );
+                await page.screenshot({
+                  path: actual,
+                  fullPage: this.config.fullPage,
+                  type: 'png',
+                });
+                this.log.debug(`Story ${story.id}: Screenshot captured on timeout`);
+              } else {
+                this.log.debug(`Story ${story.id}: Page is closed, cannot capture screenshot on timeout`);
+              }
+            } catch (screenshotError: any) {
+              const errorMsg = String(screenshotError);
+              if (/target crashed|page crashed/i.test(errorMsg)) {
+                this.log.debug(
+                  `Story ${story.id}: Page crashed before screenshot could be captured. This may indicate resource constraints (memory/CPU) in the test environment.`,
+                );
+                // Enhance the error message to include crash information
+                const crashError = new Error(
+                  `Operation timed out. Browser crashed before screenshot could be captured (likely due to resource constraints). Original error: ${String(e)}`,
+                );
+                throw crashError;
+              } else {
+                this.log.debug(
+                  `Story ${story.id}: Failed to capture screenshot on timeout: ${screenshotError}`,
+                );
+              }
             }
-          } catch (screenshotError: any) {
-            const errorMsg = String(screenshotError);
-            if (/target crashed|page crashed/i.test(errorMsg)) {
-              this.log.debug(
-                `Story ${story.id}: Page crashed before screenshot could be captured. This may indicate resource constraints (memory/CPU) in the test environment.`,
-              );
-              // Enhance the error message to include crash information
+            // Check if the original error was a crash
+            const originalErrorStr = String(e);
+            if (/target crashed|page crashed/i.test(originalErrorStr) || 
+                (contentInfo.error && /target crashed|page crashed/i.test(contentInfo.error))) {
               const crashError = new Error(
-                `Operation timed out. Browser crashed before screenshot could be captured (likely due to resource constraints). Original error: ${String(e)}`,
+                `Operation timed out. Browser crashed during content check (likely due to resource constraints). ${originalErrorStr}`,
               );
               throw crashError;
-            } else {
-              this.log.debug(
-                `Story ${story.id}: Failed to capture screenshot on timeout: ${screenshotError}`,
-              );
             }
+            throw e;
           }
-          // Check if the original error was a crash
-          const originalErrorStr = String(e);
-          if (/target crashed|page crashed/i.test(originalErrorStr) || 
-              (contentInfo.error && /target crashed|page crashed/i.test(contentInfo.error))) {
-            const crashError = new Error(
-              `Operation timed out. Browser crashed during content check (likely due to resource constraints). ${originalErrorStr}`,
-            );
-            throw crashError;
-          }
-          throw e;
-        }
-      }
+        } // End of catch block
+      } // End of if (!contentReady) - skip wait if content already ready
       
       // Only proceed if content is ready (either loaded successfully or root exists)
       if (!contentReady) {
