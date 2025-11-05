@@ -1401,10 +1401,12 @@ export async function runParallelTests(options: {
     `Timeouts: testTimeout=${config.testTimeout ?? 'default (60000ms)'}, overlayTimeout=${config.overlayTimeout ?? 'default'}`,
   );
 
-  // Default to number of CPU cores, with a reasonable cap
-  const defaultWorkers = Math.min(os.cpus().length, 8); // Cap at 8 to avoid overwhelming the system
+  // Default to number of CPU cores, leaving at least 1 core for the system
+  // Use all cores but ensure we don't overwhelm the system by leaving 1-2 cores free
+  const cpuCount = os.cpus().length;
+  const defaultWorkers = Math.max(1, cpuCount - 1); // Leave 1 core for system, minimum 1 worker
   const numWorkers = config.workers || defaultWorkers;
-  log.debug(`Worker pool: ${numWorkers} workers (${os.cpus().length} CPU cores available)`);
+  log.debug(`Worker pool: ${numWorkers} workers (${cpuCount} CPU cores available, using ${defaultWorkers} by default)`);
 
   // In test mode, filter out stories that don't have snapshots
   let filteredStories = stories;
