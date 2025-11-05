@@ -250,7 +250,15 @@ class WorkerPool {
         // Keep a separate diff line as well for easy parsing/copying
         detailLines.push(`  ${chalk.gray(`Diff: ${errorDetails.diffPath}`)}`);
       } else {
-        detailLines.push(`  ${chalk.gray('Diff: not generated')}`);
+        // Provide more context about why diff wasn't generated
+        const reason = errorDetails.reason || '';
+        if (/target crashed|page crashed|browser crashed/i.test(reason)) {
+          detailLines.push(
+            `  ${chalk.gray('Diff: not generated (browser crashed before screenshot could be captured)')}`,
+          );
+        } else {
+          detailLines.push(`  ${chalk.gray('Diff: not generated')}`);
+        }
       }
 
       for (const detailLine of detailLines) {
@@ -572,8 +580,19 @@ class WorkerPool {
             errorReason = 'Visual differences detected';
           } else if (isOdiffFailed) {
             errorReason = 'Image comparison failed (odiff)';
+          } else if (/target crashed|page crashed/i.test(errorStr)) {
+            errorReason = 'Browser crashed (likely due to resource constraints)';
           } else if (/timeout/i.test(errorStr)) {
-            errorReason = 'Operation timed out';
+            // Check if crash occurred during timeout
+            const actual = path.join(
+              path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+              path.basename(story.snapshotRelPath),
+            );
+            if (!fs.existsSync(actual) && /target crashed|page crashed/i.test(errorStr)) {
+              errorReason = 'Operation timed out (browser crashed before screenshot)';
+            } else {
+              errorReason = 'Operation timed out';
+            }
           } else if (/network/i.test(errorStr)) {
             errorReason = 'Network error';
           } else if (errorStr.includes('Screenshot capture failed')) {
@@ -1037,11 +1056,34 @@ class WorkerPool {
                 type: 'png',
               });
               this.log.debug(`Story ${story.id}: Screenshot captured on timeout`);
+            } else {
+              this.log.debug(`Story ${story.id}: Page is closed, cannot capture screenshot on timeout`);
             }
-          } catch (screenshotError) {
-            this.log.debug(
-              `Story ${story.id}: Failed to capture screenshot on timeout: ${screenshotError}`,
+          } catch (screenshotError: any) {
+            const errorMsg = String(screenshotError);
+            if (/target crashed|page crashed/i.test(errorMsg)) {
+              this.log.debug(
+                `Story ${story.id}: Page crashed before screenshot could be captured. This may indicate resource constraints (memory/CPU) in the test environment.`,
+              );
+              // Enhance the error message to include crash information
+              const crashError = new Error(
+                `Operation timed out. Browser crashed before screenshot could be captured (likely due to resource constraints). Original error: ${String(e)}`,
+              );
+              throw crashError;
+            } else {
+              this.log.debug(
+                `Story ${story.id}: Failed to capture screenshot on timeout: ${screenshotError}`,
+              );
+            }
+          }
+          // Check if the original error was a crash
+          const originalErrorStr = String(e);
+          if (/target crashed|page crashed/i.test(originalErrorStr) || 
+              (contentInfo.error && /target crashed|page crashed/i.test(contentInfo.error))) {
+            const crashError = new Error(
+              `Operation timed out. Browser crashed during content check (likely due to resource constraints). ${originalErrorStr}`,
             );
+            throw crashError;
           }
           throw e;
         }
