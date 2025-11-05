@@ -488,7 +488,44 @@ class WorkerPool {
         // Extract diff image path from error message for visual regression failures
         const errorStr = lastError ? String(lastError) : '';
         const diffMatch = errorStr.match(/diff: (.+)\)/);
-        const diffPath = diffMatch ? diffMatch[1] : null;
+        let diffPath = diffMatch ? diffMatch[1] : null;
+
+        // If no diff in error message but we have a timeout, check if screenshot was captured
+        // and generate a diff to help debug the timeout
+        if (!diffPath && /timeout/i.test(errorStr)) {
+          try {
+            const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
+            const actual = path.join(
+              path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+              path.basename(story.snapshotRelPath),
+            );
+            if (fs.existsSync(actual) && fs.existsSync(expected)) {
+              // Generate diff for timeout cases to show what was captured
+              const timeoutDiffPath = path.join(
+                path.dirname(actual),
+                `${path.basename(actual, path.extname(actual))}.diff.png`,
+              );
+              try {
+                const odiffResult = await odiffCompare(expected, actual, timeoutDiffPath, {
+                  threshold: this.config.threshold,
+                  outputDiffMask: true,
+                });
+                if (!odiffResult.match && fs.existsSync(timeoutDiffPath)) {
+                  diffPath = timeoutDiffPath;
+                  this.log.debug(
+                    `Story ${story.id}: Generated diff for timeout case: ${diffPath}`,
+                  );
+                }
+              } catch (diffError) {
+                this.log.debug(
+                  `Story ${story.id}: Failed to generate diff on timeout: ${diffError}`,
+                );
+              }
+            }
+          } catch (checkError) {
+            this.log.debug(`Story ${story.id}: Error checking for timeout screenshot: ${checkError}`);
+          }
+        }
 
         // Notify callbacks of failed result
         this.callbacks?.onResult?.({
@@ -518,9 +555,8 @@ class WorkerPool {
         });
 
         // Extract error details for printing
-        const printErrorStr = lastError ? String(lastError) : '';
-        const printDiffMatch = printErrorStr.match(/diff: (.+)\)/);
-        const printDiffPath = printDiffMatch ? printDiffMatch[1] : undefined;
+        // Use the diffPath we computed (which may include timeout-generated diffs)
+        const printDiffPath = diffPath || undefined;
 
         // Extract a user-friendly error message
         let errorReason = 'Unknown error';
@@ -904,9 +940,8 @@ class WorkerPool {
       }
 
       // Wait for story content to actually load - Storybook specific waiting
-      // Use a more lenient timeout for this check since stories might load slowly in CI
-      // The content check timeout should be independent of testTimeout to allow slower stories
-      const contentWaitTimeout = Math.max(pageTimeout, 20000); // At least 20 seconds for content
+      // Respect testTimeout from config - if stories take longer than configured, fail fast
+      const contentWaitTimeout = pageTimeout;
       this.log.debug(
         `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
       );
@@ -982,6 +1017,32 @@ class WorkerPool {
             `Story ${story.id}: Content check timed out but root has content. Continuing anyway...`,
           );
         } else {
+          // Capture a screenshot before throwing to help debug timeout issues
+          // This ensures we have a diff even when content doesn't load
+          try {
+            if (!page.isClosed()) {
+              const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
+              const actual = path.join(
+                path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+                path.basename(story.snapshotRelPath),
+              );
+              const actualDir = path.dirname(actual);
+              fs.mkdirSync(actualDir, { recursive: true });
+              this.log.debug(
+                `Story ${story.id}: Capturing screenshot on timeout - actual: ${actual}`,
+              );
+              await page.screenshot({
+                path: actual,
+                fullPage: this.config.fullPage,
+                type: 'png',
+              });
+              this.log.debug(`Story ${story.id}: Screenshot captured on timeout`);
+            }
+          } catch (screenshotError) {
+            this.log.debug(
+              `Story ${story.id}: Failed to capture screenshot on timeout: ${screenshotError}`,
+            );
+          }
           throw e;
         }
       }
