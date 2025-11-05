@@ -959,7 +959,7 @@ class WorkerPool {
       }
 
       // Wait for story content to actually load - Storybook specific waiting
-      // Use polling approach to avoid crashes during long waitForFunction evaluations
+      // Use fast waitForFunction first, then fall back to polling if needed
       // Respect testTimeout from config - if stories take longer than configured, fail fast
       const contentWaitTimeout = pageTimeout;
       this.log.debug(
@@ -967,48 +967,84 @@ class WorkerPool {
       );
       
       let contentReady = false;
-      const pollInterval = 200; // Check every 200ms
       const startTime = Date.now();
       
       try {
-        // Poll manually with shorter intervals to avoid crashes during long evaluations
-        while (Date.now() - startTime < contentWaitTimeout) {
-          if (page.isClosed()) {
-            throw new Error('Page closed during content check');
-          }
-          
-          try {
-            const hasContent = await page.evaluate(() => {
+        // First try: Use waitForFunction for fast path (optimized by Playwright)
+        // Use 80% of timeout for fast path, leaving 20% for polling fallback
+        const fastPathTimeout = Math.floor(contentWaitTimeout * 0.8);
+        try {
+          await page.waitForFunction(
+            () => {
               try {
                 const root = document.getElementById('storybook-root');
                 if (!root) return false;
-                // Check if content has loaded - either children or innerHTML
+                // Simple check: if root exists and has any children or innerHTML, it's ready
                 return root.children.length > 0 || root.innerHTML.trim().length > 0;
               } catch {
                 return false;
               }
-            });
-            
-            if (hasContent) {
-              contentReady = true;
-              this.log.debug(`Story ${story.id}: Story content loaded`);
-              break;
-            }
-          } catch (evalError: any) {
-            // If evaluation fails, page might be crashing - try to capture screenshot early
-            if (/target crashed|page crashed/i.test(String(evalError))) {
-              this.log.debug(`Story ${story.id}: Page crashed during content polling`);
-              throw evalError;
-            }
-            // Other evaluation errors - continue polling
+            },
+            { timeout: fastPathTimeout },
+          );
+          contentReady = true;
+          this.log.debug(`Story ${story.id}: Story content loaded (fast path)`);
+        } catch (fastPathError: any) {
+          // Fast path failed - check if page crashed or just timed out
+          if (/target crashed|page crashed/i.test(String(fastPathError))) {
+            this.log.debug(`Story ${story.id}: Page crashed during fast path check`);
+            throw fastPathError;
           }
           
-          // Wait before next poll
-          await new Promise((resolve) => setTimeout(resolve, pollInterval));
-        }
-        
-        if (!contentReady) {
-          throw new Error(`Timeout waiting for story content after ${contentWaitTimeout}ms`);
+          // Fast path timed out, but we still have time - fall back to polling
+          const remainingTime = contentWaitTimeout - (Date.now() - startTime);
+          if (remainingTime > 0) {
+            this.log.debug(
+              `Story ${story.id}: Fast path timed out, falling back to polling (${remainingTime}ms remaining)...`,
+            );
+            
+            // Fallback: Manual polling with shorter intervals
+            const pollInterval = 200; // Check every 200ms
+            const pollStartTime = Date.now();
+            
+            while (Date.now() - pollStartTime < remainingTime) {
+              if (page.isClosed()) {
+                throw new Error('Page closed during content polling');
+              }
+              
+              try {
+                const hasContent = await page.evaluate(() => {
+                  try {
+                    const root = document.getElementById('storybook-root');
+                    if (!root) return false;
+                    return root.children.length > 0 || root.innerHTML.trim().length > 0;
+                  } catch {
+                    return false;
+                  }
+                });
+                
+                if (hasContent) {
+                  contentReady = true;
+                  this.log.debug(`Story ${story.id}: Story content loaded (polling fallback)`);
+                  break;
+                }
+              } catch (evalError: any) {
+                // If evaluation fails, page might be crashing
+                if (/target crashed|page crashed/i.test(String(evalError))) {
+                  this.log.debug(`Story ${story.id}: Page crashed during polling fallback`);
+                  throw evalError;
+                }
+                // Other evaluation errors - continue polling
+              }
+              
+              // Wait before next poll
+              await new Promise((resolve) => setTimeout(resolve, pollInterval));
+            }
+          }
+          
+          if (!contentReady) {
+            throw new Error(`Timeout waiting for story content after ${contentWaitTimeout}ms`);
+          }
         }
       } catch (e: any) {
         // Log what we found for debugging
