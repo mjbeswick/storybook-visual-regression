@@ -1089,14 +1089,63 @@ class WorkerPool {
         this.log.debug(
           `Story ${story.id}: Content check failed. Root state: ${JSON.stringify(contentInfo)}`,
         );
-        // If root exists (even if empty), try to continue - the story might be ready
-        // Empty states are valid - some stories might intentionally render empty
+        // If root exists (even if empty), wait a bit more to see if content appears
+        // Then proceed if content loads, or continue if it's truly empty
         if (contentInfo.exists) {
-          this.log.warn(
-            `Story ${story.id}: Content check timed out but root exists. Continuing anyway (may be empty state)...`,
-          );
-          // Don't throw - continue to screenshot capture
-          contentReady = true;
+          const remainingTime = contentWaitTimeout - (Date.now() - startTime);
+          if (remainingTime > 1000) {
+            // Give it a bit more time to see if content appears
+            this.log.debug(
+              `Story ${story.id}: Root exists but empty, waiting ${Math.min(remainingTime, 2000)}ms more for content...`,
+            );
+            const extraWaitTime = Math.min(remainingTime, 2000); // Max 2 seconds extra
+            const checkInterval = 200;
+            const checkStart = Date.now();
+            
+            while (Date.now() - checkStart < extraWaitTime) {
+              if (page.isClosed()) {
+                break;
+              }
+              
+              try {
+                const hasContent = await page.evaluate(() => {
+                  try {
+                    const root = document.getElementById('storybook-root');
+                    if (!root) return false;
+                    return root.children.length > 0 || root.innerHTML.trim().length > 0;
+                  } catch {
+                    return false;
+                  }
+                });
+                
+                if (hasContent) {
+                  contentReady = true;
+                  this.log.debug(`Story ${story.id}: Content appeared after extra wait`);
+                  break;
+                }
+              } catch (evalError: any) {
+                if (/target crashed|page crashed/i.test(String(evalError))) {
+                  throw evalError;
+                }
+              }
+              
+              await new Promise((resolve) => setTimeout(resolve, checkInterval));
+            }
+            
+            // If still no content but root exists, proceed anyway (may be valid empty state)
+            if (!contentReady) {
+              this.log.warn(
+                `Story ${story.id}: Root exists but remains empty after extra wait. Continuing (may be valid empty state)...`,
+              );
+              contentReady = true;
+            }
+          } else {
+            // No time left, but root exists - proceed anyway
+            this.log.warn(
+              `Story ${story.id}: Root exists but empty, no time left. Continuing anyway (may be empty state)...`,
+            );
+            contentReady = true;
+          }
         } else {
           // Capture a screenshot before throwing to help debug timeout issues
           // This ensures we have a diff even when content doesn't load
