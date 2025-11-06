@@ -49,6 +49,38 @@ function parseFixDate(value: boolean | string | number | undefined): Date {
   return new Date('2024-02-02T10:00:00Z');
 }
 
+// Helper to remove empty directories recursively
+function removeEmptyDirectories(dirPath: string, stopAt?: string): void {
+  try {
+    // Normalize paths for comparison (handle different path separators)
+    const normalizedDirPath = path.normalize(dirPath);
+    const normalizedStopAt = stopAt ? path.normalize(stopAt) : undefined;
+
+    // Stop if we've reached the stopAt directory (e.g., resultsPath root)
+    if (normalizedStopAt && normalizedDirPath === normalizedStopAt) {
+      return;
+    }
+
+    // Check if directory exists and is empty
+    if (fs.existsSync(normalizedDirPath)) {
+      const files = fs.readdirSync(normalizedDirPath);
+      if (files.length === 0) {
+        // Directory is empty, remove it
+        fs.rmdirSync(normalizedDirPath);
+        // Recursively try to remove parent directory
+        const parentDir = path.dirname(normalizedDirPath);
+        if (parentDir !== normalizedDirPath) {
+          // Only recurse if we haven't reached the root
+          removeEmptyDirectories(parentDir, stopAt);
+        }
+      }
+    }
+  } catch (_error) {
+    // Ignore errors (e.g., directory doesn't exist, permission issues)
+    // This is cleanup code, so we don't want to throw
+  }
+}
+
 // Summary message helper
 type SummaryParams = {
   passed: number;
@@ -1552,6 +1584,20 @@ class WorkerPool {
               try {
                 fs.unlinkSync(diffPath);
               } catch {}
+            }
+
+            // Delete the actual screenshot since it matches the baseline
+            if (fs.existsSync(actual)) {
+              try {
+                fs.unlinkSync(actual);
+                this.log.debug(`Story ${story.id}: Deleted actual screenshot (matches baseline)`);
+
+                // Remove empty directories up to but not including resultsPath root
+                const actualDir = path.dirname(actual);
+                removeEmptyDirectories(actualDir, this.config.resultsPath);
+              } catch (error) {
+                this.log.debug(`Story ${story.id}: Failed to delete actual screenshot: ${error}`);
+              }
             }
           } else {
             // Images differ beyond threshold
