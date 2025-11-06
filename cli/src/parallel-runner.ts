@@ -520,9 +520,7 @@ class WorkerPool {
                 });
                 if (!odiffResult.match && fs.existsSync(timeoutDiffPath)) {
                   diffPath = timeoutDiffPath;
-                  this.log.debug(
-                    `Story ${story.id}: Generated diff for timeout case: ${diffPath}`,
-                  );
+                  this.log.debug(`Story ${story.id}: Generated diff for timeout case: ${diffPath}`);
                 }
               } catch (diffError) {
                 this.log.debug(
@@ -531,7 +529,9 @@ class WorkerPool {
               }
             }
           } catch (checkError) {
-            this.log.debug(`Story ${story.id}: Error checking for timeout screenshot: ${checkError}`);
+            this.log.debug(
+              `Story ${story.id}: Error checking for timeout screenshot: ${checkError}`,
+            );
           }
         }
 
@@ -778,6 +778,15 @@ class WorkerPool {
         '--disable-font-subpixel-positioning', // Disable subpixel positioning
         '--disable-lcd-text', // Disable LCD text rendering
         '--force-device-scale-factor=1', // Force consistent device scale
+        '--disable-background-networking', // Reduce background network activity
+        '--disable-breakpad', // Disable crash reporting
+        '--disable-client-side-phishing-detection', // Reduce overhead
+        '--disable-domain-reliability', // Disable domain reliability
+        '--disable-features=TranslateUI', // Disable translation UI
+        '--metrics-recording-only', // Reduce metrics overhead
+        '--mute-audio', // Mute audio
+        '--no-pings', // Disable pings
+        '--use-gl=swiftshader', // Use software rendering for consistency
         '--ignore-certificate-errors', // Ignore certificate errors (for proxy environments)
         '--ignore-certificate-errors-spki-list', // Ignore certificate errors
         '--ignore-ssl-errors', // Ignore SSL errors
@@ -973,7 +982,9 @@ class WorkerPool {
           });
           if (hasContent) {
             contentReady = true;
-            this.log.debug(`Story ${story.id}: Content already ready (checked immediately after root found)`);
+            this.log.debug(
+              `Story ${story.id}: Content already ready (checked immediately after root found)`,
+            );
           }
         } catch (e: any) {
           if (/target crashed|page crashed/i.test(String(e))) {
@@ -989,13 +1000,13 @@ class WorkerPool {
       // Respect testTimeout from config - if stories take longer than configured, fail fast
       const contentWaitTimeout = pageTimeout;
       const startTime = Date.now();
-      
+
       // Only wait if content isn't already ready from immediate check
       if (!contentReady) {
         this.log.debug(
           `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
         );
-        
+
         try {
           // First try: Use waitForFunction for fast path (optimized by Playwright)
           // Use 80% of timeout for fast path, leaving 20% for polling fallback
@@ -1022,23 +1033,23 @@ class WorkerPool {
               this.log.debug(`Story ${story.id}: Page crashed during fast path check`);
               throw fastPathError;
             }
-            
+
             // Fast path timed out, but we still have time - fall back to polling
             const remainingTime = contentWaitTimeout - (Date.now() - startTime);
             if (remainingTime > 0) {
               this.log.debug(
                 `Story ${story.id}: Fast path timed out, falling back to polling (${remainingTime}ms remaining)...`,
               );
-              
+
               // Fallback: Manual polling with shorter intervals
               const pollInterval = 200; // Check every 200ms
               const pollStartTime = Date.now();
-              
+
               while (Date.now() - pollStartTime < remainingTime) {
                 if (page.isClosed()) {
                   throw new Error('Page closed during content polling');
                 }
-                
+
                 try {
                   const hasContent = await page.evaluate(() => {
                     try {
@@ -1049,7 +1060,7 @@ class WorkerPool {
                       return false;
                     }
                   });
-                  
+
                   if (hasContent) {
                     contentReady = true;
                     this.log.debug(`Story ${story.id}: Story content loaded (polling fallback)`);
@@ -1063,12 +1074,12 @@ class WorkerPool {
                   }
                   // Other evaluation errors - continue polling
                 }
-                
+
                 // Wait before next poll
                 await new Promise((resolve) => setTimeout(resolve, pollInterval));
               }
             }
-            
+
             if (!contentReady) {
               throw new Error(`Timeout waiting for story content after ${contentWaitTimeout}ms`);
             }
@@ -1128,12 +1139,12 @@ class WorkerPool {
               const extraWaitTime = Math.min(remainingTime, 2000); // Max 2 seconds extra
               const checkInterval = 200;
               const checkStart = Date.now();
-              
+
               while (Date.now() - checkStart < extraWaitTime) {
                 if (page.isClosed()) {
                   break;
                 }
-                
+
                 try {
                   const hasContent = await page.evaluate(() => {
                     try {
@@ -1144,7 +1155,7 @@ class WorkerPool {
                       return false;
                     }
                   });
-                  
+
                   if (hasContent) {
                     contentReady = true;
                     this.log.debug(`Story ${story.id}: Content appeared after extra wait`);
@@ -1155,10 +1166,10 @@ class WorkerPool {
                     throw evalError;
                   }
                 }
-                
+
                 await new Promise((resolve) => setTimeout(resolve, checkInterval));
               }
-              
+
               // If still no content but root exists, proceed anyway (may be valid empty state)
               if (!contentReady) {
                 this.log.warn(
@@ -1195,7 +1206,9 @@ class WorkerPool {
                 });
                 this.log.debug(`Story ${story.id}: Screenshot captured on timeout`);
               } else {
-                this.log.debug(`Story ${story.id}: Page is closed, cannot capture screenshot on timeout`);
+                this.log.debug(
+                  `Story ${story.id}: Page is closed, cannot capture screenshot on timeout`,
+                );
               }
             } catch (screenshotError: any) {
               const errorMsg = String(screenshotError);
@@ -1216,8 +1229,10 @@ class WorkerPool {
             }
             // Check if the original error was a crash
             const originalErrorStr = String(e);
-            if (/target crashed|page crashed/i.test(originalErrorStr) || 
-                (contentInfo.error && /target crashed|page crashed/i.test(contentInfo.error))) {
+            if (
+              /target crashed|page crashed/i.test(originalErrorStr) ||
+              (contentInfo.error && /target crashed|page crashed/i.test(contentInfo.error))
+            ) {
               const crashError = new Error(
                 `Operation timed out. Browser crashed during content check (likely due to resource constraints). ${originalErrorStr}`,
               );
@@ -1227,39 +1242,70 @@ class WorkerPool {
           }
         } // End of catch block
       } // End of if (!contentReady) - skip wait if content already ready
-      
+
       // Only proceed if content is ready (either loaded successfully or root exists)
       if (!contentReady) {
         throw new Error('Content check failed and root does not exist');
       }
 
-      // Additional wait for any story-specific loading states
-      await page.evaluate(async () => {
-        // Wait for Storybook's loading overlay to disappear
-        const loadingOverlay = document.querySelector('.sb-loading, [data-testid="loading"]');
-        if (loadingOverlay) {
-          // Wait for it to be removed or hidden
-          await new Promise((resolve) => {
-            const observer = new MutationObserver(() => {
-              if (
-                !document.contains(loadingOverlay) ||
-                loadingOverlay.classList.contains('hidden') ||
-                getComputedStyle(loadingOverlay).display === 'none'
-              ) {
-                observer.disconnect();
-                resolve(void 0);
+      // Wait for Storybook's storyRendered event - most reliable way to know story is ready
+      // This is emitted by Storybook when the story has fully rendered
+      try {
+        await page.evaluate(() => {
+          return new Promise<void>((resolve) => {
+            // Check if storybook API is available
+            const storybookApi = (window as any).__STORYBOOK_CLIENT_API__;
+            if (storybookApi) {
+              // Listen for storyRendered event
+              const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
+              if (channel) {
+                const handler = () => {
+                  channel.removeListener('storyRendered', handler);
+                  resolve();
+                };
+                channel.on('storyRendered', handler);
+                // Timeout after 5 seconds
+                setTimeout(() => {
+                  channel.removeListener('storyRendered', handler);
+                  resolve();
+                }, 5000);
+              } else {
+                resolve();
               }
-            });
-            observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-
-            // Timeout after 3 seconds
-            setTimeout(() => {
-              observer.disconnect();
-              resolve(void 0);
-            }, 3000);
+            } else {
+              // Fallback: wait for loading overlay to disappear
+              const loadingOverlay = document.querySelector('.sb-loading, [data-testid="loading"]');
+              if (loadingOverlay) {
+                const observer = new MutationObserver(() => {
+                  if (
+                    !document.contains(loadingOverlay) ||
+                    loadingOverlay.classList.contains('hidden') ||
+                    getComputedStyle(loadingOverlay).display === 'none'
+                  ) {
+                    observer.disconnect();
+                    resolve();
+                  }
+                });
+                observer.observe(document.body, {
+                  childList: true,
+                  subtree: true,
+                  attributes: true,
+                });
+                setTimeout(() => {
+                  observer.disconnect();
+                  resolve();
+                }, 3000);
+              } else {
+                resolve();
+              }
+            }
           });
-        }
-      });
+        });
+        this.log.debug(`Story ${story.id}: Storybook storyRendered event received`);
+      } catch (e) {
+        // If storyRendered check fails, continue anyway
+        this.log.debug(`Story ${story.id}: Storybook storyRendered check failed, continuing: ${e}`);
+      }
 
       // Font loading wait - ensure fonts are fully loaded before screenshot
       // This is critical for consistent rendering between local and CI
@@ -1269,7 +1315,7 @@ class WorkerPool {
           try {
             await Promise.race([
               d.fonts.ready,
-              new Promise((resolve) => setTimeout(resolve, 2000)), // Increased timeout for CI
+              new Promise((resolve) => setTimeout(resolve, 5000)), // Increased timeout for CI environments
             ]);
           } catch {
             // Font loading failed, continue anyway
@@ -1277,9 +1323,9 @@ class WorkerPool {
         }
       });
 
-      // Wait for DOM to stabilize: 200ms after last mutation, but timeout after 1000ms
-      const quietPeriodMs = 200; // Wait 200ms after last mutation
-      const maxWaitMs = 1000; // But don't wait longer than 1000ms total
+      // Wait for DOM to stabilize: 300ms after last mutation, but timeout after 2000ms
+      const quietPeriodMs = 300; // Wait 300ms after last mutation (increased for CI stability)
+      const maxWaitMs = 2000; // But don't wait longer than 2000ms total (increased for slower CI)
 
       const isStable = await page.evaluate(
         ({ quietPeriodMs, maxWaitMs }) => {
@@ -1334,8 +1380,9 @@ class WorkerPool {
 
       // Additional wait for animations and transitions to complete
       // Many UI components have CSS animations that start after DOM is ready
+      // Increased wait time for CI environments where rendering can be slower
       this.log.debug(`Story ${story.id}: Waiting for animations to settle...`);
-      await page.waitForTimeout(500); // Wait 500ms for animations to complete
+      await page.waitForTimeout(1000); // Wait 1000ms for animations to complete (increased for CI stability)
 
       // Optimized screenshot capture
       const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
@@ -1545,12 +1592,15 @@ export async function runParallelTests(options: {
     `Timeouts: testTimeout=${config.testTimeout ?? 'default (60000ms)'}, overlayTimeout=${config.overlayTimeout ?? 'default'}`,
   );
 
-  // Default to number of CPU cores, leaving at least 1 core for the system
-  // Use all cores but ensure we don't overwhelm the system by leaving 1-2 cores free
+  // Default to half of CPU cores to balance performance with memory constraints
+  // Each browser worker can use significant memory, so we limit concurrency
+  // Cap at 8 workers to prevent excessive memory usage even on high-core machines
   const cpuCount = os.cpus().length;
-  const defaultWorkers = Math.max(1, cpuCount - 1); // Leave 1 core for system, minimum 1 worker
+  const defaultWorkers = Math.min(8, Math.max(1, Math.floor(cpuCount / 2))); // Half cores, max 8, min 1
   const numWorkers = config.workers || defaultWorkers;
-  log.debug(`Worker pool: ${numWorkers} workers (${cpuCount} CPU cores available, using ${defaultWorkers} by default)`);
+  log.debug(
+    `Worker pool: ${numWorkers} workers (${cpuCount} CPU cores available, using ${defaultWorkers} by default)`,
+  );
 
   // In test mode, filter out stories that don't have snapshots
   let filteredStories = stories;
