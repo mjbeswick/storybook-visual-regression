@@ -968,6 +968,9 @@ class WorkerPool {
       }
 
       // Quick check: Is content already ready? (stories may load instantly)
+      // Add a small delay to allow initial render to complete
+      await page.waitForTimeout(100);
+
       let contentReady = false;
       if (!page.isClosed()) {
         try {
@@ -975,7 +978,20 @@ class WorkerPool {
             try {
               const root = document.getElementById('storybook-root');
               if (!root) return false;
-              return root.children.length > 0 || root.innerHTML.trim().length > 0;
+
+              // Check multiple indicators of content:
+              // 1. Has children elements
+              // 2. Has innerHTML content
+              // 3. Has text content
+              // 4. Has visual dimensions (rendered content)
+              // 5. Has canvas/SVG elements (for graphics-heavy stories)
+              const hasChildren = root.children.length > 0;
+              const hasHTML = root.innerHTML.trim().length > 0;
+              const hasText = !!(root.textContent && root.textContent.trim().length > 0);
+              const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
+              const hasGraphics = !!root.querySelector('canvas, svg');
+
+              return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
             } catch {
               return false;
             }
@@ -1017,8 +1033,19 @@ class WorkerPool {
                 try {
                   const root = document.getElementById('storybook-root');
                   if (!root) return false;
-                  // Simple check: if root exists and has any children or innerHTML, it's ready
-                  return root.children.length > 0 || root.innerHTML.trim().length > 0;
+
+                  // Check multiple indicators of content:
+                  // 1. Has children elements
+                  // 2. Has innerHTML content
+                  // 3. Has text content with visual dimensions
+                  // 4. Has canvas/SVG elements (for graphics-heavy stories)
+                  const hasChildren = root.children.length > 0;
+                  const hasHTML = root.innerHTML.trim().length > 0;
+                  const hasText = !!(root.textContent && root.textContent.trim().length > 0);
+                  const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
+                  const hasGraphics = !!root.querySelector('canvas, svg');
+
+                  return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
                 } catch {
                   return false;
                 }
@@ -1055,7 +1082,15 @@ class WorkerPool {
                     try {
                       const root = document.getElementById('storybook-root');
                       if (!root) return false;
-                      return root.children.length > 0 || root.innerHTML.trim().length > 0;
+
+                      // Check multiple indicators of content
+                      const hasChildren = root.children.length > 0;
+                      const hasHTML = root.innerHTML.trim().length > 0;
+                      const hasText = !!(root.textContent && root.textContent.trim().length > 0);
+                      const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
+                      const hasGraphics = !!root.querySelector('canvas, svg');
+
+                      return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
                     } catch {
                       return false;
                     }
@@ -1103,12 +1138,27 @@ class WorkerPool {
                 try {
                   const root = document.getElementById('storybook-root');
                   if (!root) return { exists: false };
+
+                  // Use the same comprehensive check as the content detection
+                  const hasChildren = root.children.length > 0;
+                  const hasHTML = root.innerHTML.trim().length > 0;
+                  const hasText = !!(root.textContent && root.textContent.trim().length > 0);
+                  const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
+                  const hasGraphics = !!root.querySelector('canvas, svg');
+                  const hasContent =
+                    hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
+
                   return {
                     exists: true,
-                    hasText: !!(root.textContent && root.textContent.trim().length > 0),
+                    hasContent,
+                    hasText,
+                    hasDimensions,
+                    hasGraphics,
                     childrenCount: root.children.length,
                     hasCanvas: !!root.querySelector('canvas'),
                     innerHTMLLength: root.innerHTML.trim().length,
+                    offsetHeight: root.offsetHeight,
+                    offsetWidth: root.offsetWidth,
                     innerHTML: root.innerHTML.substring(0, 200), // First 200 chars for debugging
                   };
                 } catch (evalErr) {
@@ -1127,62 +1177,79 @@ class WorkerPool {
           this.log.debug(
             `Story ${story.id}: Content check failed. Root state: ${JSON.stringify(contentInfo)}`,
           );
-          // If root exists (even if empty), wait a bit more to see if content appears
-          // Then proceed if content loads, or continue if it's truly empty
+          // If root exists and has content, we should have detected it - this is a timing issue
+          // If root exists but truly empty, wait a bit more to see if content appears
           if (contentInfo.exists) {
-            const remainingTime = contentWaitTimeout - (Date.now() - startTime);
-            if (remainingTime > 1000) {
-              // Give it a bit more time to see if content appears
-              this.log.debug(
-                `Story ${story.id}: Root exists but empty, waiting ${Math.min(remainingTime, 2000)}ms more for content...`,
+            // Check if content actually exists but wasn't detected
+            if ((contentInfo as any).hasContent) {
+              this.log.warn(
+                `Story ${story.id}: Content exists but wasn't detected properly. This may indicate a timing issue. Proceeding...`,
               );
-              const extraWaitTime = Math.min(remainingTime, 2000); // Max 2 seconds extra
-              const checkInterval = 200;
-              const checkStart = Date.now();
+              contentReady = true;
+            } else {
+              // Content doesn't exist yet, wait a bit more
+              const remainingTime = contentWaitTimeout - (Date.now() - startTime);
+              if (remainingTime > 1000) {
+                // Give it a bit more time to see if content appears
+                this.log.debug(
+                  `Story ${story.id}: Root exists but empty, waiting ${Math.min(remainingTime, 2000)}ms more for content...`,
+                );
+                const extraWaitTime = Math.min(remainingTime, 2000); // Max 2 seconds extra
+                const checkInterval = 200;
+                const checkStart = Date.now();
 
-              while (Date.now() - checkStart < extraWaitTime) {
-                if (page.isClosed()) {
-                  break;
-                }
-
-                try {
-                  const hasContent = await page.evaluate(() => {
-                    try {
-                      const root = document.getElementById('storybook-root');
-                      if (!root) return false;
-                      return root.children.length > 0 || root.innerHTML.trim().length > 0;
-                    } catch {
-                      return false;
-                    }
-                  });
-
-                  if (hasContent) {
-                    contentReady = true;
-                    this.log.debug(`Story ${story.id}: Content appeared after extra wait`);
+                while (Date.now() - checkStart < extraWaitTime) {
+                  if (page.isClosed()) {
                     break;
                   }
-                } catch (evalError: any) {
-                  if (/target crashed|page crashed/i.test(String(evalError))) {
-                    throw evalError;
+
+                  try {
+                    const hasContent = await page.evaluate(() => {
+                      try {
+                        const root = document.getElementById('storybook-root');
+                        if (!root) return false;
+
+                        // Check multiple indicators of content
+                        const hasChildren = root.children.length > 0;
+                        const hasHTML = root.innerHTML.trim().length > 0;
+                        const hasText = !!(root.textContent && root.textContent.trim().length > 0);
+                        const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
+                        const hasGraphics = !!root.querySelector('canvas, svg');
+
+                        return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
+                      } catch {
+                        return false;
+                      }
+                    });
+
+                    if (hasContent) {
+                      contentReady = true;
+                      this.log.debug(`Story ${story.id}: Content appeared after extra wait`);
+                      break;
+                    }
+                  } catch (evalError: any) {
+                    if (/target crashed|page crashed/i.test(String(evalError))) {
+                      throw evalError;
+                    }
                   }
+
+                  await new Promise((resolve) => setTimeout(resolve, checkInterval));
                 }
 
-                await new Promise((resolve) => setTimeout(resolve, checkInterval));
-              }
-
-              // If still no content but root exists, proceed anyway (may be valid empty state)
-              if (!contentReady) {
+                // If still no content but root exists, proceed anyway (may be valid empty state)
+                if (!contentReady) {
+                  this.log.warn(
+                    `Story ${story.id}: Root exists but remains empty after extra wait. Continuing (may be valid empty state)...`,
+                  );
+                  contentReady = true;
+                }
+              } else {
+                // No time left, but root exists - proceed anyway
                 this.log.warn(
-                  `Story ${story.id}: Root exists but remains empty after extra wait. Continuing (may be valid empty state)...`,
+                  `Story ${story.id}: Root exists but empty, no time left. Continuing anyway (may be empty state)...`,
                 );
                 contentReady = true;
               }
-            } else {
-              // No time left, but root exists - proceed anyway
-              this.log.warn(
-                `Story ${story.id}: Root exists but empty, no time left. Continuing anyway (may be empty state)...`,
-              );
-              contentReady = true;
             }
           } else {
             // Capture a screenshot before throwing to help debug timeout issues
