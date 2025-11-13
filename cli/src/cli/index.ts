@@ -113,8 +113,14 @@ const main = async (): Promise<number> => {
     .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
     .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
     .option('--snapshot-delay <ms>', 'Delay between retries', Number)
-    .option('--include <patterns>', 'Comma-separated include filters')
-    .option('--exclude <patterns>', 'Comma-separated exclude filters')
+    .option(
+      '--include <patterns>',
+      'Comma-separated include filters. Supports glob patterns: * (any chars), ? (single char), [chars] (char class). Examples: "basket*attended", "screens/*", "button-?-[variant]"',
+    )
+    .option(
+      '--exclude <patterns>',
+      'Comma-separated exclude filters. Supports glob patterns: * (any chars), ? (single char), [chars] (char class). Examples: "*test*", "deprecated/*"',
+    )
     .option('--grep <regex>', 'Filter by storyId')
     .option('--update', 'Update baselines')
     .option('--missing-only', 'Create only missing baselines')
