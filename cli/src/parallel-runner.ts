@@ -86,6 +86,7 @@ type SummaryParams = {
   passed: number;
   failed: number;
   skipped: number;
+  cancelled: number;
   created: number;
   updated: number;
   total: number;
@@ -99,6 +100,7 @@ export function generateSummaryMessage({
   passed,
   failed,
   skipped,
+  cancelled,
   created,
   updated,
   total,
@@ -137,6 +139,9 @@ export function generateSummaryMessage({
       breakdown.push(`Created: ${created}`);
       breakdown.push(`Updated: ${updated}`);
       breakdown.push(`Failed: ${failed}`);
+      if (cancelled > 0) {
+        breakdown.push(`Cancelled: ${cancelled}`);
+      }
       if (skipped > 0) {
         breakdown.push(`Skipped: ${skipped}`);
       }
@@ -144,6 +149,9 @@ export function generateSummaryMessage({
     } else {
       breakdown.push(`Passed: ${passed}`);
       breakdown.push(`Failed: ${failed}`);
+      if (cancelled > 0) {
+        breakdown.push(`Cancelled: ${cancelled}`);
+      }
       if (skipped > 0) {
         breakdown.push(`Skipped: ${skipped}`);
       }
@@ -170,6 +178,7 @@ class WorkerPool {
   private results: {
     [storyId: string]: { success: boolean; error?: string; duration: number; action?: string };
   } = {};
+  private cancelledStories = new Set<string>();
   private startTime = Date.now();
   private completed = 0;
   private total: number;
@@ -181,6 +190,9 @@ class WorkerPool {
   private callbacks?: RunCallbacks;
   private log: ReturnType<typeof createLogger>;
   private maxFailuresReached = false;
+  private cancelled = false;
+  private initialBatchStarted = false;
+  private storyViewports = new Map<string, { width: number; height: number } | undefined>();
 
   constructor(
     maxWorkers: number,
@@ -197,15 +209,70 @@ class WorkerPool {
     this.singleLineMode = Boolean(config.summary || config.showProgress);
     this.printUnderSpinner = printUnderSpinner;
     this.log = createLogger(config.logLevel);
+
+    // Pre-calculate viewports for all stories
+    this.preCalculateViewports();
+  }
+
+  private preCalculateViewports(): void {
+    for (const story of this.queue) {
+      let viewport: { width: number; height: number } | undefined;
+      const viewportConfig = this.config.perStory?.[story.id]?.viewport;
+
+      if (viewportConfig) {
+        // Per-story override exists
+        if (typeof viewportConfig === 'object') {
+          viewport = viewportConfig;
+        } else if (typeof viewportConfig === 'string') {
+          // viewportConfig is a string name, look it up
+          const viewportSize = this.config.viewportSizes.find((v) => v.name === viewportConfig);
+          if (viewportSize) {
+            viewport = { width: viewportSize.width, height: viewportSize.height };
+          }
+        }
+      } else {
+        // No per-story override, check if story defines its own viewport preference
+        // Check both parameters.viewport.defaultViewport and globals.viewport.value
+        const storyViewportName =
+          story.parameters?.viewport?.defaultViewport || story.globals?.viewport?.value;
+        if (storyViewportName) {
+          const storyViewportSize = this.config.viewportSizes.find(
+            (v) => v.name === storyViewportName,
+          );
+          if (storyViewportSize) {
+            viewport = { width: storyViewportSize.width, height: storyViewportSize.height };
+          }
+          // If story has a viewport preference we don't recognize, leave viewport undefined
+          // so Storybook can apply its own viewport settings
+        }
+
+        // Fall back to global default viewport only if story has no viewport preference at all
+        if (!viewport && !storyViewportName) {
+          const defaultViewportName = this.config.defaultViewport;
+          const defaultViewportSize = this.config.viewportSizes.find(
+            (v) => v.name === defaultViewportName,
+          );
+          if (defaultViewportSize) {
+            viewport = { width: defaultViewportSize.width, height: defaultViewportSize.height };
+          }
+        }
+      }
+
+      this.storyViewports.set(story.id, viewport);
+    }
+  }
+
+  getViewport(storyId: string): { width: number; height: number } | undefined {
+    return this.storyViewports.get(storyId);
   }
 
   // Unified method for printing story results
   private printStoryResult(
-    story: DiscoveredStory,
     displayName: string,
-    result: 'success' | 'skipped' | 'failed',
+    result: 'success' | 'skipped' | 'failed' | 'cancelled',
     duration: number,
-    errorDetails?: { reason: string; url: string; diffPath?: string },
+    errorDetails?: { reason: string; url: string; diffPath?: string; expectedPath?: string },
+    viewport?: { width: number; height: number },
   ): void {
     // Skip output if quiet mode
     if (this.config.quiet) {
@@ -217,12 +284,13 @@ class WorkerPool {
       const secs = durationMs / 1000;
       const secsStr = secs.toFixed(1);
       const unit = chalk.dim('s');
-      if (secs < 2) {
-        return `${chalk.green(secsStr)}${unit}`;
-      } else if (secs < 4) {
-        return `${chalk.yellow(secsStr)}${unit}`;
+      const storyLoadTime = this.config.storyLoadDelay ?? 0;
+      if (secs < storyLoadTime / 1000 + 2) {
+        return chalk.green(secsStr + chalk.dim(unit));
+      } else if (secs < storyLoadTime / 1000 + 4) {
+        return chalk.yellow(secsStr + chalk.dim(unit));
       } else {
-        return `${chalk.red(secsStr)}${unit}`;
+        return chalk.red(secsStr + chalk.dim(unit));
       }
     };
 
@@ -230,16 +298,22 @@ class WorkerPool {
     let line: string;
     let logLevel: 'info' | 'error' = 'info';
 
+    // Format viewport info
+    const viewportInfo = viewport ? chalk.dim(`(${viewport.width}×${viewport.height})`) : '';
+
     switch (result) {
       case 'success':
-        line = `${chalk.green('✓')} ${displayName} ${colorDuration(duration)}`;
+        line = `${chalk.green('✓')} ${displayName} ${colorDuration(duration)} ${viewportInfo}`;
         break;
       case 'skipped':
-        line = `${chalk.yellow('○')} ${displayName} ${colorDuration(duration)} ${chalk.dim('(no snapshot)')}`;
+        line = `${chalk.yellow('○')} ${displayName} ${colorDuration(duration)} ${chalk.dim('(no snapshot)')} ${viewportInfo}`;
         break;
       case 'failed':
-        line = `${chalk.red('✗')} ${displayName} ${colorDuration(duration)}`;
+        line = `${chalk.red('✗')} ${displayName} ${colorDuration(duration)} ${viewportInfo}`;
         logLevel = 'error';
+        break;
+      case 'cancelled':
+        line = `${chalk.gray('○')} ${displayName} ${colorDuration(duration)} ${chalk.dim('(cancelled)')} ${viewportInfo}`;
         break;
     }
 
@@ -278,6 +352,11 @@ class WorkerPool {
 
       const detailLines = [`  ${coloredReason}`, `  ${chalk.gray(`URL: ${errorDetails.url}`)}`];
 
+      if (errorDetails.expectedPath) {
+        // Show the baseline snapshot path
+        detailLines.push(`  ${chalk.gray(`Baseline: ${errorDetails.expectedPath}`)}`);
+      }
+
       if (errorDetails.diffPath) {
         // Keep a separate diff line as well for easy parsing/copying
         detailLines.push(`  ${chalk.gray(`Diff: ${errorDetails.diffPath}`)}`);
@@ -307,6 +386,64 @@ class WorkerPool {
     return this.results;
   }
 
+  cancel() {
+    this.cancelled = true;
+    this.log.debug('Worker pool cancelled - marking remaining queued tests as cancelled');
+
+    // Mark all remaining queued stories as cancelled
+    while (this.queue.length > 0) {
+      const story = this.queue.shift()!;
+      this.handleCancelledStory(story, this.startTime);
+    }
+  }
+
+  private handleCancelledStory(story: DiscoveredStory, startTime: number): void {
+    const duration = Date.now() - startTime;
+
+    // Normalize slashes to have consistent spacing
+    const normalizeSlashes = (str: string): string => {
+      return str.replace(/\s*\/\s*/g, ' / ');
+    };
+
+    const title = story.title ? normalizeSlashes(story.title) : '';
+    const name = normalizeSlashes(story.name);
+    const displayName = title ? `${title} / ${name}` : name;
+
+    // Record cancelled result
+    this.results[story.id] = {
+      success: false, // Cancelled is not a success, but also not a failure
+      duration,
+      action: 'cancelled',
+    };
+
+    // Track cancelled stories
+    this.cancelledStories.add(story.id);
+
+    // Notify callbacks
+    this.callbacks?.onResult?.({
+      storyId: story.id,
+      storyName: displayName,
+      status: 'cancelled',
+      duration,
+      action: 'cancelled',
+    });
+
+    this.callbacks?.onStoryComplete?.({
+      storyId: story.id,
+      storyName: displayName,
+      status: 'cancelled',
+      duration,
+      action: 'cancelled',
+    });
+
+    // Don't print individual cancelled stories to avoid cluttering output
+    // The summary will show the total count of cancelled tests
+    // this.printStoryResult(story, displayName, 'cancelled', duration);
+
+    this.completed++;
+    this.onProgress?.(this.completed, this.total, this.results);
+  }
+
   async run(
     onProgress?: (completed: number, total: number, results: any) => void,
     onComplete?: (results: any) => void,
@@ -315,16 +452,18 @@ class WorkerPool {
     this.onComplete = onComplete;
 
     return new Promise((resolve) => {
-      // Start initial workers
+      // Start initial workers with staggered launches
       for (let i = 0; i < Math.min(this.maxWorkers, this.queue.length); i++) {
-        this.spawnWorker();
+        this.spawnWorker(true);
       }
 
       // Check for completion periodically
       const checkComplete = () => {
         // Check if maxFailures is reached and no workers are active
-        if (this.maxFailuresReached && this.activeWorkers === 0) {
-          const failed = Object.values(this.results).filter((r) => !r.success).length;
+        if ((this.maxFailuresReached || this.cancelled) && this.activeWorkers === 0) {
+          const failed = Object.values(this.results).filter(
+            (r) => !r.success && r.action === 'failed',
+          ).length;
           const success = failed === 0;
           this.onComplete?.(this.results);
           resolve({ success, failed });
@@ -332,7 +471,9 @@ class WorkerPool {
         }
 
         if (this.completed >= this.total) {
-          const failed = Object.values(this.results).filter((r) => !r.success).length;
+          const failed = Object.values(this.results).filter(
+            (r) => !r.success && r.action === 'failed',
+          ).length;
           const success = failed === 0;
           this.onComplete?.(this.results);
           resolve({ success, failed });
@@ -344,29 +485,40 @@ class WorkerPool {
     });
   }
 
-  private spawnWorker() {
+  private spawnWorker(staggerLaunch = false) {
     // Continuously spawn workers until we reach capacity or run out of work
-    // Stop spawning if maxFailures is reached
+    // Stop spawning if maxFailures is reached or cancelled
     while (
       this.queue.length > 0 &&
       this.activeWorkers < this.maxWorkers &&
-      !this.maxFailuresReached
+      !this.maxFailuresReached &&
+      !this.cancelled
     ) {
       this.activeWorkers++;
       const story = this.queue.shift()!;
 
-      this.runStoryTest(story).finally(() => {
+      this.runStoryTest(story, staggerLaunch).finally(() => {
         this.activeWorkers--;
         // After completion, check if we need to spawn more workers
         // Use setImmediate to avoid deep recursion
-        setImmediate(() => this.spawnWorker());
+        // But only spawn if we haven't reached max failures or been cancelled
+        if (!this.maxFailuresReached && !this.cancelled) {
+          setImmediate(() => this.spawnWorker());
+        }
       });
     }
   }
 
-  private async runStoryTest(story: DiscoveredStory): Promise<void> {
+  private async runStoryTest(story: DiscoveredStory, staggerLaunch = false): Promise<void> {
     const startTime = Date.now();
     this.log.debug(`Starting test for story: ${story.id} (${story.title}/${story.name})`);
+
+    // Check if cancelled before starting
+    if (this.cancelled) {
+      this.log.debug(`Story ${story.id}: Test cancelled before execution`);
+      this.handleCancelledStory(story, startTime);
+      return;
+    }
 
     // Notify callbacks that story has started
     this.callbacks?.onStoryStart?.(story.id, `${story.title}/${story.name}`);
@@ -380,8 +532,19 @@ class WorkerPool {
     const toDisplayName = (): string => {
       // Use title as the directory path and name as the basename
       // This is closer to the story ID structure (title--name) while keeping path splitting
-      return story.title ? `${story.title}/${story.name}` : story.name;
+      // Normalize slashes to have consistent spacing
+      const normalizeSlashes = (str: string): string => {
+        return str.replace(/\s*\/\s*/g, chalk.cyan(' / '));
+      };
+
+      const title = story.title ? normalizeSlashes(story.title) : '';
+      const name = normalizeSlashes(story.name);
+
+      return title ? `${title} / ${name}` : name;
     };
+    // Get pre-calculated viewport for this story
+    const storyViewport = this.getViewport(story.id);
+
     const displayName = toDisplayName();
 
     // Retry logic: attempt up to retries + 1 times (initial attempt + retries)
@@ -389,12 +552,19 @@ class WorkerPool {
     let lastError: Error | null = null;
     let result: string | null = null;
     let page: Page | undefined; // Store page reference for DOM dumping on timeout
+    let displayViewport = storyViewport; // Will be updated with actual viewport if available
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        // Small random delay to stagger browser launches and reduce resource contention
-        if (attempt === 1) {
-          const delay = Math.random() * 50; // 0-50ms random delay only on first attempt
+        // Small staggered delay to stagger browser launches and reduce resource contention
+        // Only apply staggering to the initial batch of workers
+        if (attempt === 1 && staggerLaunch) {
+          // Use a simple hash of story ID to create consistent, staggered delays
+          let hash = 0;
+          for (let i = 0; i < story.id.length; i++) {
+            hash = ((hash << 5) - hash + story.id.charCodeAt(i)) & 0xffffffff;
+          }
+          const delay = Math.abs(hash) % 50; // 0-49ms staggered delay based on story ID
           this.log.debug(
             `Story ${story.id}: Staggering browser launch (delay: ${delay.toFixed(1)}ms)`,
           );
@@ -406,15 +576,24 @@ class WorkerPool {
         }
 
         const attemptStart = Date.now();
-        const testResult = await this.executeSingleTestAttempt(story);
+        const testResult = await this.executeSingleTestAttempt(story, storyViewport);
         result = testResult.result;
         page = testResult.page; // Store page reference for potential DOM dump
+        // Use actual viewport from page if available, otherwise fall back to configured viewport
+        displayViewport = testResult.actualViewport || storyViewport;
         const attemptDuration = Date.now() - attemptStart;
         this.log.debug(`Story ${story.id}: Attempt ${attempt} succeeded in ${attemptDuration}ms`);
         lastError = null;
         break; // Success, exit retry loop
       } catch (error) {
         lastError = error as Error;
+
+        // Check if this is a cancellation error - don't retry these
+        const isCancelled = String(lastError).includes('Test cancelled');
+        if (isCancelled) {
+          this.log.debug(`Story ${story.id}: Test cancelled, not retrying`);
+          break; // Exit retry loop
+        }
 
         // Dump DOM if timeout or crash occurred (on any attempt, not just last)
         const isTimeout =
@@ -472,188 +651,241 @@ class WorkerPool {
       });
 
       // Print result using unified method
-      this.printStoryResult(story, displayName, 'success', duration);
+      this.printStoryResult(displayName, 'success', duration, undefined, displayViewport);
     } else {
-      // Check if this is a missing baseline (should be skipped)
-      const isMissingBaseline =
-        lastError &&
-        (String(lastError).includes('Missing baseline') ||
-          String(lastError).includes('Could not load base image'));
+      // Check if this test was cancelled
+      const isCancelled = lastError && String(lastError).includes('Test cancelled');
 
-      if (isMissingBaseline) {
-        // Skipped - no snapshot exists
+      if (isCancelled) {
+        // Cancelled
         this.results[story.id] = {
-          success: true, // Skipped is considered successful (not a failure)
+          success: false, // Cancelled is not a success, but also not a failure for maxFailures counting
           duration,
-          action: 'skipped',
+          action: 'cancelled',
         };
 
-        // Notify callbacks of skipped result
+        // Track cancelled stories
+        this.cancelledStories.add(story.id);
+
+        // Notify callbacks of cancelled result
         this.callbacks?.onResult?.({
           storyId: story.id,
           storyName: displayName,
-          status: 'skipped',
+          status: 'cancelled',
           duration,
-          action: 'skipped',
+          action: 'cancelled',
         });
 
         this.callbacks?.onStoryComplete?.({
           storyId: story.id,
           storyName: displayName,
-          status: 'skipped',
+          status: 'cancelled',
           duration,
-          action: 'skipped',
+          action: 'cancelled',
         });
 
-        // Print result using unified method
-        this.printStoryResult(story, displayName, 'skipped', duration);
+        // Don't print individual cancelled stories to avoid cluttering output
+        // The summary will show the total count of cancelled tests
+        // this.printStoryResult(story, displayName, 'cancelled', duration);
       } else {
-        // Failed after all retries
-        this.results[story.id] = {
-          success: false,
-          error: lastError ? String(lastError) : 'Unknown error',
-          duration,
-          action: 'failed',
-        };
+        // Check if this is a missing baseline (should be skipped)
+        const isMissingBaseline =
+          lastError &&
+          (String(lastError).includes('Missing baseline') ||
+            String(lastError).includes('Could not load base image'));
 
-        // Check if maxFailures is reached
-        const failedCount = Object.values(this.results).filter((r) => r.action === 'failed').length;
-        if (this.config.maxFailures && failedCount >= this.config.maxFailures) {
-          this.maxFailuresReached = true;
-          this.log.warn(
-            `Max failures (${this.config.maxFailures}) reached. Stopping test execution.`,
-          );
-        }
+        if (isMissingBaseline) {
+          // Skipped - no snapshot exists
+          this.results[story.id] = {
+            success: true, // Skipped is considered successful (not a failure)
+            duration,
+            action: 'skipped',
+          };
 
-        // Extract diff image path from error message for visual regression failures
-        const errorStr = lastError ? String(lastError) : '';
-        const diffMatch = errorStr.match(/diff: (.+)\)/);
-        let diffPath = diffMatch ? diffMatch[1] : null;
+          // Notify callbacks of skipped result
+          this.callbacks?.onResult?.({
+            storyId: story.id,
+            storyName: displayName,
+            status: 'skipped',
+            duration,
+            action: 'skipped',
+          });
 
-        // If no diff in error message but we have a timeout, check if screenshot was captured
-        // and generate a diff to help debug the timeout
-        if (!diffPath && /timeout/i.test(errorStr)) {
-          try {
-            const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
-            const actual = path.join(
-              path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-              path.basename(story.snapshotRelPath),
-            );
-            if (fs.existsSync(actual) && fs.existsSync(expected)) {
-              // Generate diff for timeout cases to show what was captured
-              const timeoutDiffPath = path.join(
-                path.dirname(actual),
-                `${path.basename(actual, path.extname(actual))}.diff.png`,
-              );
-              try {
-                const odiffResult = await odiffCompare(expected, actual, timeoutDiffPath, {
-                  threshold: this.config.threshold,
-                  outputDiffMask: true,
-                });
-                if (!odiffResult.match && fs.existsSync(timeoutDiffPath)) {
-                  diffPath = timeoutDiffPath;
-                  this.log.debug(`Story ${story.id}: Generated diff for timeout case: ${diffPath}`);
-                }
-              } catch (diffError) {
-                this.log.debug(
-                  `Story ${story.id}: Failed to generate diff on timeout: ${diffError}`,
-                );
-              }
-            }
-          } catch (checkError) {
-            this.log.debug(
-              `Story ${story.id}: Error checking for timeout screenshot: ${checkError}`,
-            );
-          }
-        }
+          this.callbacks?.onStoryComplete?.({
+            storyId: story.id,
+            storyName: displayName,
+            status: 'skipped',
+            duration,
+            action: 'skipped',
+          });
 
-        // Notify callbacks of failed result
-        this.callbacks?.onResult?.({
-          storyId: story.id,
-          storyName: displayName,
-          status: 'failed',
-          duration,
-          error: lastError ? String(lastError) : 'Unknown error',
-          diffPath,
-          actualPath: undefined, // Could be extracted from error if needed
-          expectedPath: undefined, // Could be extracted from error if needed
-          errorPath: diffPath, // Use diff path as error path for now
-          errorType: 'screenshot_mismatch',
-        });
+          // Print result using unified method
+          this.printStoryResult(displayName, 'skipped', duration, undefined, displayViewport);
+        } else {
+          // Failed after all retries
+          this.results[story.id] = {
+            success: false,
+            error: lastError ? String(lastError) : 'Unknown error',
+            duration,
+            action: 'failed',
+          };
 
-        this.callbacks?.onStoryComplete?.({
-          storyId: story.id,
-          storyName: displayName,
-          status: 'failed',
-          duration,
-          error: lastError ? String(lastError) : 'Unknown error',
-          diffPath,
-          actualPath: undefined,
-          expectedPath: undefined,
-          errorPath: diffPath,
-          errorType: 'screenshot_mismatch',
-        });
-
-        // Extract error details for printing
-        // Use the diffPath we computed (which may include timeout-generated diffs)
-        const printDiffPath = diffPath || undefined;
-
-        // Extract a user-friendly error message
-        let errorReason = 'Unknown error';
-        if (lastError) {
-          const errorStr = String(lastError);
-          const isImagesDiffer = /images differ/i.test(errorStr);
-          const isOdiffFailed = /odiff comparison failed/i.test(errorStr);
-          if (errorStr.includes('Missing baseline')) {
-            errorReason = 'No baseline snapshot found';
-          } else if (errorStr.includes('Could not load base image')) {
-            errorReason = 'Baseline snapshot file not found or corrupted';
-          } else if (isImagesDiffer) {
-            errorReason = 'Visual differences detected';
-          } else if (isOdiffFailed) {
-            errorReason = 'Image comparison failed (odiff)';
-          } else if (/target crashed|page crashed/i.test(errorStr)) {
-            errorReason = 'Browser crashed (likely due to resource constraints)';
-          } else if (/timeout/i.test(errorStr)) {
-            // Check if crash occurred during timeout
-            const actual = path.join(
-              path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-              path.basename(story.snapshotRelPath),
-            );
-            if (!fs.existsSync(actual) && /target crashed|page crashed/i.test(errorStr)) {
-              errorReason = 'Operation timed out (browser crashed before screenshot)';
+          // Check if maxFailures is reached
+          const failedCount = Object.values(this.results).filter(
+            (r) => r.action === 'failed',
+          ).length;
+          if (this.config.maxFailures && failedCount >= this.config.maxFailures) {
+            this.maxFailuresReached = true;
+            const maxFailuresMessage = `Max failures (${this.config.maxFailures}) reached. Stopping test execution.`;
+            if (this.printUnderSpinner) {
+              this.printUnderSpinner(maxFailuresMessage);
             } else {
-              errorReason = 'Operation timed out';
+              this.log.warn(maxFailuresMessage);
             }
-          } else if (/network/i.test(errorStr)) {
-            errorReason = 'Network error';
-          } else if (errorStr.includes('Screenshot capture failed')) {
-            errorReason = 'Failed to capture screenshot';
-          } else {
-            // Use the first line of the error as a summary
-            errorReason = errorStr.split('\n')[0];
+            // Cancel all remaining tests
+            this.cancel();
           }
-        }
 
-        // Print result using unified method
-        // Use original URL (localhost) for display instead of transformed URL (host.docker.internal)
-        let displayUrl = story.url;
-        if (this.config.originalUrl) {
-          try {
-            const originalUrlObj = new URL(this.config.originalUrl);
-            const storyUrlObj = new URL(story.url);
-            displayUrl = story.url.replace(storyUrlObj.origin, originalUrlObj.origin);
-          } catch {
-            // Fall back to original URL if parsing fails
-            displayUrl = story.url;
+          // Extract diff image path from error message for visual regression failures
+          const errorStr = lastError ? String(lastError) : '';
+          const diffMatch = errorStr.match(/diff: (.+)\)/);
+          let diffPath = diffMatch ? diffMatch[1] : null;
+
+          // If no diff in error message but we have a timeout, check if screenshot was captured
+          // and generate a diff to help debug the timeout
+          if (!diffPath && /timeout/i.test(errorStr)) {
+            try {
+              const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
+              const actual = path.join(
+                path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+                path.basename(story.snapshotRelPath),
+              );
+              if (fs.existsSync(actual) && fs.existsSync(expected)) {
+                // Generate diff for timeout cases to show what was captured
+                const timeoutDiffPath = path.join(
+                  path.dirname(actual),
+                  `${path.basename(actual, path.extname(actual))}.diff.png`,
+                );
+                try {
+                  const odiffResult = await odiffCompare(expected, actual, timeoutDiffPath, {
+                    threshold: this.config.threshold,
+                    outputDiffMask: true,
+                  });
+                  if (!odiffResult.match && fs.existsSync(timeoutDiffPath)) {
+                    diffPath = timeoutDiffPath;
+                    this.log.debug(
+                      `Story ${story.id}: Generated diff for timeout case: ${diffPath}`,
+                    );
+                  }
+                } catch (diffError) {
+                  this.log.debug(
+                    `Story ${story.id}: Failed to generate diff on timeout: ${diffError}`,
+                  );
+                }
+              }
+            } catch (checkError) {
+              this.log.debug(
+                `Story ${story.id}: Error checking for timeout screenshot: ${checkError}`,
+              );
+            }
           }
-        }
-        this.printStoryResult(story, displayName, 'failed', duration, {
-          reason: errorReason,
-          url: displayUrl,
-          diffPath: printDiffPath,
-        });
-      }
+
+          // Notify callbacks of failed result
+          this.callbacks?.onResult?.({
+            storyId: story.id,
+            storyName: displayName,
+            status: 'failed',
+            duration,
+            error: lastError ? String(lastError) : 'Unknown error',
+            diffPath,
+            actualPath: undefined, // Could be extracted from error if needed
+            expectedPath: undefined, // Could be extracted from error if needed
+            errorPath: diffPath, // Use diff path as error path for now
+            errorType: 'screenshot_mismatch',
+          });
+
+          this.callbacks?.onStoryComplete?.({
+            storyId: story.id,
+            storyName: displayName,
+            status: 'failed',
+            duration,
+            error: lastError ? String(lastError) : 'Unknown error',
+            diffPath,
+            actualPath: undefined,
+            expectedPath: undefined,
+            errorPath: diffPath,
+            errorType: 'screenshot_mismatch',
+          });
+
+          // Extract error details for printing
+          // Use the diffPath we computed (which may include timeout-generated diffs)
+          const printDiffPath = diffPath || undefined;
+
+          // Extract a user-friendly error message
+          let errorReason = 'Unknown error';
+          if (lastError) {
+            const errorStr = String(lastError);
+            const isImagesDiffer = /images differ/i.test(errorStr);
+            const isOdiffFailed = /odiff comparison failed/i.test(errorStr);
+            if (errorStr.includes('Missing baseline')) {
+              errorReason = 'No baseline snapshot found';
+            } else if (errorStr.includes('Could not load base image')) {
+              errorReason = 'Baseline snapshot file not found or corrupted';
+            } else if (isImagesDiffer) {
+              errorReason = 'Visual differences detected';
+            } else if (isOdiffFailed) {
+              errorReason = 'Image comparison failed (odiff)';
+            } else if (/target crashed|page crashed/i.test(errorStr)) {
+              errorReason = 'Browser crashed (likely due to resource constraints)';
+            } else if (/timeout/i.test(errorStr)) {
+              // Check if crash occurred during timeout
+              const actual = path.join(
+                path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+                path.basename(story.snapshotRelPath),
+              );
+              if (!fs.existsSync(actual) && /target crashed|page crashed/i.test(errorStr)) {
+                errorReason = 'Operation timed out (browser crashed before screenshot)';
+              } else {
+                errorReason = 'Operation timed out';
+              }
+            } else if (/network/i.test(errorStr)) {
+              errorReason = 'Network error';
+            } else if (errorStr.includes('Screenshot capture failed')) {
+              errorReason = 'Failed to capture screenshot';
+            } else {
+              // Use the first line of the error as a summary
+              errorReason = errorStr.split('\n')[0];
+            }
+          }
+
+          // Print result using unified method
+          // Use original URL (localhost) for display instead of transformed URL (host.docker.internal)
+          let displayUrl = story.url;
+          if (this.config.originalUrl) {
+            try {
+              const originalUrlObj = new URL(this.config.originalUrl);
+              const storyUrlObj = new URL(story.url);
+              displayUrl = story.url.replace(storyUrlObj.origin, originalUrlObj.origin);
+            } catch {
+              // Fall back to original URL if parsing fails
+              displayUrl = story.url;
+            }
+          }
+          const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
+          this.printStoryResult(
+            displayName,
+            'failed',
+            duration,
+            {
+              reason: errorReason,
+              url: displayUrl,
+              diffPath: printDiffPath,
+              expectedPath: expected,
+            },
+            displayViewport,
+          );
+        } // End of else block for missing baseline check
+      } // End of else block for cancelled check
     }
 
     this.completed++;
@@ -770,7 +1002,8 @@ class WorkerPool {
 
   private async executeSingleTestAttempt(
     story: DiscoveredStory,
-  ): Promise<{ result: string; page?: Page }> {
+    viewport?: { width: number; height: number },
+  ): Promise<{ result: string; page?: Page; actualViewport?: { width: number; height: number } }> {
     let browser: Browser | undefined;
     let page: Page | undefined;
 
@@ -830,13 +1063,21 @@ class WorkerPool {
       });
       this.log.debug(`Story ${story.id}: Browser launched in ${Date.now() - browserStart}ms`);
 
-      const viewport = this.config.perStory?.[story.id]?.viewport;
+      // Check for cancellation after browser launch
+      if (this.cancelled) {
+        this.log.debug(`Story ${story.id}: Test cancelled after browser launch, cleaning up`);
+        if (browser.isConnected()) {
+          await browser.close();
+        }
+        throw new Error('Test cancelled');
+      }
+
       this.log.debug(
         `Story ${story.id}: Creating browser context${viewport ? ` with viewport: ${JSON.stringify(viewport)}` : ''}...`,
       );
       // Configure context with proxy settings if available (for CI environments)
       const contextOptions: Parameters<typeof browser.newContext>[0] = {
-        viewport: typeof viewport === 'object' ? viewport : undefined,
+        viewport: viewport,
         // Ignore HTTPS errors in CI - proxy might interfere
         ignoreHTTPSErrors: true,
       };
@@ -940,6 +1181,13 @@ class WorkerPool {
         });
       }
 
+      // Check for cancellation before navigation
+      if (this.cancelled) {
+        this.log.debug(`Story ${story.id}: Test cancelled before navigation, cleaning up`);
+        await browser.close();
+        throw new Error('Test cancelled');
+      }
+
       // Navigate and wait for story to load
       // Page-level timeouts are already set above
       // Use 'commit' first - it fires immediately when response headers are received
@@ -974,10 +1222,17 @@ class WorkerPool {
 
       this.log.debug(`Story ${story.id}: Navigation completed in ${Date.now() - navStart}ms`);
 
-      // Wait for Storybook root to be attached
-      this.log.debug(`Story ${story.id}: Waiting for #storybook-root...`);
-      await page.waitForSelector('#storybook-root', { state: 'attached', timeout: pageTimeout });
-      this.log.debug(`Story ${story.id}: Storybook root found`);
+      // Check for cancellation before waiting for root
+      if (this.cancelled) {
+        this.log.debug(`Story ${story.id}: Test cancelled before waiting for root, cleaning up`);
+        await browser.close();
+        throw new Error('Test cancelled');
+      }
+
+      // // Wait for Storybook root to be attached
+      // this.log.debug(`Story ${story.id}: Waiting for #storybook-root...`);
+      // await page.waitForSelector('#storybook-root', { state: 'attached', timeout: pageTimeout });
+      // this.log.debug(`Story ${story.id}: Storybook root found`);
 
       // Verify Date mock is working (it was injected via evaluateOnNewDocument before navigation)
       if (this.config.fixDate && !page.isClosed()) {
@@ -999,489 +1254,276 @@ class WorkerPool {
         }
       }
 
-      // Quick check: Is content already ready? (stories may load instantly)
-      // Add a small delay to allow initial render to complete
-      await page.waitForTimeout(100);
+      await page.waitForSelector('body.sb-show-main');
+      await page.waitForSelector('#storybook-root');
 
-      let contentReady = false;
-      if (!page.isClosed()) {
-        try {
-          const hasContent = await page.evaluate(() => {
-            try {
-              const root = document.getElementById('storybook-root');
-              if (!root) return false;
+      // Wait for the storybook root to have content (not be empty)
+      await page.waitForFunction(
+        () => {
+          const root = document.getElementById('storybook-root');
+          if (!root) return false;
 
-              // Check multiple indicators of content:
-              // 1. Has children elements
-              // 2. Has innerHTML content
-              // 3. Has text content
-              // 4. Has visual dimensions (rendered content)
-              // 5. Has canvas/SVG elements (for graphics-heavy stories)
-              const hasChildren = root.children.length > 0;
-              const hasHTML = root.innerHTML.trim().length > 0;
-              const hasText = !!(root.textContent && root.textContent.trim().length > 0);
-              const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
-              const hasGraphics = !!root.querySelector('canvas, svg');
+          // Check multiple indicators of content:
+          // 1. Has children elements
+          // 2. Has innerHTML content
+          // 3. Has text content with visual dimensions
+          // 4. Has canvas/SVG elements (for graphics-heavy stories)
+          const hasChildren = root.children.length > 0;
+          const hasHTML = root.innerHTML.trim().length > 0;
+          const hasText = !!(root.textContent && root.textContent.trim().length > 0);
+          const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
+          const hasGraphics = !!root.querySelector('canvas, svg');
 
-              return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
-            } catch {
-              return false;
-            }
-          });
-          if (hasContent) {
-            contentReady = true;
-            this.log.debug(
-              `Story ${story.id}: Content already ready (checked immediately after root found)`,
-            );
-          }
-        } catch (e: any) {
-          if (/target crashed|page crashed/i.test(String(e))) {
-            this.log.debug(`Story ${story.id}: Page crashed during immediate content check`);
-            throw e;
-          }
-          // Continue to wait if check fails
-        }
-      }
-
-      // Wait for story content to actually load - Storybook specific waiting
-      // Use fast waitForFunction first, then fall back to polling if needed
-      // Respect testTimeout from config - if stories take longer than configured, fail fast
-      const contentWaitTimeout = pageTimeout;
-      const startTime = Date.now();
-
-      // Only wait if content isn't already ready from immediate check
-      if (!contentReady) {
-        this.log.debug(
-          `Story ${story.id}: Waiting for story content (timeout: ${contentWaitTimeout}ms)...`,
-        );
-
-        try {
-          // First try: Use waitForFunction for fast path (optimized by Playwright)
-          // Use 80% of timeout for fast path, leaving 20% for polling fallback
-          const fastPathTimeout = Math.floor(contentWaitTimeout * 0.8);
-          try {
-            await page.waitForFunction(
-              () => {
-                try {
-                  const root = document.getElementById('storybook-root');
-                  if (!root) return false;
-
-                  // Check multiple indicators of content:
-                  // 1. Has children elements
-                  // 2. Has innerHTML content
-                  // 3. Has text content with visual dimensions
-                  // 4. Has canvas/SVG elements (for graphics-heavy stories)
-                  const hasChildren = root.children.length > 0;
-                  const hasHTML = root.innerHTML.trim().length > 0;
-                  const hasText = !!(root.textContent && root.textContent.trim().length > 0);
-                  const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
-                  const hasGraphics = !!root.querySelector('canvas, svg');
-
-                  return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
-                } catch {
-                  return false;
-                }
-              },
-              { timeout: fastPathTimeout },
-            );
-            contentReady = true;
-            this.log.debug(`Story ${story.id}: Story content loaded (fast path)`);
-          } catch (fastPathError: any) {
-            // Fast path failed - check if page crashed or just timed out
-            if (/target crashed|page crashed/i.test(String(fastPathError))) {
-              this.log.debug(`Story ${story.id}: Page crashed during fast path check`);
-              throw fastPathError;
-            }
-
-            // Fast path timed out, but we still have time - fall back to polling
-            const remainingTime = contentWaitTimeout - (Date.now() - startTime);
-            if (remainingTime > 0) {
-              this.log.debug(
-                `Story ${story.id}: Fast path timed out, falling back to polling (${remainingTime}ms remaining)...`,
-              );
-
-              // Fallback: Manual polling with shorter intervals
-              const pollInterval = 200; // Check every 200ms
-              const pollStartTime = Date.now();
-
-              while (Date.now() - pollStartTime < remainingTime) {
-                if (page.isClosed()) {
-                  throw new Error('Page closed during content polling');
-                }
-
-                try {
-                  const hasContent = await page.evaluate(() => {
-                    try {
-                      const root = document.getElementById('storybook-root');
-                      if (!root) return false;
-
-                      // Check multiple indicators of content
-                      const hasChildren = root.children.length > 0;
-                      const hasHTML = root.innerHTML.trim().length > 0;
-                      const hasText = !!(root.textContent && root.textContent.trim().length > 0);
-                      const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
-                      const hasGraphics = !!root.querySelector('canvas, svg');
-
-                      return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
-                    } catch {
-                      return false;
-                    }
-                  });
-
-                  if (hasContent) {
-                    contentReady = true;
-                    this.log.debug(`Story ${story.id}: Story content loaded (polling fallback)`);
-                    break;
-                  }
-                } catch (evalError: any) {
-                  // If evaluation fails, page might be crashing
-                  if (/target crashed|page crashed/i.test(String(evalError))) {
-                    this.log.debug(`Story ${story.id}: Page crashed during polling fallback`);
-                    throw evalError;
-                  }
-                  // Other evaluation errors - continue polling
-                }
-
-                // Wait before next poll
-                await new Promise((resolve) => setTimeout(resolve, pollInterval));
-              }
-            }
-
-            if (!contentReady) {
-              throw new Error(`Timeout waiting for story content after ${contentWaitTimeout}ms`);
-            }
-          }
-        } catch (e: any) {
-          // Log what we found for debugging
-          // Use try-catch around page.evaluate in case the page crashed
-          let contentInfo: {
-            exists: boolean;
-            hasText?: boolean;
-            childrenCount?: number;
-            hasCanvas?: boolean;
-            innerHTMLLength?: number;
-            innerHTML?: string;
-            error?: string;
-          } = { exists: false, error: 'Failed to evaluate' };
-
-          try {
-            if (!page.isClosed()) {
-              contentInfo = await page.evaluate(() => {
-                try {
-                  const root = document.getElementById('storybook-root');
-                  if (!root) return { exists: false };
-
-                  // Use the same comprehensive check as the content detection
-                  const hasChildren = root.children.length > 0;
-                  const hasHTML = root.innerHTML.trim().length > 0;
-                  const hasText = !!(root.textContent && root.textContent.trim().length > 0);
-                  const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
-                  const hasGraphics = !!root.querySelector('canvas, svg');
-                  const hasContent =
-                    hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
-
-                  return {
-                    exists: true,
-                    hasContent,
-                    hasText,
-                    hasDimensions,
-                    hasGraphics,
-                    childrenCount: root.children.length,
-                    hasCanvas: !!root.querySelector('canvas'),
-                    innerHTMLLength: root.innerHTML.trim().length,
-                    offsetHeight: root.offsetHeight,
-                    offsetWidth: root.offsetWidth,
-                    innerHTML: root.innerHTML.substring(0, 200), // First 200 chars for debugging
-                  };
-                } catch (evalErr) {
-                  return { exists: false, error: `Evaluation error: ${String(evalErr)}` };
-                }
-              });
-            } else {
-              contentInfo = { exists: false, error: 'Page is closed' };
-            }
-          } catch (evalError: any) {
-            contentInfo = {
-              exists: false,
-              error: `Evaluation failed: ${String(evalError)}`,
-            };
-          }
-          this.log.debug(
-            `Story ${story.id}: Content check failed. Root state: ${JSON.stringify(contentInfo)}`,
-          );
-          // If root exists and has content, we should have detected it - this is a timing issue
-          // If root exists but truly empty, wait a bit more to see if content appears
-          if (contentInfo.exists) {
-            // Check if content actually exists but wasn't detected
-            if ((contentInfo as any).hasContent) {
-              this.log.warn(
-                `Story ${story.id}: Content exists but wasn't detected properly. This may indicate a timing issue. Proceeding...`,
-              );
-              contentReady = true;
-            } else {
-              // Content doesn't exist yet, wait a bit more
-              const remainingTime = contentWaitTimeout - (Date.now() - startTime);
-              if (remainingTime > 1000) {
-                // Give it a bit more time to see if content appears
-                this.log.debug(
-                  `Story ${story.id}: Root exists but empty, waiting ${Math.min(remainingTime, 2000)}ms more for content...`,
-                );
-                const extraWaitTime = Math.min(remainingTime, 2000); // Max 2 seconds extra
-                const checkInterval = 200;
-                const checkStart = Date.now();
-
-                while (Date.now() - checkStart < extraWaitTime) {
-                  if (page.isClosed()) {
-                    break;
-                  }
-
-                  try {
-                    const hasContent = await page.evaluate(() => {
-                      try {
-                        const root = document.getElementById('storybook-root');
-                        if (!root) return false;
-
-                        // Check multiple indicators of content
-                        const hasChildren = root.children.length > 0;
-                        const hasHTML = root.innerHTML.trim().length > 0;
-                        const hasText = !!(root.textContent && root.textContent.trim().length > 0);
-                        const hasDimensions = root.offsetHeight > 0 && root.offsetWidth > 0;
-                        const hasGraphics = !!root.querySelector('canvas, svg');
-
-                        return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
-                      } catch {
-                        return false;
-                      }
-                    });
-
-                    if (hasContent) {
-                      contentReady = true;
-                      this.log.debug(`Story ${story.id}: Content appeared after extra wait`);
-                      break;
-                    }
-                  } catch (evalError: any) {
-                    if (/target crashed|page crashed/i.test(String(evalError))) {
-                      throw evalError;
-                    }
-                  }
-
-                  await new Promise((resolve) => setTimeout(resolve, checkInterval));
-                }
-
-                // If still no content but root exists, proceed anyway (may be valid empty state)
-                if (!contentReady) {
-                  this.log.warn(
-                    `Story ${story.id}: Root exists but remains empty after extra wait. Continuing (may be valid empty state)...`,
-                  );
-                  contentReady = true;
-                }
-              } else {
-                // No time left, but root exists - proceed anyway
-                this.log.warn(
-                  `Story ${story.id}: Root exists but empty, no time left. Continuing anyway (may be empty state)...`,
-                );
-                contentReady = true;
-              }
-            }
-          } else {
-            // Capture a screenshot before throwing to help debug timeout issues
-            // This ensures we have a diff even when content doesn't load
-            try {
-              if (!page.isClosed()) {
-                const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
-                const actual = path.join(
-                  path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-                  path.basename(story.snapshotRelPath),
-                );
-                const actualDir = path.dirname(actual);
-                fs.mkdirSync(actualDir, { recursive: true });
-                this.log.debug(
-                  `Story ${story.id}: Capturing screenshot on timeout - actual: ${actual}`,
-                );
-                await page.screenshot({
-                  path: actual,
-                  fullPage: this.config.fullPage,
-                  type: 'png',
-                });
-                this.log.debug(`Story ${story.id}: Screenshot captured on timeout`);
-              } else {
-                this.log.debug(
-                  `Story ${story.id}: Page is closed, cannot capture screenshot on timeout`,
-                );
-              }
-            } catch (screenshotError: any) {
-              const errorMsg = String(screenshotError);
-              if (/target crashed|page crashed/i.test(errorMsg)) {
-                this.log.debug(
-                  `Story ${story.id}: Page crashed before screenshot could be captured. This may indicate resource constraints (memory/CPU) in the test environment.`,
-                );
-                // Enhance the error message to include crash information
-                const crashError = new Error(
-                  `Operation timed out. Browser crashed before screenshot could be captured (likely due to resource constraints). Original error: ${String(e)}`,
-                );
-                throw crashError;
-              } else {
-                this.log.debug(
-                  `Story ${story.id}: Failed to capture screenshot on timeout: ${screenshotError}`,
-                );
-              }
-            }
-            // Check if the original error was a crash
-            const originalErrorStr = String(e);
-            if (
-              /target crashed|page crashed/i.test(originalErrorStr) ||
-              (contentInfo.error && /target crashed|page crashed/i.test(contentInfo.error))
-            ) {
-              const crashError = new Error(
-                `Operation timed out. Browser crashed during content check (likely due to resource constraints). ${originalErrorStr}`,
-              );
-              throw crashError;
-            }
-            throw e;
-          }
-        } // End of catch block
-      } // End of if (!contentReady) - skip wait if content already ready
-
-      // Only proceed if content is ready (either loaded successfully or root exists)
-      if (!contentReady) {
-        throw new Error('Content check failed and root does not exist');
-      }
-
-      // Wait for Storybook's storyRendered event - most reliable way to know story is ready
-      // This is emitted by Storybook when the story has fully rendered
-      try {
-        await page.evaluate(() => {
-          return new Promise<void>((resolve) => {
-            // Check if storybook API is available
-            const storybookApi = (window as any).__STORYBOOK_CLIENT_API__;
-            if (storybookApi) {
-              // Listen for storyRendered event
-              const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
-              if (channel) {
-                const handler = () => {
-                  channel.removeListener('storyRendered', handler);
-                  resolve();
-                };
-                channel.on('storyRendered', handler);
-                // Timeout after 5 seconds
-                setTimeout(() => {
-                  channel.removeListener('storyRendered', handler);
-                  resolve();
-                }, 5000);
-              } else {
-                resolve();
-              }
-            } else {
-              // Fallback: wait for loading overlay to disappear
-              const loadingOverlay = document.querySelector('.sb-loading, [data-testid="loading"]');
-              if (loadingOverlay) {
-                const observer = new MutationObserver(() => {
-                  if (
-                    !document.contains(loadingOverlay) ||
-                    loadingOverlay.classList.contains('hidden') ||
-                    getComputedStyle(loadingOverlay).display === 'none'
-                  ) {
-                    observer.disconnect();
-                    resolve();
-                  }
-                });
-                observer.observe(document.body, {
-                  childList: true,
-                  subtree: true,
-                  attributes: true,
-                });
-                setTimeout(() => {
-                  observer.disconnect();
-                  resolve();
-                }, 3000);
-              } else {
-                resolve();
-              }
-            }
-          });
-        });
-        this.log.debug(`Story ${story.id}: Storybook storyRendered event received`);
-      } catch (e) {
-        // If storyRendered check fails, continue anyway
-        this.log.debug(`Story ${story.id}: Storybook storyRendered check failed, continuing: ${e}`);
-      }
-
-      // Font loading wait - ensure fonts are fully loaded before screenshot
-      // This is critical for consistent rendering between local and CI
-      await page.evaluate(async () => {
-        const d = document as unknown as { fonts?: { ready?: Promise<void> } };
-        if (d.fonts?.ready) {
-          try {
-            await Promise.race([
-              d.fonts.ready,
-              new Promise((resolve) => setTimeout(resolve, 5000)), // Increased timeout for CI environments
-            ]);
-          } catch {
-            // Font loading failed, continue anyway
-          }
-        }
-      });
-
-      // Wait for DOM to stabilize: 300ms after last mutation, but timeout after 2000ms
-      const quietPeriodMs = 300; // Wait 300ms after last mutation (increased for CI stability)
-      const maxWaitMs = 2000; // But don't wait longer than 2000ms total (increased for slower CI)
-
-      const isStable = await page.evaluate(
-        ({ quietPeriodMs, maxWaitMs }) => {
-          return new Promise<boolean>((resolve) => {
-            // Use performance.now() for timing to avoid issues with mocked Date.now()
-            const start = performance.now();
-            let lastMutation = performance.now();
-
-            const obs = new MutationObserver(() => {
-              lastMutation = performance.now();
-            });
-
-            obs.observe(document.body, {
-              childList: true,
-              subtree: true,
-              attributes: true,
-              characterData: true,
-            });
-
-            const checkStability = () => {
-              const now = performance.now();
-              const timeSinceLastMutation = now - lastMutation;
-              const totalTime = now - start;
-
-              if (timeSinceLastMutation >= quietPeriodMs) {
-                // DOM has been stable for quietPeriodMs
-                obs.disconnect();
-                resolve(true);
-              } else if (totalTime >= maxWaitMs) {
-                // We've waited long enough, proceed anyway
-                obs.disconnect();
-                resolve(false);
-              } else {
-                // Keep checking
-                setTimeout(checkStability, 10);
-              }
-            };
-
-            checkStability();
-          });
+          return hasChildren || hasHTML || (hasText && hasDimensions) || hasGraphics;
         },
-        { quietPeriodMs, maxWaitMs },
+        { timeout: pageTimeout },
       );
 
-      if (!isStable) {
-        this.log.debug(
-          `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
-        );
-      } else {
-        this.log.debug(`Story ${story.id}: DOM is stable`);
+      if (this.config.storyLoadDelay) {
+        await page.waitForTimeout(this.config.storyLoadDelay);
       }
 
-      // Additional wait for animations and transitions to complete
-      // Many UI components have CSS animations that start after DOM is ready
-      // Increased wait time for CI environments where rendering can be slower
-      this.log.debug(`Story ${story.id}: Waiting for animations to settle...`);
-      await page.waitForTimeout(1000); // Wait 1000ms for animations to complete (increased for CI stability)
+      // Get the actual viewport size from the page (may differ from configured viewport)
+      // Storybook may apply viewport via CSS/iframe resizing, so we need to query Storybook's API
+      let actualViewport: { width: number; height: number } | undefined;
+      try {
+        if (!page.isClosed()) {
+          // Try to get viewport from Storybook's API
+          // First, try to get the viewport name, then look up dimensions
+          const viewportInfo = await page.evaluate(() => {
+            // Method 1: Get viewport name and dimensions from Storybook's addon channel
+            let viewportName: string | null = null;
+            let viewportDimensions: { width: number; height: number } | null = null;
+
+            if (typeof (window as any).__STORYBOOK_ADDONS_CHANNEL__ !== 'undefined') {
+              try {
+                const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
+
+                // Try to get from the last event
+                const lastEvent = (channel as any).lastEvent;
+                if (
+                  lastEvent &&
+                  lastEvent.type === 'updateGlobals' &&
+                  lastEvent.globals?.viewport
+                ) {
+                  viewportName = lastEvent.globals.viewport;
+                }
+
+                // Also check if there's a way to query current globals
+                if (!viewportName && (channel as any).data?.globals?.viewport) {
+                  viewportName = (channel as any).data.globals.viewport;
+                }
+
+                // Try to get viewport dimensions from the channel's viewport addon state
+                // The viewport addon might store the actual dimensions
+                try {
+                  const viewportAddon =
+                    (channel as any).viewportAddon || (channel as any).addons?.viewport;
+                  if (viewportAddon) {
+                    const currentViewport = viewportAddon.selected || viewportAddon.current;
+                    if (currentViewport) {
+                      if (typeof currentViewport === 'string') {
+                        viewportName = currentViewport;
+                      } else if (currentViewport.width && currentViewport.height) {
+                        viewportDimensions = {
+                          width: currentViewport.width,
+                          height: currentViewport.height,
+                        };
+                      }
+                    }
+                  }
+                } catch (e) {
+                  // Ignore errors
+                }
+              } catch (e) {
+                // Ignore errors
+              }
+            }
+
+            // Method 2: Check Storybook client API for current story's globals
+            if (!viewportName && typeof (window as any).__STORYBOOK_CLIENT_API__ !== 'undefined') {
+              try {
+                const api = (window as any).__STORYBOOK_CLIENT_API__;
+                const store = api.store || api.getStore?.();
+                if (store) {
+                  const state = store.getState?.() || {};
+                  const globals = state.globals || {};
+                  if (globals.viewport) {
+                    viewportName = globals.viewport;
+                  }
+
+                  // Also check for viewport addon state in the store
+                  const viewportState = state.addons?.viewport || state.viewport;
+                  if (viewportState) {
+                    if (viewportState.selected) {
+                      viewportName = viewportState.selected;
+                    }
+                    if (viewportState.width && viewportState.height) {
+                      viewportDimensions = {
+                        width: viewportState.width,
+                        height: viewportState.height,
+                      };
+                    }
+                  }
+                }
+              } catch (e) {
+                // Ignore errors
+              }
+            }
+
+            // Method 3: Check the actual rendered container dimensions
+            // Storybook applies viewport via CSS, so check the container that wraps the story
+            const root = document.getElementById('storybook-root');
+            let actualWidth = window.innerWidth;
+            let actualHeight = window.innerHeight;
+
+            if (root) {
+              // Check parent containers for viewport constraints
+              let container = root.parentElement;
+              while (container && container !== document.body) {
+                const style = window.getComputedStyle(container);
+                const width = container.offsetWidth || container.clientWidth;
+                const height = container.offsetHeight || container.clientHeight;
+                // If container has explicit dimensions smaller than window, it's likely the viewport
+                if (
+                  width > 0 &&
+                  width < window.innerWidth &&
+                  Math.abs(width - window.innerWidth) > 10
+                ) {
+                  actualWidth = width;
+                  actualHeight = height || actualHeight;
+                  break;
+                }
+                container = container.parentElement;
+              }
+            }
+
+            return { viewportName, viewportDimensions, actualWidth, actualHeight };
+          });
+
+          // Priority 1: If we got viewport dimensions directly from Storybook API, use them
+          if (viewportInfo.viewportDimensions) {
+            actualViewport = viewportInfo.viewportDimensions;
+            this.log.debug(
+              `Story ${story.id}: Found viewport dimensions from Storybook API: ${actualViewport.width}×${actualViewport.height}`,
+            );
+          }
+
+          // Priority 2: If we got a viewport name, try to look it up in our viewport sizes
+          if (!actualViewport && viewportInfo.viewportName) {
+            const viewportSize = this.config.viewportSizes.find(
+              (v) => v.name === viewportInfo.viewportName,
+            );
+            if (viewportSize) {
+              actualViewport = { width: viewportSize.width, height: viewportSize.height };
+              this.log.debug(
+                `Story ${story.id}: Found viewport name "${viewportInfo.viewportName}" from Storybook API, using dimensions: ${actualViewport.width}×${actualViewport.height}`,
+              );
+            }
+          }
+
+          // If we didn't get viewport from name lookup, use the actual rendered dimensions
+          if (!actualViewport && viewportInfo.actualWidth && viewportInfo.actualHeight) {
+            // Get window dimensions for comparison
+            const windowDims = await page.evaluate(() => ({
+              width: window.innerWidth,
+              height: window.innerHeight,
+            }));
+            // Only use if different from window size (meaning Storybook applied a viewport)
+            if (
+              viewportInfo.actualWidth !== windowDims.width ||
+              viewportInfo.actualHeight !== windowDims.height
+            ) {
+              actualViewport = {
+                width: viewportInfo.actualWidth,
+                height: viewportInfo.actualHeight,
+              };
+              this.log.debug(
+                `Story ${story.id}: Using actual rendered dimensions: ${actualViewport.width}×${actualViewport.height} (window: ${windowDims.width}×${windowDims.height})`,
+              );
+            }
+          }
+
+          // Final fallback: use window dimensions or configured viewport
+          if (!actualViewport) {
+            const dimensions = await page.evaluate(() => ({
+              width: window.innerWidth,
+              height: window.innerHeight,
+            }));
+            actualViewport = { width: dimensions.width, height: dimensions.height };
+          }
+
+          this.log.debug(
+            `Story ${story.id}: Actual viewport size: ${actualViewport.width}×${actualViewport.height} (configured: ${viewport ? `${viewport.width}×${viewport.height}` : 'none'})`,
+          );
+        }
+      } catch (e) {
+        this.log.debug(`Story ${story.id}: Failed to get actual viewport size:`, e);
+        // Fall back to configured viewport
+        actualViewport = viewport;
+      }
+
+      // // Wait for DOM to stabilize: configurable quiet period after last mutation, with max wait timeout
+      // const quietPeriodMs: number = Number(this.config.domStabilityQuietPeriod ?? 300); // Default: 300ms after last mutation
+      // const maxWaitMs: number = Number(this.config.domStabilityMaxWait ?? 2000); // Default: 2000ms total wait
+
+      // const isStable = await page.evaluate(
+      //   ({ quietPeriodMs, maxWaitMs }) => {
+      //     return new Promise<boolean>((resolve) => {
+      //       // Use performance.now() for timing to avoid issues with mocked Date.now()
+      //       const start = performance.now();
+      //       let lastMutation = performance.now();
+
+      //       const obs = new MutationObserver(() => {
+      //         lastMutation = performance.now();
+      //       });
+
+      //       obs.observe(document.body, {
+      //         childList: true,
+      //         subtree: true,
+      //         attributes: true,
+      //         characterData: true,
+      //       });
+
+      //       const checkStability = () => {
+      //         const now = performance.now();
+      //         const timeSinceLastMutation = now - lastMutation;
+      //         const totalTime = now - start;
+
+      //         if (timeSinceLastMutation >= quietPeriodMs) {
+      //           // DOM has been stable for quietPeriodMs
+      //           obs.disconnect();
+      //           resolve(true);
+      //         } else if (totalTime >= maxWaitMs) {
+      //           // We've waited long enough, proceed anyway
+      //           obs.disconnect();
+      //           resolve(false);
+      //         } else {
+      //           // Keep checking
+      //           setTimeout(checkStability, 10);
+      //         }
+      //       };
+
+      //       checkStability();
+      //     });
+      //   },
+      //   { quietPeriodMs, maxWaitMs },
+      // );
+
+      // if (!isStable) {
+      //   this.log.debug(
+      //     `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
+      //   );
+      // } else {
+      //   this.log.debug(`Story ${story.id}: DOM is stable`);
+      // }
+
+      // Check for cancellation before screenshot
+      if (this.cancelled) {
+        this.log.debug(`Story ${story.id}: Test cancelled before screenshot, cleaning up`);
+        await browser.close();
+        throw new Error('Test cancelled');
+      }
 
       // Optimized screenshot capture
       const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
@@ -1650,21 +1692,21 @@ class WorkerPool {
         }
       }
 
-      return { result, page };
+      return { result, page, actualViewport };
     } finally {
       // Aggressive cleanup to prevent memory leaks
-      // Note: We don't close page/browser here anymore - let the caller handle cleanup
-      // so DOM dumps can access the page on timeout
-      if (browser && !page) {
-        // Only close browser if page was already closed
-        try {
-          if (browser.isConnected()) {
-            await browser.close();
-          }
-        } catch (e) {
-          // Ignore cleanup errors but log for debugging
-          this.log.debug(`Warning: Failed to close browser for ${story.id}:`, e);
+      try {
+        if (page && !page.isClosed()) {
+          // Close page first if it's still open
+          await page.close();
         }
+        if (browser && browser.isConnected()) {
+          // Then close browser
+          await browser.close();
+        }
+      } catch (e) {
+        // Ignore cleanup errors but log for debugging
+        this.log.debug(`Warning: Failed to close browser/page for ${story.id}:`, e);
       }
 
       // Force garbage collection if available (Node.js with --expose-gc)
@@ -1836,6 +1878,7 @@ export async function runParallelTests(options: {
     const updated = allResults.filter((r) => r.action === 'Updated baseline').length;
     const created = allResults.filter((r) => r.action === 'Created baseline').length;
     const failedCount = allResults.filter((r) => r.action === 'failed').length;
+    const cancelled = allResults.filter((r) => r.action === 'cancelled').length;
     // Calculate skipped as the difference between original stories and filtered stories
     const skipped = stories.length - filteredStories.length;
     // Calculate stories per minute based on actually processed stories (not skipped ones)
@@ -1858,6 +1901,7 @@ export async function runParallelTests(options: {
       const message = generateSummaryMessage({
         passed,
         failed: failedCount,
+        cancelled,
         skipped,
         created,
         updated,

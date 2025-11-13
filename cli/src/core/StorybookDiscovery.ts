@@ -8,6 +8,16 @@ export type StoryIndexEntry = {
   id: string;
   title: string;
   name: string;
+  parameters?: {
+    viewport?: {
+      defaultViewport?: string;
+    };
+  };
+  globals?: {
+    viewport?: {
+      value?: string;
+    };
+  };
 };
 
 export type DiscoveredStory = StoryIndexEntry & {
@@ -185,6 +195,8 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       id: String(s.id ?? s.sid ?? ''),
       title: String(s.title ?? s.kind ?? ''),
       name: String(s.name ?? s.story ?? ''),
+      parameters: s.parameters,
+      globals: s.globals,
     }))
     .filter((s) => s.id && s.title && s.name);
   logger.debug(`Parsed ${stories.length} valid story entries`);

@@ -28,6 +28,9 @@ export type CliFlags = {
   snapshotDelay?: number;
   mutationWait?: number;
   mutationTimeout?: number;
+  domStabilityQuietPeriod?: number;
+  domStabilityMaxWait?: number;
+  storyLoadDelay?: number;
   grep?: string;
   include?: string;
   exclude?: string;
@@ -150,6 +153,13 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     fullPage: flags.fullPage ?? fileVisual.fullPage ?? base.fullPage,
     mutationWait: flags.mutationWait ?? fileVisual.mutationWait ?? base.mutationWait,
     mutationTimeout: flags.mutationTimeout ?? fileVisual.mutationTimeout ?? base.mutationTimeout,
+    domStabilityQuietPeriod:
+      flags.domStabilityQuietPeriod ??
+      fileVisual.domStabilityQuietPeriod ??
+      base.domStabilityQuietPeriod,
+    domStabilityMaxWait:
+      flags.domStabilityMaxWait ?? fileVisual.domStabilityMaxWait ?? base.domStabilityMaxWait,
+    storyLoadDelay: flags.storyLoadDelay ?? fileVisual.storyLoadDelay ?? base.storyLoadDelay,
     snapshotRetries: flags.snapshotRetries ?? fileVisual.snapshotRetries ?? base.snapshotRetries,
     snapshotDelay: flags.snapshotDelay ?? fileVisual.snapshotDelay ?? base.snapshotDelay,
     viewportSizes: fileVisual.viewportSizes ?? base.viewportSizes,
@@ -265,6 +275,11 @@ export const saveEffectiveConfig = (
   if (flags.mutationWait !== undefined) visualRegression.mutationWait = config.mutationWait;
   if (flags.mutationTimeout !== undefined)
     visualRegression.mutationTimeout = config.mutationTimeout;
+  if (flags.domStabilityQuietPeriod !== undefined)
+    visualRegression.domStabilityQuietPeriod = config.domStabilityQuietPeriod;
+  if (flags.domStabilityMaxWait !== undefined)
+    visualRegression.domStabilityMaxWait = config.domStabilityMaxWait;
+  if (flags.storyLoadDelay !== undefined) visualRegression.storyLoadDelay = config.storyLoadDelay;
   if (flags.snapshotRetries !== undefined)
     visualRegression.snapshotRetries = config.snapshotRetries;
   if (flags.snapshotDelay !== undefined) visualRegression.snapshotDelay = config.snapshotDelay;

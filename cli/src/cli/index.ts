@@ -6,210 +6,113 @@ import { run } from '../core/VisualRegressionRunner.js';
 import { JsonRpcServer, CLI_METHODS, CLI_EVENTS } from '../jsonrpc.js';
 import { setGlobalLogger, logger } from '../logger.js';
 
-const parseArgs = (argv: string[]): CliFlags => {
-  const out: CliFlags = {};
-  const getVal = (i: number): string | undefined => argv[i + 1];
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i];
-    switch (a) {
-      case '-h':
-      case '--help':
-        /* no-op to mark presence */
-        break;
-      case '--log-level':
-        out.logLevel = getVal(i) as any;
-        i += 1;
-        break;
-      case '--config':
-        out.config = getVal(i);
-        i += 1;
-        break;
-      case '-u':
-      case '--url':
-        out.url = getVal(i);
-        i += 1;
-        break;
-      case '-o':
-      case '--output':
-        out.output = getVal(i);
-        i += 1;
-        break;
-      case '-w':
-      case '--workers':
-        out.workers = Number(getVal(i));
-        i += 1;
-        break;
-      case '-c':
-      case '--command':
-        out.command = getVal(i);
-        i += 1;
-        break;
-      case '--webserver-timeout':
-        out.webserverTimeout = Number(getVal(i));
-        i += 1;
-        break;
-      case '--retries':
-        out.retries = Number(getVal(i));
-        i += 1;
-        break;
-      case '--max-failures':
-        out.maxFailures = Number(getVal(i));
-        i += 1;
-        break;
-      case '--timezone':
-        out.timezone = getVal(i);
-        i += 1;
-        break;
-      case '--locale':
-        out.locale = getVal(i);
-        i += 1;
-        break;
-      case '--quiet':
-        out.quiet = true;
-        break;
-      case '--debug':
-        out.debug = true;
-        break;
-      case '--progress':
-        out.showProgress = true;
-        break;
-      case '--no-progress':
-        out.showProgress = false;
-        break;
-      case '--summary':
-        out.summary = true;
-        break;
-      case '--no-summary':
-        out.summary = false;
-        break;
-      case '--browser':
-        out.browser = getVal(i) as any;
-        i += 1;
-        break;
-      case '--threshold':
-        out.threshold = Number(getVal(i));
-        i += 1;
-        break;
-      case '--max-diff-pixels':
-        out.maxDiffPixels = Number(getVal(i));
-        i += 1;
-        break;
-      case '--full-page':
-        out.fullPage = true;
-        break;
-      case '--overlay-timeout':
-        out.overlayTimeout = Number(getVal(i));
-        i += 1;
-        break;
-      case '--test-timeout':
-        out.testTimeout = Number(getVal(i));
-        i += 1;
-        break;
-      case '--snapshot-retries':
-        out.snapshotRetries = Number(getVal(i));
-        i += 1;
-        break;
-      case '--snapshot-delay':
-        out.snapshotDelay = Number(getVal(i));
-        i += 1;
-        break;
-      case '--mutation-wait':
-        out.mutationWait = Number(getVal(i));
-        i += 1;
-        break;
-      case '--mutation-timeout':
-        out.mutationTimeout = Number(getVal(i));
-        i += 1;
-        break;
-      case '--grep':
-        out.grep = getVal(i);
-        i += 1;
-        break;
-      case '--include':
-        out.include = getVal(i);
-        i += 1;
-        break;
-      case '--exclude':
-        out.exclude = getVal(i);
-        i += 1;
-        break;
-      case '--install-browsers':
-        out.installBrowsers = getVal(i) ?? true;
-        if (getVal(i)) i += 1;
-        break;
-      case '--install-deps':
-        out.installDeps = true;
-        break;
-      case '--not-found-check':
-        out.notFoundCheck = true;
-        break;
-      case '--not-found-retry-delay':
-        out.notFoundRetryDelay = Number(getVal(i));
-        i += 1;
-        break;
-      case '--update':
-        out.update = true;
-        break;
-      case '--missing-only':
-        out.missingOnly = true;
-        break;
-      case '--failed-only':
-        out.failedOnly = true;
-        break;
-      case '--save-config':
-        out.saveConfig = true;
-        break;
-      case '--fix-date':
-        const fixDateVal = getVal(i);
-        // Check if the next argument looks like a date value (not another flag)
-        if (fixDateVal && !fixDateVal.startsWith('-')) {
-          // If a value is provided, use it (could be timestamp or date string)
-          out.fixDate = fixDateVal;
-          i += 1;
-        } else {
-          // Just --fix-date without value means use default
-          out.fixDate = true;
-        }
-        break;
-      case '--json-rpc':
-        out.jsonRpc = true;
-        break;
-      default:
-        break;
+// Helper to convert Commander.js opts to CliFlags format
+const optsToFlags = (opts: Record<string, unknown>): CliFlags => {
+  const flags: CliFlags = {};
+
+  // String options
+  if (opts.config) flags.config = String(opts.config);
+  if (opts.url) flags.url = String(opts.url);
+  if (opts.output) flags.output = String(opts.output);
+  if (opts.command) flags.command = String(opts.command);
+  if (opts.timezone) flags.timezone = String(opts.timezone);
+  if (opts.locale) flags.locale = String(opts.locale);
+  if (opts.browser) flags.browser = opts.browser as 'chromium' | 'firefox' | 'webkit';
+  if (opts.grep) flags.grep = String(opts.grep);
+  if (opts.include) flags.include = String(opts.include);
+  if (opts.exclude) flags.exclude = String(opts.exclude);
+  if (opts.logLevel) flags.logLevel = opts.logLevel as CliFlags['logLevel'];
+
+  // Number options
+  if (opts.workers !== undefined) flags.workers = Number(opts.workers);
+  if (opts.webserverTimeout !== undefined) flags.webserverTimeout = Number(opts.webserverTimeout);
+  if (opts.retries !== undefined) flags.retries = Number(opts.retries);
+  if (opts.maxFailures !== undefined) flags.maxFailures = Number(opts.maxFailures);
+  if (opts.threshold !== undefined) flags.threshold = Number(opts.threshold);
+  if (opts.maxDiffPixels !== undefined) flags.maxDiffPixels = Number(opts.maxDiffPixels);
+  if (opts.overlayTimeout !== undefined) flags.overlayTimeout = Number(opts.overlayTimeout);
+  if (opts.testTimeout !== undefined) flags.testTimeout = Number(opts.testTimeout);
+  if (opts.snapshotRetries !== undefined) flags.snapshotRetries = Number(opts.snapshotRetries);
+  if (opts.snapshotDelay !== undefined) flags.snapshotDelay = Number(opts.snapshotDelay);
+  if (opts.mutationWait !== undefined) flags.mutationWait = Number(opts.mutationWait);
+  if (opts.mutationTimeout !== undefined) flags.mutationTimeout = Number(opts.mutationTimeout);
+  if (opts.domStabilityQuietPeriod !== undefined)
+    flags.domStabilityQuietPeriod = Number(opts.domStabilityQuietPeriod);
+  if (opts.domStabilityMaxWait !== undefined)
+    flags.domStabilityMaxWait = Number(opts.domStabilityMaxWait);
+  if (opts.storyLoadDelay !== undefined) flags.storyLoadDelay = Number(opts.storyLoadDelay);
+  if (opts.notFoundRetryDelay !== undefined)
+    flags.notFoundRetryDelay = Number(opts.notFoundRetryDelay);
+
+  // Boolean options
+  if (opts.quiet) flags.quiet = true;
+  if (opts.debug) flags.debug = true;
+  if (opts.fullPage) flags.fullPage = true;
+  if (opts.update) flags.update = true;
+  if (opts.missingOnly) flags.missingOnly = true;
+  if (opts.failedOnly) flags.failedOnly = true;
+  if (opts.saveConfig) flags.saveConfig = true;
+  if (opts.installDeps) flags.installDeps = true;
+  if (opts.notFoundCheck) flags.notFoundCheck = true;
+  if (opts.jsonRpc) flags.jsonRpc = true;
+
+  // Special boolean options that can be explicitly set to false
+  if (opts.progress !== undefined) flags.showProgress = Boolean(opts.progress);
+  if (opts.summary !== undefined) flags.summary = Boolean(opts.summary);
+
+  // Special options
+  if (opts.fixDate !== undefined) {
+    // Commander.js handles [date] as optional - if present but no value, it's true
+    if (opts.fixDate === true) {
+      flags.fixDate = true;
+    } else if (typeof opts.fixDate === 'string') {
+      flags.fixDate = opts.fixDate;
     }
   }
-  return out;
+
+  if (opts.installBrowsers !== undefined) {
+    // Can be boolean (true) or string (browser name)
+    if (opts.installBrowsers === true) {
+      flags.installBrowsers = true;
+    } else if (typeof opts.installBrowsers === 'string') {
+      flags.installBrowsers = opts.installBrowsers;
+    }
+  }
+
+  return flags;
 };
 
 const main = async (): Promise<number> => {
   const argv = process.argv.slice(2);
 
-  // Check for JSON-RPC mode first (before commander parsing)
-  const flags = parseArgs(argv);
-  if (flags.jsonRpc) {
-    return await runJsonRpcMode(flags);
-  }
-
-  // Use commander for help/usage output and basic option declarations
+  // Use Commander.js for all argument parsing
   const program = new Command();
   program
     .name('svr')
     .description('Storybook Visual Regression CLI')
+    .option('--config <path>', 'Config file path')
     .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
     .option('-o, --output <dir>', 'Output root (default visual-regression)')
-    .option('-w, --workers <n>', 'Parallel workers')
-    .option('--retries <n>', 'Playwright retries')
-    .option('--max-failures <n>', 'Bail after N failures')
+    .option('-w, --workers <n>', 'Parallel workers', Number)
+    .option('-c, --command <cmd>', 'Command to run')
+    .option('--webserver-timeout <ms>', 'Webserver timeout', Number)
+    .option('--retries <n>', 'Playwright retries', Number)
+    .option('--max-failures <n>', 'Bail after N failures', Number)
+    .option('--timezone <tz>', 'Timezone')
+    .option('--locale <locale>', 'Locale')
     .option('--browser <name>', 'chromium|firefox|webkit')
-    .option('--threshold <0..1>', 'Diff threshold (default 0.2)')
-    .option('--max-diff-pixels <n>', 'Max differing pixels (default 0)')
+    .option('--threshold <0..1>', 'Diff threshold (default 0.2)', Number)
+    .option('--max-diff-pixels <n>', 'Max differing pixels (default 0)', Number)
     .option('--full-page', 'Full page screenshots')
-    .option('--mutation-wait <ms>', 'Quiet window wait (default 200)')
-    .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)')
-    .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)')
-    .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds')
-    .option('--snapshot-retries <n>', 'Capture retries (default 1)')
-    .option('--snapshot-delay <ms>', 'Delay between retries')
+    .option('--mutation-wait <ms>', 'Quiet window wait (default 200)', Number)
+    .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)', Number)
+    .option('--dom-stability-quiet-period <ms>', 'DOM stability quiet period (default 300)', Number)
+    .option('--dom-stability-max-wait <ms>', 'DOM stability max wait (default 2000)', Number)
+    .option('--story-load-delay <ms>', 'Delay after storybook root found (default 1000)', Number)
+    .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
+    .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
+    .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
+    .option('--snapshot-delay <ms>', 'Delay between retries', Number)
     .option('--include <patterns>', 'Comma-separated include filters')
     .option('--exclude <patterns>', 'Comma-separated exclude filters')
     .option('--grep <regex>', 'Filter by storyId')
@@ -223,6 +126,12 @@ const main = async (): Promise<number> => {
     .option('--log-level <level>', 'silent|error|warn|info|debug')
     .option('--save-config', 'Write effective config JSON')
     .option('--quiet', 'Suppress per-test output')
+    .option('--debug', 'Enable debug logging')
+    .option('--install-browsers [browser]', 'Install browsers (optionally specify browser)')
+    .option('--install-deps', 'Install browser dependencies')
+    .option('--not-found-check', 'Check for not found errors')
+    .option('--not-found-retry-delay <ms>', 'Retry delay for not found errors', Number)
+    .option('--json-rpc', 'Enable JSON-RPC mode')
     .option(
       '--fix-date [date]',
       'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
@@ -230,8 +139,10 @@ const main = async (): Promise<number> => {
     .helpOption('-h, --help', 'Show help');
 
   program.exitOverride();
+  let parsedOpts: Record<string, unknown>;
   try {
     program.parse(['node', 'svr', ...argv]);
+    parsedOpts = program.opts();
   } catch (err: any) {
     if (err?.code === 'commander.helpDisplayed') return 0;
     if (err?.code === 'commander.unknownOption') {
@@ -247,6 +158,14 @@ const main = async (): Promise<number> => {
       return 1;
     }
     throw err;
+  }
+
+  // Convert Commander.js opts to CliFlags format
+  const flags = optsToFlags(parsedOpts);
+
+  // Check for JSON-RPC mode after parsing
+  if (flags.jsonRpc) {
+    return await runJsonRpcMode(flags);
   }
 
   let config;

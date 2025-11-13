@@ -20,6 +20,9 @@ export type VisualRegressionConfig = {
   discoverViewports: boolean;
   mutationWait: number;
   mutationTimeout: number;
+  domStabilityQuietPeriod?: number;
+  domStabilityMaxWait?: number;
+  storyLoadDelay?: number;
   snapshotRetries: number;
   snapshotDelay: number;
   includeStories?: string[];
@@ -34,19 +37,19 @@ export type VisualRegressionConfig = {
     string,
     Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>
   >;
-	perStory?: Record<
-		string,
-		Partial<{
-			threshold: number;
-			viewport: string | { width: number; height: number };
-			snapshotDelay: number;
-			mutationWait: number;
-			mutationTimeout: number;
-			masks: Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>;
-		}>
-	>;
-	showProgress: boolean;
-	summary: boolean;
+  perStory?: Record<
+    string,
+    Partial<{
+      threshold: number;
+      viewport: string | { width: number; height: number };
+      snapshotDelay: number;
+      mutationWait: number;
+      mutationTimeout: number;
+      masks: Array<{ selector?: string; x?: number; y?: number; width?: number; height?: number }>;
+    }>
+  >;
+  showProgress: boolean;
+  summary: boolean;
 };
 
 export const defaultConfig = (): VisualRegressionConfig => {
@@ -72,20 +75,23 @@ export const defaultConfig = (): VisualRegressionConfig => {
     discoverViewports: true,
     mutationWait: 200,
     mutationTimeout: 1000,
+    domStabilityQuietPeriod: 200,
+    domStabilityMaxWait: 2000,
+    storyLoadDelay: 200,
     snapshotRetries: 1,
     snapshotDelay: 0,
     includeStories: undefined,
     excludeStories: undefined,
     grep: undefined,
     disableAnimations: true,
-		fixDate: false,
-		frozenTime: undefined,
-		timezone: undefined,
-		locale: undefined,
-		masks: undefined,
-		perStory: undefined,
-		showProgress: true,
-		summary: true,
+    fixDate: false,
+    frozenTime: undefined,
+    timezone: undefined,
+    locale: undefined,
+    masks: undefined,
+    perStory: undefined,
+    showProgress: true,
+    summary: true,
   };
 };
 
