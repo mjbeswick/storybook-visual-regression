@@ -156,7 +156,18 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
           logger.debug(`${candidate} -> ${errorMsg}`);
         }
       } catch (e) {
-        const errorMsg = (e as Error).message;
+        const err = e as Error;
+        // Provide more context for common fetch errors
+        let errorMsg = err.message;
+        if (err.message === 'fetch failed') {
+          // fetch failed usually means connection refused or network unreachable
+          const url = new URL(candidate);
+          if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+            errorMsg = 'fetch failed (connection refused - service may not be running)';
+          } else {
+            errorMsg = 'fetch failed (network unreachable or connection refused)';
+          }
+        }
         errors.push(`${candidate}: ${errorMsg}`);
         logger.debug(`Failed to fetch ${candidate}: ${errorMsg}`);
       }
@@ -208,7 +219,11 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
             errors.push(`${hostDockerInternalCandidate}: ${errorMsg}`);
           }
         } catch (e) {
-          const errorMsg = (e as Error).message;
+          const err = e as Error;
+          let errorMsg = err.message;
+          if (err.message === 'fetch failed') {
+            errorMsg = 'fetch failed (connection refused - host.docker.internal may not be available)';
+          }
           errors.push(`${hostDockerInternalCandidate}: ${errorMsg}`);
           logger.debug(`host.docker.internal fallback fetch failed: ${errorMsg}`);
         }
@@ -243,7 +258,11 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
                 errors.push(`${gatewayCandidate}: ${errorMsg}`);
               }
             } catch (e) {
-              const errorMsg = (e as Error).message;
+              const err = e as Error;
+              let errorMsg = err.message;
+              if (err.message === 'fetch failed') {
+                errorMsg = 'fetch failed (connection refused - gateway IP may not be accessible)';
+              }
               errors.push(`${gatewayCandidate}: ${errorMsg}`);
               logger.debug(`Gateway IP fallback fetch failed: ${errorMsg}`);
             }
