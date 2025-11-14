@@ -104,8 +104,9 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
     const displayCandidate = displayCandidates[i];
 
     if (candidate.startsWith('http')) {
-      attemptedUrls.push(displayCandidate); // Use display URL in error messages
-      logger.debug(`Attempting to fetch story index from: ${displayCandidate}`);
+      // Log both display URL (for user) and actual URL (for debugging)
+      logger.debug(`Attempting to fetch story index from: ${displayCandidate} (actual: ${candidate})`);
+      attemptedUrls.push(candidate); // Use actual URL attempted in error messages for accuracy
       try {
         const res = await fetch(candidate, {
           signal: AbortSignal.timeout(10000), // 10 second timeout
@@ -116,13 +117,13 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
           break;
         } else {
           const errorMsg = `HTTP ${res.status} ${res.statusText}`;
-          errors.push(`${displayCandidate}: ${errorMsg}`);
-          logger.debug(`${displayCandidate} -> ${errorMsg}`);
+          errors.push(`${candidate}: ${errorMsg}`);
+          logger.debug(`${candidate} -> ${errorMsg}`);
         }
       } catch (e) {
         const errorMsg = (e as Error).message;
-        errors.push(`${displayCandidate}: ${errorMsg}`);
-        logger.debug(`Failed to fetch ${displayCandidate}: ${errorMsg}`);
+        errors.push(`${candidate}: ${errorMsg}`);
+        logger.debug(`Failed to fetch ${candidate}: ${errorMsg}`);
       }
     } else {
       logger.debug(`Attempting to load static story index from: ${displayCandidate}`);
@@ -144,7 +145,8 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
     const isLikelyDocker =
       process.env.DOCKER_CONTAINER === 'true' ||
       fs.existsSync('/.dockerenv') ||
-      (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker'));
+      (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker')) ||
+      process.env.DOCKER_BUILD === '1';
 
     const errorMsg = [
       'Could not load Storybook index.json from server or static files.',

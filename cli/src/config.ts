@@ -96,11 +96,15 @@ const normalizePatterns = (val?: string | string[]): string[] | undefined => {
 
 // Detect if running in Docker
 const isRunningInDocker = (): boolean => {
-  return Boolean(
-    process.env.DOCKER_CONTAINER === 'true' ||
-      fs.existsSync('/.dockerenv') ||
-      (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker')),
-  );
+  // Check multiple indicators that we're running in Docker
+  const dockerEnv = process.env.DOCKER_CONTAINER === 'true';
+  const dockerenvFile = fs.existsSync('/.dockerenv');
+  const dockerHostname = process.env.HOSTNAME && process.env.HOSTNAME.includes('docker');
+  const dockerBuild = process.env.DOCKER_BUILD === '1';
+  
+  const isDocker = Boolean(dockerEnv || dockerenvFile || dockerHostname || dockerBuild);
+  
+  return isDocker;
 };
 
 // Transform localhost to host.docker.internal when running in Docker
