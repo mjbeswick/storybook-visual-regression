@@ -192,6 +192,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       ];
       
       for (const hostDockerInternalCandidate of hostDockerInternalCandidates) {
+        attemptedUrls.push(hostDockerInternalCandidate);
         try {
           logger.debug(`Attempting host.docker.internal fallback fetch from: ${hostDockerInternalCandidate}`);
           const res = await fetch(hostDockerInternalCandidate, {
@@ -202,9 +203,14 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
             workingUrl = hostDockerInternalUrl; // Update working URL to use host.docker.internal
             logger.debug(`Successfully loaded story index from host.docker.internal`);
             break;
+          } else {
+            const errorMsg = `HTTP ${res.status} ${res.statusText}`;
+            errors.push(`${hostDockerInternalCandidate}: ${errorMsg}`);
           }
         } catch (e) {
-          logger.debug(`host.docker.internal fallback fetch failed: ${(e as Error).message}`);
+          const errorMsg = (e as Error).message;
+          errors.push(`${hostDockerInternalCandidate}: ${errorMsg}`);
+          logger.debug(`host.docker.internal fallback fetch failed: ${errorMsg}`);
         }
       }
       
@@ -221,6 +227,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
           ];
           
           for (const gatewayCandidate of gatewayCandidates) {
+            attemptedUrls.push(gatewayCandidate);
             try {
               logger.debug(`Attempting gateway IP fallback fetch from: ${gatewayCandidate}`);
               const res = await fetch(gatewayCandidate, {
@@ -231,9 +238,14 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
                 workingUrl = gatewayUrl; // Update working URL to use gateway IP
                 logger.debug(`Successfully loaded story index from Docker gateway IP: ${gatewayIP}`);
                 break;
+              } else {
+                const errorMsg = `HTTP ${res.status} ${res.statusText}`;
+                errors.push(`${gatewayCandidate}: ${errorMsg}`);
               }
             } catch (e) {
-              logger.debug(`Gateway IP fallback fetch failed: ${(e as Error).message}`);
+              const errorMsg = (e as Error).message;
+              errors.push(`${gatewayCandidate}: ${errorMsg}`);
+              logger.debug(`Gateway IP fallback fetch failed: ${errorMsg}`);
             }
           }
         }
@@ -250,7 +262,8 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker')) ||
       process.env.DOCKER_BUILD === '1';
 
-    // Detect if host.docker.internal was attempted
+    // Detect what was attempted
+    const triedLocalhost = attemptedUrls.some((url) => url.includes('localhost'));
     const triedHostDockerInternal = attemptedUrls.some((url) =>
       url.includes('host.docker.internal'),
     );
@@ -264,24 +277,35 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       '',
       'Common issues:',
       '  • Storybook server is not running or accessible',
-      isLikelyDocker && triedHostDockerInternal
-        ? '  • host.docker.internal may not be available (Linux requires --add-host=host.docker.internal:host-gateway)'
-        : isLikelyDocker
-          ? '  • When running in Docker, use host.docker.internal instead of localhost'
-          : '  • Wrong URL or port (check that Storybook is running)',
+      isLikelyDocker && triedLocalhost && triedHostDockerInternal
+        ? '  • Both localhost and host.docker.internal failed - Storybook may not be running or accessible'
+        : isLikelyDocker && triedHostDockerInternal
+          ? '  • host.docker.internal may not be available (Linux requires --add-host=host.docker.internal:host-gateway)'
+          : isLikelyDocker && triedLocalhost
+            ? '  • localhost failed - if using --network host, ensure Storybook is running on the host'
+            : isLikelyDocker
+              ? '  • Network connectivity issue - check Docker networking configuration'
+              : '  • Wrong URL or port (check that Storybook is running)',
       '  • Storybook static build not found in expected location',
       '  • Network connectivity or firewall issues',
       '',
       'Troubleshooting steps:',
-      isLikelyDocker && triedHostDockerInternal
+      isLikelyDocker && triedLocalhost && triedHostDockerInternal
         ? [
-            `  • Add --add-host=host.docker.internal:host-gateway to your docker run command`,
-            `  • Or use --network host mode: docker run --network host ...`,
-            `  • Or ensure Storybook is accessible from the container`,
+            `  • Verify Storybook is running: curl http://localhost:${port}`,
+            `  • If using --network host, ensure Storybook is accessible on the host`,
+            `  • If using normal Docker networking, ensure Storybook is accessible via host.docker.internal`,
+            `  • Check Docker network configuration and firewall settings`,
           ]
-        : isLikelyDocker
-          ? [`  • Use --url http://host.docker.internal:${port} (or check that Storybook is running)`]
-          : [`  • Check that Storybook is running: curl http://localhost:${port}`],
+        : isLikelyDocker && triedHostDockerInternal
+          ? [
+              `  • Add --add-host=host.docker.internal:host-gateway to your docker run command`,
+              `  • Or use --network host mode: docker run --network host ...`,
+              `  • Or ensure Storybook is accessible from the container`,
+            ]
+          : isLikelyDocker
+            ? [`  • Check that Storybook is running: curl http://localhost:${port}`]
+            : [`  • Check that Storybook is running: curl http://localhost:${port}`],
       '  • Verify Storybook index.json is accessible',
       '  • Try with --debug flag for more detailed output',
       '',
