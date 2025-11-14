@@ -94,27 +94,6 @@ const normalizePatterns = (val?: string | string[]): string[] | undefined => {
   return list.map((s) => s.trim()).filter(Boolean);
 };
 
-// Detect if running in Docker
-const isRunningInDocker = (): boolean => {
-  // Check multiple indicators that we're running in Docker
-  const dockerEnv = process.env.DOCKER_CONTAINER === 'true';
-  const dockerenvFile = fs.existsSync('/.dockerenv');
-  const dockerHostname = process.env.HOSTNAME && process.env.HOSTNAME.includes('docker');
-  const dockerBuild = process.env.DOCKER_BUILD === '1';
-  
-  const isDocker = Boolean(dockerEnv || dockerenvFile || dockerHostname || dockerBuild);
-  
-  return isDocker;
-};
-
-// Transform localhost to host.docker.internal when running in Docker
-const transformDockerUrl = (url: string): string => {
-  if (isRunningInDocker() && url.includes('localhost')) {
-    return url.replace(/localhost/g, 'host.docker.internal');
-  }
-  return url;
-};
-
 export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   const base = defaultConfig();
 
@@ -175,7 +154,7 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   const merged: VisualRegressionConfig = {
     ...base,
     ...fileVisual,
-    url: transformDockerUrl(originalUrl),
+    url: originalUrl,
     browser: (flags.browser ?? fileVisual.browser ?? base.browser) as RuntimeConfig['browser'],
     workers: flags.workers ?? fileVisual.workers ?? base.workers,
     threshold: flags.threshold ?? fileVisual.threshold ?? base.threshold,

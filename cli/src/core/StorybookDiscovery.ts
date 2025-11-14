@@ -67,6 +67,37 @@ const readJsonSafe = (filePath: string): unknown | undefined => {
   }
 };
 
+/**
+ * Try to detect Docker gateway IP as fallback when host.docker.internal doesn't work
+ * This is useful on Linux where host.docker.internal isn't available by default
+ */
+const getDockerGatewayIP = (): string | null => {
+  try {
+    // Try to read the default gateway from /proc/net/route
+    const routeContent = fs.readFileSync('/proc/net/route', 'utf8');
+    const lines = routeContent.split('\n');
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts[1] === '00000000' && parts[7] === '0003') {
+        // Found default gateway, convert hex IP to decimal
+        const hexIP = parts[2];
+        if (hexIP && hexIP.length === 8) {
+          const ip = [
+            parseInt(hexIP.slice(6, 8), 16),
+            parseInt(hexIP.slice(4, 6), 16),
+            parseInt(hexIP.slice(2, 4), 16),
+            parseInt(hexIP.slice(0, 2), 16),
+          ].join('.');
+          return ip;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors - this is a fallback mechanism
+  }
+  return null;
+};
+
 export const discoverStories = async (config: RuntimeConfig): Promise<DiscoveredStory[]> => {
   logger.debug('Starting story discovery process');
 
@@ -80,9 +111,13 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
 
   // Prefer running server index.json; fallback to static
   logger.debug('Preparing candidate locations for story index');
+  
+  // Build candidates list - if host.docker.internal fails, we'll try gateway IP
+  // Track the working URL so we can use it for building story URLs
+  let workingUrl = config.url;
   const candidates = [
-    new URL('index.json', config.url).toString(),
-    new URL('stories.json', config.url).toString(),
+    new URL('index.json', workingUrl).toString(),
+    new URL('stories.json', workingUrl).toString(),
     config.resolvePath('storybook-static/index.json'),
     config.resolvePath('storybook-static/stories.json'),
   ];
@@ -139,6 +174,73 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
     }
   }
 
+  // If localhost failed and we're in Docker, try host.docker.internal as fallback
+  // (works in normal Docker networking mode, but not in --network host mode)
+  if (!indexData && workingUrl.includes('localhost')) {
+    const isLikelyDocker =
+      process.env.DOCKER_CONTAINER === 'true' ||
+      fs.existsSync('/.dockerenv') ||
+      (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker')) ||
+      process.env.DOCKER_BUILD === '1';
+    
+    if (isLikelyDocker) {
+      logger.debug('localhost failed in Docker, trying host.docker.internal as fallback');
+      const hostDockerInternalUrl = workingUrl.replace(/localhost/g, 'host.docker.internal');
+      const hostDockerInternalCandidates = [
+        new URL('index.json', hostDockerInternalUrl).toString(),
+        new URL('stories.json', hostDockerInternalUrl).toString(),
+      ];
+      
+      for (const hostDockerInternalCandidate of hostDockerInternalCandidates) {
+        try {
+          logger.debug(`Attempting host.docker.internal fallback fetch from: ${hostDockerInternalCandidate}`);
+          const res = await fetch(hostDockerInternalCandidate, {
+            signal: AbortSignal.timeout(10000),
+          });
+          if (res.ok) {
+            indexData = await res.json();
+            workingUrl = hostDockerInternalUrl; // Update working URL to use host.docker.internal
+            logger.debug(`Successfully loaded story index from host.docker.internal`);
+            break;
+          }
+        } catch (e) {
+          logger.debug(`host.docker.internal fallback fetch failed: ${(e as Error).message}`);
+        }
+      }
+      
+      // If host.docker.internal also failed, try Docker gateway IP as fallback
+      if (!indexData) {
+        logger.debug('host.docker.internal failed, attempting to detect Docker gateway IP as fallback');
+        const gatewayIP = getDockerGatewayIP();
+        if (gatewayIP) {
+          logger.debug(`Detected Docker gateway IP: ${gatewayIP}, trying as fallback`);
+          const gatewayUrl = workingUrl.replace(/localhost|host\.docker\.internal/g, gatewayIP);
+          const gatewayCandidates = [
+            new URL('index.json', gatewayUrl).toString(),
+            new URL('stories.json', gatewayUrl).toString(),
+          ];
+          
+          for (const gatewayCandidate of gatewayCandidates) {
+            try {
+              logger.debug(`Attempting gateway IP fallback fetch from: ${gatewayCandidate}`);
+              const res = await fetch(gatewayCandidate, {
+                signal: AbortSignal.timeout(10000),
+              });
+              if (res.ok) {
+                indexData = await res.json();
+                workingUrl = gatewayUrl; // Update working URL to use gateway IP
+                logger.debug(`Successfully loaded story index from Docker gateway IP: ${gatewayIP}`);
+                break;
+              }
+            } catch (e) {
+              logger.debug(`Gateway IP fallback fetch failed: ${(e as Error).message}`);
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (!indexData) {
     logger.error('Failed to load story index from any candidate location');
     // Check if we're likely running in Docker
@@ -147,6 +249,11 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       fs.existsSync('/.dockerenv') ||
       (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker')) ||
       process.env.DOCKER_BUILD === '1';
+
+    // Detect if host.docker.internal was attempted
+    const triedHostDockerInternal = attemptedUrls.some((url) =>
+      url.includes('host.docker.internal'),
+    );
 
     const errorMsg = [
       'Could not load Storybook index.json from server or static files.',
@@ -157,22 +264,32 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       '',
       'Common issues:',
       '  • Storybook server is not running or accessible',
-      isLikelyDocker
-        ? '  • When running in Docker, use host.docker.internal instead of localhost'
-        : '  • Wrong URL or port (check that Storybook is running)',
+      isLikelyDocker && triedHostDockerInternal
+        ? '  • host.docker.internal may not be available (Linux requires --add-host=host.docker.internal:host-gateway)'
+        : isLikelyDocker
+          ? '  • When running in Docker, use host.docker.internal instead of localhost'
+          : '  • Wrong URL or port (check that Storybook is running)',
       '  • Storybook static build not found in expected location',
       '  • Network connectivity or firewall issues',
       '',
       'Troubleshooting steps:',
-      isLikelyDocker
-        ? `  • Use --url http://host.docker.internal:${port} (or check that Storybook is running on host.docker.internal:${port})`
-        : `  • Check that Storybook is running: curl http://localhost:${port}`,
+      isLikelyDocker && triedHostDockerInternal
+        ? [
+            `  • Add --add-host=host.docker.internal:host-gateway to your docker run command`,
+            `  • Or use --network host mode: docker run --network host ...`,
+            `  • Or ensure Storybook is accessible from the container`,
+          ]
+        : isLikelyDocker
+          ? [`  • Use --url http://host.docker.internal:${port} (or check that Storybook is running)`]
+          : [`  • Check that Storybook is running: curl http://localhost:${port}`],
       '  • Verify Storybook index.json is accessible',
       '  • Try with --debug flag for more detailed output',
       '',
       'Recent errors:',
       ...errors.slice(-3).map((err) => `  • ${err}`), // Show last 3 errors
-    ].join('\n');
+    ]
+      .flat()
+      .join('\n');
 
     throw new Error(errorMsg);
   }
@@ -224,7 +341,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
 
   const mapped: DiscoveredStory[] = filtered.map((s) => ({
     ...s,
-    url: new URL(`iframe.html?id=${encodeURIComponent(s.id)}`, config.url).toString(),
+    url: new URL(`iframe.html?id=${encodeURIComponent(s.id)}`, workingUrl).toString(),
     snapshotRelPath: toSnapshotPath(s),
   }));
 
