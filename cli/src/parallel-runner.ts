@@ -286,6 +286,16 @@ class WorkerPool {
   private cancelled = false;
   private initialBatchStarted = false;
   private storyViewports = new Map<string, { width: number; height: number } | undefined>();
+  private cpuMonitorInterval?: NodeJS.Timeout;
+  private lastCpuUsage: {
+    user: number;
+    nice: number;
+    sys: number;
+    idle: number;
+    irq: number;
+  } | null = null;
+  private cpuUsageHistory: number[] = []; // Rolling window of CPU samples
+  private readonly CPU_SAMPLE_WINDOW = 10; // Keep last 10 samples
 
   constructor(
     maxWorkers: number,
@@ -309,6 +319,89 @@ class WorkerPool {
 
   getMaxWorkers(): number {
     return this.maxWorkers;
+  }
+
+  getCurrentCpuUsage(): number {
+    if (this.cpuUsageHistory.length === 0) {
+      return 0;
+    }
+    // Calculate rolling average
+    const sum = this.cpuUsageHistory.reduce((a, b) => a + b, 0);
+    return sum / this.cpuUsageHistory.length;
+  }
+
+  private calculateCpuUsage(): number {
+    const cpus = os.cpus();
+    if (cpus.length === 0) {
+      return 0;
+    }
+
+    // Sum up all CPU times across all cores
+    const totalCpu = cpus.reduce(
+      (acc, cpu) => {
+        const times = cpu.times;
+        return {
+          user: acc.user + times.user,
+          nice: acc.nice + times.nice,
+          sys: acc.sys + times.sys,
+          idle: acc.idle + times.idle,
+          irq: acc.irq + (times.irq || 0),
+        };
+      },
+      { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },
+    );
+
+    if (this.lastCpuUsage) {
+      // Calculate CPU usage based on time difference between samples
+      const totalUsed =
+        totalCpu.user +
+        totalCpu.nice +
+        totalCpu.sys +
+        totalCpu.irq -
+        (this.lastCpuUsage.user +
+          this.lastCpuUsage.nice +
+          this.lastCpuUsage.sys +
+          this.lastCpuUsage.irq);
+      const totalIdle = totalCpu.idle - this.lastCpuUsage.idle;
+      const totalTime = totalUsed + totalIdle;
+
+      if (totalTime > 0) {
+        return Math.min((totalUsed / totalTime) * 100, 100);
+      }
+    }
+
+    this.lastCpuUsage = totalCpu;
+    return 0;
+  }
+
+  private sampleCpuUsage(): void {
+    const cpuUsage = this.calculateCpuUsage();
+
+    // Add to rolling window
+    if (cpuUsage > 0 || this.cpuUsageHistory.length === 0) {
+      this.cpuUsageHistory.push(cpuUsage);
+
+      // Keep only last N samples
+      if (this.cpuUsageHistory.length > this.CPU_SAMPLE_WINDOW) {
+        this.cpuUsageHistory.shift();
+      }
+    }
+  }
+
+  private startCpuMonitoring(): void {
+    // Sample CPU every 500ms for rolling average
+    this.cpuMonitorInterval = setInterval(() => {
+      if (this.completed < this.total && !this.maxFailuresReached && !this.cancelled) {
+        this.sampleCpuUsage();
+      }
+    }, 500);
+  }
+
+  private stopCpuMonitoring(): void {
+    if (this.cpuMonitorInterval) {
+      clearInterval(this.cpuMonitorInterval);
+      this.cpuMonitorInterval = undefined;
+    }
   }
 
   private preCalculateViewports(): void {
@@ -630,6 +723,9 @@ class WorkerPool {
     this.onProgress = onProgress;
     this.onComplete = onComplete;
 
+    // Start CPU monitoring for status display
+    this.startCpuMonitoring();
+
     return new Promise((resolve) => {
       // Start initial workers with staggered launches
       for (let i = 0; i < Math.min(this.maxWorkers, this.queue.length); i++) {
@@ -641,6 +737,7 @@ class WorkerPool {
         // If maxFailures is reached, exit immediately without waiting for active workers
         // Active workers will finish their current tests and stop at the next cancellation checkpoint
         if (this.maxFailuresReached) {
+          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -656,6 +753,7 @@ class WorkerPool {
 
         // Check if cancelled and no workers are active
         if (this.cancelled && this.activeWorkers === 0) {
+          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -670,6 +768,7 @@ class WorkerPool {
         }
 
         if (this.completed >= this.total) {
+          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -2055,12 +2154,22 @@ export async function runParallelTests(options: {
     // Use smoothed time remaining
     const timeStr = formatTimeRemaining(smoothedTimeRemaining);
 
+    // Get CPU usage from the pool (rolling average)
+    const cpuUsagePercent = pool.getCurrentCpuUsage();
+
     // Build status line components
     const statusParts: (string | null)[] = [
       chalk.magenta(`Stories: ${completed}/${total} ${storiesPerMinute}/m ${percent}%`),
       chalk.cyan(`Remaining: ~${timeStr}`),
       chalk.yellow(`Workers: ${currentWorkers}`),
     ];
+
+    // Add CPU usage if we have a valid measurement
+    if (cpuUsagePercent > 0) {
+      const loadColor =
+        cpuUsagePercent < 50 ? chalk.green : cpuUsagePercent < 90 ? chalk.yellow : chalk.red;
+      statusParts.push(loadColor(`CPU: ${cpuUsagePercent.toFixed(0)}%`));
+    }
 
     spinnerText = ` ${statusParts.filter(Boolean).join(` ${chalk.dim('•')} `)}`;
     spinner.text = spinnerText;
