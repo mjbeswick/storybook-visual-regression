@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   defaultConfig,
@@ -156,7 +157,7 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     ...fileVisual,
     url: originalUrl,
     browser: (flags.browser ?? fileVisual.browser ?? base.browser) as RuntimeConfig['browser'],
-    workers: flags.workers ?? fileVisual.workers ?? base.workers,
+    workers: flags.workers ?? fileVisual.workers ?? (base.workers ?? os.cpus().length),
     threshold: flags.threshold ?? fileVisual.threshold ?? base.threshold,
     maxDiffPixels: flags.maxDiffPixels ?? fileVisual.maxDiffPixels ?? base.maxDiffPixels,
     fullPage: flags.fullPage ?? fileVisual.fullPage ?? base.fullPage,

@@ -267,7 +267,7 @@ type TestConfig = RuntimeConfig & {
 class WorkerPool {
   private queue: DiscoveredStory[] = [];
   private activeWorkers = 0;
-  private maxWorkers: number = 1;
+  private maxWorkers: number;
   private results: {
     [storyId: string]: { success: boolean; error?: string; duration: number; action?: string };
   } = {};
@@ -286,42 +286,15 @@ class WorkerPool {
   private cancelled = false;
   private initialBatchStarted = false;
   private storyViewports = new Map<string, { width: number; height: number } | undefined>();
-  private performanceHistory: Array<{ timestamp: number; completed: number; workers: number }> = [];
-  private minWorkers = 1;
-  private maxWorkersLimit = os.cpus().length * 2; // 2x the number of CPU cores
-  private onWorkersChanged?: (workers: number) => void;
-  private cpuMonitorInterval?: NodeJS.Timeout;
-  private lastCpuUsage: {
-    user: number;
-    nice: number;
-    sys: number;
-    idle: number;
-    irq: number;
-  } | null = null;
-  private currentCpuUsagePercent = 0;
-  private readonly CPU_SAMPLE_WINDOW = 10; // Keep last 10 samples
-  private cpuUsageHistory: number[] = []; // Rolling window of CPU samples
-  private lastWorkerIncreaseTime = 0; // Timestamp of last worker increase
-  private cpuUsageBeforeLastIncrease = 0; // CPU usage when we last increased workers
-  private readonly STORY_DURATION_WINDOW = 20; // Keep last 20 story durations
-  private storyDurationHistory: number[] = []; // Rolling window of story execution times (ms)
-  private baselineStoryDuration = 0; // Baseline average story duration (ms)
-  private readonly BASE_WORKER_INCREASE_COOLDOWN = 8_000; // Base cooldown: 8 seconds
-  private readonly MIN_WORKER_INCREASE_COOLDOWN = 5_000; // Minimum cooldown: 5 seconds (when story times are stable)
-  private readonly MAX_WORKER_INCREASE_COOLDOWN = 20_000; // Maximum cooldown: 20 seconds (when story times are increasing)
-  private readonly WORKER_STABILIZATION_PERIOD = 5_000; // Wait 5 seconds after adding worker before evaluating CPU
-  private readonly BASE_WORKER_STAGGER_DELAY = 500; // Base delay: 500ms before starting new worker
-  private readonly STORY_DURATION_DEGRADATION_THRESHOLD = 1.15; // 15% increase triggers protection
-  private workerStabilizationEndTime = 0; // Timestamp when worker stabilization period ends
 
   constructor(
-    maxWorkersLimit: number,
+    maxWorkers: number,
     config: TestConfig,
     stories: DiscoveredStory[],
     printUnderSpinner?: (line: string) => void,
     callbacks?: RunCallbacks,
   ) {
-    this.maxWorkersLimit = maxWorkersLimit;
+    this.maxWorkers = maxWorkers;
     this.config = config;
     this.total = stories.length;
     this.queue = [...stories];
@@ -334,553 +307,8 @@ class WorkerPool {
     this.preCalculateViewports();
   }
 
-  setWorkersChangedCallback(callback: (workers: number) => void): void {
-    this.onWorkersChanged = callback;
-  }
-
-  setMaxWorkers(newMax: number): void {
-    // Ensure workers only increase by 1 at a time to prevent spikes
-    const targetMax = Math.max(this.minWorkers, Math.min(this.maxWorkersLimit, newMax));
-    const clamped =
-      targetMax > this.maxWorkers
-        ? this.maxWorkers + 1 // Only increase by 1
-        : targetMax; // Can decrease by any amount
-
-    if (clamped !== this.maxWorkers) {
-      const oldMax = this.maxWorkers;
-      this.maxWorkers = clamped;
-      this.log.debug(`Adjusting worker count: ${oldMax} -> ${clamped}`);
-      this.onWorkersChanged?.(clamped);
-      // Trigger spawning of additional workers if we increased
-      if (
-        clamped > oldMax &&
-        this.queue.length > 0 &&
-        !this.maxFailuresReached &&
-        !this.cancelled
-      ) {
-        // Stagger the new worker launch to prevent spikes
-        // Adaptive delay based on current worker count - more workers = longer delay
-        // This reduces resource contention and prevents performance spikes
-        // Formula: base delay + (worker count * 100ms) to spread out browser startups
-        const adaptiveDelay = this.BASE_WORKER_STAGGER_DELAY + clamped * 100;
-        this.log.debug(
-          `Staggering new worker launch: ${adaptiveDelay}ms delay (base: ${this.BASE_WORKER_STAGGER_DELAY}ms + ${clamped} workers * 100ms)`,
-        );
-        setTimeout(() => {
-          if (!this.maxFailuresReached && !this.cancelled) {
-            this.spawnWorker(true); // Use staggerLaunch for dynamically added workers
-          }
-        }, adaptiveDelay);
-      }
-    }
-  }
-
   getMaxWorkers(): number {
     return this.maxWorkers;
-  }
-
-  getCurrentCpuUsage(): number {
-    return this.currentCpuUsagePercent;
-  }
-
-  private calculateCpuUsage(): number {
-    const cpus = os.cpus();
-    if (cpus.length === 0) {
-      return 0;
-    }
-
-    // Sum up all CPU times across all cores
-    const totalCpu = cpus.reduce(
-      (acc, cpu) => {
-        const times = cpu.times;
-        return {
-          user: acc.user + times.user,
-          nice: acc.nice + times.nice,
-          sys: acc.sys + times.sys,
-          idle: acc.idle + times.idle,
-          irq: acc.irq + (times.irq || 0),
-        };
-      },
-      { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },
-    );
-
-    if (this.lastCpuUsage) {
-      // Calculate CPU usage based on time difference between samples
-      const totalUsed =
-        totalCpu.user +
-        totalCpu.nice +
-        totalCpu.sys +
-        totalCpu.irq -
-        (this.lastCpuUsage.user +
-          this.lastCpuUsage.nice +
-          this.lastCpuUsage.sys +
-          this.lastCpuUsage.irq);
-      const totalIdle = totalCpu.idle - this.lastCpuUsage.idle;
-      const totalTime = totalUsed + totalIdle;
-
-      if (totalTime > 0) {
-        return Math.min((totalUsed / totalTime) * 100, 100);
-      }
-    }
-
-    this.lastCpuUsage = totalCpu;
-    return 0;
-  }
-
-  private sampleCpuUsage(): void {
-    const cpuUsage = this.calculateCpuUsage();
-
-    // Add to rolling window
-    if (cpuUsage > 0 || this.cpuUsageHistory.length === 0) {
-      this.cpuUsageHistory.push(cpuUsage);
-
-      // Keep only last N samples
-      if (this.cpuUsageHistory.length > this.CPU_SAMPLE_WINDOW) {
-        this.cpuUsageHistory.shift();
-      }
-    }
-
-    // Calculate weighted moving average (exponential smoothing)
-    // Give more weight to recent samples for more responsive scaling
-    if (this.cpuUsageHistory.length > 0) {
-      if (this.cpuUsageHistory.length === 1) {
-        this.currentCpuUsagePercent = this.cpuUsageHistory[0];
-      } else {
-        // Use exponential weighted moving average (EWMA)
-        // More recent samples have higher weight
-        const alpha = 0.3; // Smoothing factor (0-1), higher = more responsive
-        let weightedSum = 0;
-        let totalWeight = 0;
-        for (let i = 0; i < this.cpuUsageHistory.length; i++) {
-          const weight = Math.pow(1 - alpha, this.cpuUsageHistory.length - 1 - i);
-          weightedSum += this.cpuUsageHistory[i] * weight;
-          totalWeight += weight;
-        }
-        this.currentCpuUsagePercent = weightedSum / totalWeight;
-      }
-    }
-  }
-
-  /**
-   * Intelligent worker scaling strategy targeting 95% CPU while preventing story time degradation
-   * Uses both CPU usage and story duration metrics to make scaling decisions
-   */
-  private adjustWorkersBasedOnCpu(): void {
-    if (this.maxFailuresReached || this.cancelled) {
-      return;
-    }
-
-    const now = Date.now();
-
-    // Don't evaluate CPU during stabilization period after adding workers
-    if (now < this.workerStabilizationEndTime) {
-      const remainingStabilization = ((this.workerStabilizationEndTime - now) / 1000).toFixed(1);
-      this.log.debug(
-        `Worker stabilization period active (${remainingStabilization}s remaining), skipping CPU evaluation`,
-      );
-      return;
-    }
-
-    // Use smoothed CPU usage for worker adjustment
-    const smoothedCpuUsage = this.currentCpuUsagePercent;
-
-    // Target CPU usage: 95% (as requested)
-    const TARGET_CPU_USAGE = 95;
-    const CPU_TOLERANCE = 3; // Allow 3% variance (92-98% range)
-
-    // Need at least a few samples before making adjustments
-    if (this.cpuUsageHistory.length < 5) {
-      return;
-    }
-
-    // Calculate CPU trend (is it increasing or decreasing?)
-    const recentSamples = this.cpuUsageHistory.slice(-5);
-    const olderSamples = this.cpuUsageHistory.slice(0, -5);
-    const recentAvg = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
-    const olderAvg =
-      olderSamples.length > 0
-        ? olderSamples.reduce((a, b) => a + b, 0) / olderSamples.length
-        : recentAvg;
-    const cpuTrend = recentAvg - olderAvg; // Positive = increasing, negative = decreasing
-
-    const timeSinceLastIncrease = now - this.lastWorkerIncreaseTime;
-
-    // Get story duration metrics for intelligent scaling
-    const currentStoryAvg = this.getCurrentAverageStoryDuration();
-    const storyDurationTrend = this.getStoryDurationTrend();
-    const hasBaseline = this.baselineStoryDuration > 0;
-
-    // Calculate adaptive cooldown based on multiple factors:
-    // 1. Distance from CPU target
-    // 2. Story duration stability (stable = shorter cooldown, increasing = longer)
-    // 3. CPU trend
-    const distanceFromTarget = TARGET_CPU_USAGE - smoothedCpuUsage;
-
-    // Base cooldown based on distance from target
-    let adaptiveCooldown = this.BASE_WORKER_INCREASE_COOLDOWN;
-    if (distanceFromTarget > 20) {
-      // Very low CPU (< 75%), longer cooldown
-      adaptiveCooldown = this.MAX_WORKER_INCREASE_COOLDOWN;
-    } else if (distanceFromTarget > 10) {
-      // Low CPU (75-85%), moderate cooldown
-      adaptiveCooldown = this.BASE_WORKER_INCREASE_COOLDOWN * 1.3;
-    } else if (distanceFromTarget > 5) {
-      // Getting close (85-90%), base cooldown
-      adaptiveCooldown = this.BASE_WORKER_INCREASE_COOLDOWN;
-    } else {
-      // Very close (90-95%), shorter cooldown
-      adaptiveCooldown = this.MIN_WORKER_INCREASE_COOLDOWN;
-    }
-
-    // Adjust cooldown based on story duration stability
-    // If story times are stable or improving, we can scale faster
-    // If story times are increasing, scale slower
-    if (hasBaseline) {
-      if (storyDurationTrend < -2) {
-        // Story times improving, scale faster
-        adaptiveCooldown *= 0.8;
-      } else if (storyDurationTrend > 5) {
-        // Story times increasing, scale much slower
-        adaptiveCooldown *= 2.0;
-      } else if (storyDurationTrend > 0) {
-        // Story times slightly increasing, scale slower
-        adaptiveCooldown *= 1.5;
-      }
-    }
-
-    // Adjust based on CPU trend
-    if (cpuTrend > 3) {
-      // CPU rising quickly, can scale slightly faster
-      adaptiveCooldown *= 0.9;
-    } else if (cpuTrend < -3) {
-      // CPU dropping, scale slower
-      adaptiveCooldown *= 1.3;
-    }
-
-    // Check if last worker increase helped
-    const cpuImproved =
-      this.cpuUsageBeforeLastIncrease > 0
-        ? smoothedCpuUsage > this.cpuUsageBeforeLastIncrease + 2
-        : true;
-
-    if (!cpuImproved && this.lastWorkerIncreaseTime > 0) {
-      // Last increase didn't help, wait longer
-      adaptiveCooldown *= 1.5;
-    }
-
-    // Clamp cooldown to min/max bounds
-    adaptiveCooldown = Math.max(
-      this.MIN_WORKER_INCREASE_COOLDOWN,
-      Math.min(this.MAX_WORKER_INCREASE_COOLDOWN, adaptiveCooldown),
-    );
-
-    // DECREASE workers if CPU is overloaded (respond quickly to overload)
-    if (smoothedCpuUsage > TARGET_CPU_USAGE + CPU_TOLERANCE && this.maxWorkers > this.minWorkers) {
-      const newWorkers = this.maxWorkers - 1;
-      this.setMaxWorkers(newWorkers);
-      this.log.debug(
-        `CPU overloaded (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%), reducing workers to ${newWorkers}`,
-      );
-      return;
-    }
-
-    // INCREASE workers if CPU is underutilized
-    if (
-      smoothedCpuUsage < TARGET_CPU_USAGE - CPU_TOLERANCE &&
-      this.maxWorkers < this.maxWorkersLimit &&
-      this.queue.length > 0 &&
-      timeSinceLastIncrease >= adaptiveCooldown
-    ) {
-      // Critical check: Would adding a worker degrade story performance?
-      if (this.wouldAddingWorkerDegradePerformance()) {
-        // Story times would likely increase, don't add worker
-        return;
-      }
-
-      // Additional safety checks
-      const timeSinceStabilization = now - this.workerStabilizationEndTime;
-      const recentWorkerAddition = timeSinceLastIncrease < adaptiveCooldown * 2;
-
-      // If CPU is close to target and trending down, wait
-      if (
-        smoothedCpuUsage > TARGET_CPU_USAGE - CPU_TOLERANCE &&
-        cpuTrend < -1 &&
-        timeSinceLastIncrease < adaptiveCooldown * 1.5
-      ) {
-        this.log.debug(
-          `CPU trending down (${cpuTrend.toFixed(1)}%) and close to target, waiting before increasing workers`,
-        );
-        return;
-      }
-
-      // If we recently added a worker, wait a bit more for stabilization
-      if (recentWorkerAddition && timeSinceStabilization < 2000) {
-        this.log.debug(
-          `Recent worker addition detected, waiting for system to stabilize (${((2000 - timeSinceStabilization) / 1000).toFixed(1)}s remaining)`,
-        );
-        return;
-      }
-
-      // All checks passed - safe to add worker
-      const newWorkers = this.maxWorkers + 1;
-      this.setMaxWorkers(newWorkers);
-      this.lastWorkerIncreaseTime = now;
-      this.cpuUsageBeforeLastIncrease = smoothedCpuUsage;
-      this.workerStabilizationEndTime = now + this.WORKER_STABILIZATION_PERIOD;
-
-      const storyInfo = hasBaseline
-        ? `story avg: ${currentStoryAvg.toFixed(0)}ms (trend: ${storyDurationTrend > 0 ? '+' : ''}${storyDurationTrend.toFixed(1)}%)`
-        : 'establishing baseline';
-
-      this.log.debug(
-        `CPU usage low (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%, trend: ${cpuTrend > 0 ? '+' : ''}${cpuTrend.toFixed(1)}%), ${storyInfo}, increasing workers to ${newWorkers} (cooldown: ${(adaptiveCooldown / 1000).toFixed(1)}s, waited: ${(timeSinceLastIncrease / 1000).toFixed(1)}s)`,
-      );
-    }
-  }
-
-  /**
-   * Track story duration to monitor performance and predict impact of scaling
-   */
-  private trackStoryDuration(durationMs: number): void {
-    // Add to rolling window
-    this.storyDurationHistory.push(durationMs);
-    if (this.storyDurationHistory.length > this.STORY_DURATION_WINDOW) {
-      this.storyDurationHistory.shift();
-    }
-
-    // Establish baseline after first few stories
-    if (this.baselineStoryDuration === 0 && this.storyDurationHistory.length >= 5) {
-      const sum = this.storyDurationHistory.reduce((a, b) => a + b, 0);
-      this.baselineStoryDuration = sum / this.storyDurationHistory.length;
-      this.log.debug(
-        `Established baseline story duration: ${this.baselineStoryDuration.toFixed(0)}ms`,
-      );
-    }
-  }
-
-  /**
-   * Get current average story duration from recent samples
-   */
-  private getCurrentAverageStoryDuration(): number {
-    if (this.storyDurationHistory.length === 0) {
-      return 0;
-    }
-    const sum = this.storyDurationHistory.reduce((a, b) => a + b, 0);
-    return sum / this.storyDurationHistory.length;
-  }
-
-  /**
-   * Get story duration trend (positive = increasing, negative = decreasing)
-   */
-  private getStoryDurationTrend(): number {
-    if (this.storyDurationHistory.length < 10) {
-      return 0;
-    }
-
-    const recentSamples = this.storyDurationHistory.slice(-5);
-    const olderSamples = this.storyDurationHistory.slice(-10, -5);
-    const recentAvg = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
-    const olderAvg = olderSamples.reduce((a, b) => a + b, 0) / olderSamples.length;
-
-    // Return percentage change
-    return ((recentAvg - olderAvg) / olderAvg) * 100;
-  }
-
-  /**
-   * Check if adding a worker would likely cause story duration degradation
-   * Uses predictive analysis based on current story times and CPU load
-   */
-  private wouldAddingWorkerDegradePerformance(): boolean {
-    // Need baseline to make predictions
-    if (this.baselineStoryDuration === 0 || this.storyDurationHistory.length < 10) {
-      return false;
-    }
-
-    const currentAvg = this.getCurrentAverageStoryDuration();
-    const durationTrend = this.getStoryDurationTrend();
-    const cpuUsage = this.currentCpuUsagePercent;
-
-    // If story durations are already increasing significantly, don't add workers
-    if (currentAvg > this.baselineStoryDuration * this.STORY_DURATION_DEGRADATION_THRESHOLD) {
-      this.log.debug(
-        `Story durations already degraded (${((currentAvg / this.baselineStoryDuration - 1) * 100).toFixed(1)}% above baseline), preventing worker increase`,
-      );
-      return true;
-    }
-
-    // If story durations are trending up (>5% increase) and CPU is already high (>85%), don't add
-    if (durationTrend > 5 && cpuUsage > 85) {
-      this.log.debug(
-        `Story durations trending up (${durationTrend.toFixed(1)}%) with high CPU (${cpuUsage.toFixed(0)}%), preventing worker increase`,
-      );
-      return true;
-    }
-
-    // If story durations are trending up significantly (>10%), don't add regardless of CPU
-    if (durationTrend > 10) {
-      this.log.debug(
-        `Story durations trending up significantly (${durationTrend.toFixed(1)}%), preventing worker increase`,
-      );
-      return true;
-    }
-
-    return false;
-  }
-
-  private startCpuMonitoring(): void {
-    // Sample CPU every 500ms for smoother rolling average
-    // Adjust workers every 5 seconds (10 samples) for more gradual scaling
-    // This prevents rapid worker increases that cause performance spikes
-    let sampleCount = 0;
-    this.cpuMonitorInterval = setInterval(() => {
-      if (this.completed < this.total && !this.maxFailuresReached && !this.cancelled) {
-        // Sample CPU usage every 500ms
-        this.sampleCpuUsage();
-        sampleCount++;
-
-        // Adjust workers every 5 seconds (10 samples) for gradual scaling
-        // Combined with cooldown period, this ensures workers increase slowly
-        if (sampleCount >= 10) {
-          this.adjustWorkersBasedOnCpu();
-          sampleCount = 0;
-        }
-      }
-    }, 500);
-  }
-
-  private stopCpuMonitoring(): void {
-    if (this.cpuMonitorInterval) {
-      clearInterval(this.cpuMonitorInterval);
-      this.cpuMonitorInterval = undefined;
-    }
-  }
-
-  private trackPerformance(): void {
-    const now = Date.now();
-    this.performanceHistory.push({
-      timestamp: now,
-      completed: this.completed,
-      workers: this.maxWorkers,
-    });
-
-    // Keep only last 2 minutes of history
-    const twoMinutesAgo = now - 120000;
-    this.performanceHistory = this.performanceHistory.filter(
-      (entry) => entry.timestamp > twoMinutesAgo,
-    );
-
-    // Adjust workers after each test completion (once we have minimal data)
-    if (this.completed >= 2 && !this.maxFailuresReached && !this.cancelled) {
-      this.adaptiveAdjustWorkers();
-    }
-  }
-
-  private calculateThroughput(windowStartSeconds: number, windowEndSeconds: number = 0): number {
-    const now = Date.now();
-    const windowStart = now - windowStartSeconds * 1000;
-    const windowEnd = now - windowEndSeconds * 1000;
-    const recent = this.performanceHistory.filter(
-      (entry) => entry.timestamp >= windowStart && entry.timestamp <= windowEnd,
-    );
-
-    if (recent.length < 2) {
-      return 0; // Not enough data
-    }
-
-    const first = recent[0];
-    const last = recent[recent.length - 1];
-    const timeDiff = (last.timestamp - first.timestamp) / 1000; // seconds
-    const completedDiff = last.completed - first.completed;
-
-    if (timeDiff <= 0) {
-      return 0;
-    }
-
-    return (completedDiff / timeDiff) * 60; // tests per minute
-  }
-
-  private adaptiveAdjustWorkers(): void {
-    // Need at least 2 data points to calculate throughput
-    if (this.performanceHistory.length < 2) {
-      // Early stage: if we have work and can add workers, do it
-      if (
-        this.completed >= 2 &&
-        this.maxWorkers < this.maxWorkersLimit &&
-        this.queue.length > 0 &&
-        this.activeWorkers < this.maxWorkers
-      ) {
-        const newWorkers = this.maxWorkers + 1;
-        this.setMaxWorkers(newWorkers);
-        this.log.debug(`Early stage: increasing workers to ${newWorkers}`);
-      }
-      return;
-    }
-
-    // Calculate recent throughput (last 10 seconds) vs slightly older throughput (10-20 seconds ago)
-    // Use shorter windows for more responsive adjustments
-    const recentThroughput = this.calculateThroughput(10, 0);
-    const olderThroughput = this.calculateThroughput(20, 10);
-
-    // If we have meaningful throughput data, use it for adjustment
-    if (recentThroughput > 0 && olderThroughput > 0) {
-      const improvement = (recentThroughput - olderThroughput) / olderThroughput;
-
-      // If throughput improved by more than 3%, try increasing workers (more aggressive)
-      if (improvement > 0.03 && this.maxWorkers < this.maxWorkersLimit && this.queue.length > 0) {
-        const newWorkers = this.maxWorkers + 1;
-        this.setMaxWorkers(newWorkers);
-        this.log.debug(
-          `Throughput improved (${recentThroughput.toFixed(1)} vs ${olderThroughput.toFixed(1)} tests/min), increasing workers to ${newWorkers}`,
-        );
-        return;
-      }
-      // If throughput degraded by more than 5%, reduce workers (more responsive)
-      else if (improvement < -0.05 && this.maxWorkers > this.minWorkers) {
-        const newWorkers = this.maxWorkers - 1;
-        this.setMaxWorkers(newWorkers);
-        this.log.debug(
-          `Throughput degraded (${recentThroughput.toFixed(1)} vs ${olderThroughput.toFixed(1)} tests/min), reducing workers to ${newWorkers}`,
-        );
-        return;
-      }
-    }
-
-    // Fallback: if we have work queued and workers are idle, scale up
-    if (
-      this.queue.length > this.activeWorkers &&
-      this.maxWorkers < this.maxWorkersLimit &&
-      this.completed >= 3
-    ) {
-      // If queue is growing faster than we're processing, add workers
-      const timeSinceStart = Date.now() - this.startTime;
-      const avgTimePerTest = timeSinceStart / Math.max(this.completed, 1);
-      const estimatedQueueTime = this.queue.length * avgTimePerTest;
-      const currentWorkTime = this.activeWorkers * avgTimePerTest;
-
-      // If queue would take longer than current workers can handle, add more
-      if (estimatedQueueTime > currentWorkTime * 1.2) {
-        const newWorkers = Math.min(this.maxWorkers + 1, this.maxWorkersLimit);
-        this.setMaxWorkers(newWorkers);
-        this.log.debug(
-          `Queue pressure: ${this.queue.length} queued, ${this.activeWorkers} active, increasing workers to ${newWorkers}`,
-        );
-        return;
-      }
-    }
-
-    // If we have very few active workers relative to max, and queue is empty, consider scaling down
-    if (
-      this.queue.length === 0 &&
-      this.activeWorkers < this.maxWorkers * 0.5 &&
-      this.maxWorkers > this.minWorkers &&
-      this.completed >= 5
-    ) {
-      const newWorkers = this.maxWorkers - 1;
-      this.setMaxWorkers(newWorkers);
-      this.log.debug(
-        `Queue empty, low activity (${this.activeWorkers}/${this.maxWorkers} active), reducing workers to ${newWorkers}`,
-      );
-    }
   }
 
   private preCalculateViewports(): void {
@@ -1192,7 +620,6 @@ class WorkerPool {
     // this.printStoryResult(story, displayName, 'cancelled', duration);
 
     this.completed++;
-    this.trackPerformance();
     this.onProgress?.(this.completed, this.total, this.results);
   }
 
@@ -1202,9 +629,6 @@ class WorkerPool {
   ): Promise<{ success: boolean; failed: number }> {
     this.onProgress = onProgress;
     this.onComplete = onComplete;
-
-    // Start CPU monitoring
-    this.startCpuMonitoring();
 
     return new Promise((resolve) => {
       // Start initial workers with staggered launches
@@ -1217,7 +641,6 @@ class WorkerPool {
         // If maxFailures is reached, exit immediately without waiting for active workers
         // Active workers will finish their current tests and stop at the next cancellation checkpoint
         if (this.maxFailuresReached) {
-          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -1233,7 +656,6 @@ class WorkerPool {
 
         // Check if cancelled and no workers are active
         if (this.cancelled && this.activeWorkers === 0) {
-          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -1248,7 +670,6 @@ class WorkerPool {
         }
 
         if (this.completed >= this.total) {
-          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -1420,9 +841,6 @@ class WorkerPool {
     this.log.debug(
       `Story ${story.id}: Test completed in ${duration}ms with result: ${result || 'failed'}`,
     );
-
-    // Track story duration for performance monitoring
-    this.trackStoryDuration(duration);
 
     if (result !== null) {
       // Success
@@ -1713,7 +1131,6 @@ class WorkerPool {
     }
 
     this.completed++;
-    this.trackPerformance();
     this.onProgress?.(this.completed, this.total, this.results);
   }
 
@@ -2488,24 +1905,9 @@ export async function runParallelTests(options: {
     `Timeouts: testTimeout=${config.testTimeout ?? 'default (60000ms)'}, overlayTimeout=${config.overlayTimeout ?? 'default'}`,
   );
 
-  // If workers are explicitly configured, use that value
-  // Otherwise, start with 1 worker and let it scale up dynamically based on CPU usage
-  const cpuCount = os.cpus().length;
-  let numWorkers: number;
-  let maxWorkersLimit: number;
-  if (config.workers !== undefined && config.workers !== null) {
-    numWorkers = config.workers;
-    maxWorkersLimit = numWorkers; // Use configured value as both initial and max
-    log.debug(`Using explicitly configured worker count: ${numWorkers}`);
-  } else {
-    // Start with 1 worker - will scale up dynamically based on CPU usage
-    numWorkers = 0; // Pass 0 to WorkerPool constructor to indicate dynamic scaling
-    maxWorkersLimit = cpuCount * 1.5; // Allow scaling up to 2x CPU cores
-    log.debug('Starting with 1 worker, will scale up dynamically based on CPU usage');
-  }
-  log.debug(
-    `Worker pool: ${numWorkers === 0 ? '1 (will scale dynamically)' : numWorkers} workers (${cpuCount} CPU cores, max: ${maxWorkersLimit})`,
-  );
+  // Use workers from config (defaults to CPU cores)
+  const numWorkers = config.workers ?? os.cpus().length;
+  log.debug(`Using ${numWorkers} workers (${os.cpus().length} CPU cores)`);
 
   // In test mode, filter out stories that don't have snapshots
   let filteredStories = stories;
@@ -2567,20 +1969,10 @@ export async function runParallelTests(options: {
     }
   };
 
-  const pool = new WorkerPool(
-    maxWorkersLimit,
-    config,
-    filteredStories,
-    printUnderSpinner,
-    callbacks,
-  );
+  const pool = new WorkerPool(numWorkers, config, filteredStories, printUnderSpinner, callbacks);
 
   // Track current worker count for status display
-  // Initialize from pool's actual worker count (starts at 1 for dynamic scaling)
-  let currentWorkers = pool.getMaxWorkers();
-  pool.setWorkersChangedCallback((workers: number) => {
-    currentWorkers = workers;
-  });
+  const currentWorkers = numWorkers;
 
   const startTime = Date.now();
 
@@ -2660,9 +2052,6 @@ export async function runParallelTests(options: {
     const elapsedMinutes = Math.max(elapsed / 60000, 0.001);
     const storiesPerMinute = completed > 0 ? Math.round(completed / elapsedMinutes) : 0;
 
-    // Get CPU usage from the pool (updated every 5 seconds)
-    const cpuUsagePercent = pool.getCurrentCpuUsage();
-
     // Use smoothed time remaining
     const timeStr = formatTimeRemaining(smoothedTimeRemaining);
 
@@ -2672,13 +2061,6 @@ export async function runParallelTests(options: {
       chalk.cyan(`Remaining: ~${timeStr}`),
       chalk.yellow(`Workers: ${currentWorkers}`),
     ];
-
-    // Add CPU usage if we have a valid measurement
-    if (cpuUsagePercent > 0) {
-      const loadColor =
-        cpuUsagePercent < 50 ? chalk.green : cpuUsagePercent < 90 ? chalk.yellow : chalk.red;
-      statusParts.push(loadColor(`CPU: ${cpuUsagePercent.toFixed(0)}%`));
-    }
 
     spinnerText = ` ${statusParts.filter(Boolean).join(` ${chalk.dim('•')} `)}`;
     spinner.text = spinnerText;
