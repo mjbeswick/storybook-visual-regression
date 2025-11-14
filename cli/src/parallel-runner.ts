@@ -236,40 +236,15 @@ class WorkerPool {
         // Check both parameters.viewport.defaultViewport and globals.viewport.value
         const storyViewportName =
           story.parameters?.viewport?.defaultViewport || story.globals?.viewport?.value;
-
         if (storyViewportName) {
-          this.log.debug(
-            `Story ${story.id}: Found viewport name "${storyViewportName}" from discovery (parameters: ${story.parameters?.viewport?.defaultViewport}, globals: ${story.globals?.viewport?.value})`,
-          );
-
           const storyViewportSize = this.config.viewportSizes.find(
             (v) => v.name === storyViewportName,
           );
           if (storyViewportSize) {
             viewport = { width: storyViewportSize.width, height: storyViewportSize.height };
           }
-        }
-
-        // Fallback: Try to infer viewport from story ID or title patterns
-        // This is useful when index.json doesn't include globals
-        if (!viewport && !storyViewportName) {
-          const storyIdLower = story.id.toLowerCase();
-          const storyTitleLower = story.title.toLowerCase();
-
-          // Check if story ID or title contains viewport names from config
-          for (const viewportSize of this.config.viewportSizes) {
-            const viewportNameLower = viewportSize.name.toLowerCase();
-            if (
-              storyIdLower.includes(viewportNameLower) ||
-              storyTitleLower.includes(viewportNameLower)
-            ) {
-              viewport = { width: viewportSize.width, height: viewportSize.height };
-              this.log.debug(
-                `Story ${story.id}: Inferred viewport "${viewportSize.name}" from story ID/title pattern`,
-              );
-              break;
-            }
-          }
+          // If story has a viewport preference we don't recognize, leave viewport undefined
+          // so Storybook can apply its own viewport settings
         }
 
         // Fall back to global default viewport only if story has no viewport preference at all
@@ -1275,110 +1250,10 @@ class WorkerPool {
         }
       }
 
-      // Check if we're on the manager page (has iframe) or iframe.html directly
-      const isManagerPage = await page.evaluate(() => {
-        return !!document.querySelector('#storybook-preview-iframe');
-      });
-
-      let iframeDimensions: { width: number; height: number } | undefined;
-
-      if (isManagerPage) {
-        // Step 1: Detect iframe content dimensions
-        this.log.debug(`Story ${story.id}: Detected manager page, detecting iframe dimensions...`);
-
-        // Wait for the iframe to be present and loaded
-        await page.waitForSelector('#storybook-preview-iframe', { timeout: pageTimeout });
-
-        const iframeElement = await page.$('#storybook-preview-iframe');
-        if (!iframeElement) {
-          throw new Error(`Story ${story.id}: Could not find iframe element`);
-        }
-
-        // Wait a bit for Storybook to apply the viewport to the iframe
-        await page.waitForTimeout(500);
-
-        // Get iframe frame to query its client dimensions
-        const iframeFrame = await iframeElement.contentFrame();
-        if (iframeFrame) {
-          // Wait for the iframe to have content and viewport applied
-          try {
-            await iframeFrame.waitForSelector('#storybook-root', { timeout: 2000 });
-            await iframeFrame.waitForTimeout(300); // Wait for viewport to be applied
-          } catch (e) {
-            // Iframe might not be ready yet, continue anyway
-          }
-
-          // Query the iframe's client width and height (after viewport is applied)
-          iframeDimensions = await iframeFrame.evaluate(() => ({
-            width: window.innerWidth,
-            height: window.innerHeight,
-          }));
-          this.log.debug(
-            `Story ${story.id}: Detected iframe content dimensions: ${iframeDimensions.width}×${iframeDimensions.height}`,
-          );
-        } else {
-          // Fallback: use bounding box if we can't access the frame
-          const box = await iframeElement.boundingBox();
-          if (box) {
-            iframeDimensions = { width: Math.round(box.width), height: Math.round(box.height) };
-            this.log.debug(
-              `Story ${story.id}: Detected iframe dimensions from bounding box: ${iframeDimensions.width}×${iframeDimensions.height}`,
-            );
-          }
-        }
-
-        // Step 2: Get iframe src URL and navigate to it
-        const iframeSrc = await iframeElement.getAttribute('src');
-        if (!iframeSrc) {
-          throw new Error(`Story ${story.id}: Could not get iframe src`);
-        }
-
-        // Construct full URL if it's relative
-        const iframeUrl = iframeSrc.startsWith('http')
-          ? iframeSrc
-          : new URL(iframeSrc, story.url).toString();
-
-        this.log.debug(`Story ${story.id}: Navigating to iframe URL: ${iframeUrl}`);
-
-        // Navigate to the iframe URL
-        await page.goto(iframeUrl, { waitUntil: 'commit', timeout: pageTimeout });
-        this.log.debug(`Story ${story.id}: Navigation to iframe URL committed`);
-
-        // Wait for DOMContentLoaded
-        try {
-          await page.waitForLoadState('domcontentloaded', { timeout: pageTimeout });
-        } catch {
-          await page.waitForFunction(
-            () => document.readyState === 'complete' || document.readyState === 'interactive',
-            { timeout: pageTimeout },
-          );
-        }
-
-        // Step 3: Adjust window size to match iframe dimensions
-        if (iframeDimensions) {
-          await page.setViewportSize(iframeDimensions);
-          this.log.debug(
-            `Story ${story.id}: Set window size to match iframe: ${iframeDimensions.width}×${iframeDimensions.height}`,
-          );
-          // Wait a bit for the page to adjust
-          await page.waitForTimeout(200);
-
-          // Verify the viewport was set correctly
-          const actualSize = await page.evaluate(() => ({
-            width: window.innerWidth,
-            height: window.innerHeight,
-          }));
-          this.log.debug(
-            `Story ${story.id}: Verified window size after setting viewport: ${actualSize.width}×${actualSize.height} (expected: ${iframeDimensions.width}×${iframeDimensions.height})`,
-          );
-        }
-      }
-
-      // Wait for the storybook root
-      await page.waitForSelector('#storybook-root', { timeout: pageTimeout });
+      await page.waitForSelector('body.sb-show-main');
+      await page.waitForSelector('#storybook-root');
 
       // Wait for the storybook root to have content (not be empty)
-      // After navigating to iframe URL (if on manager page), we're now on iframe.html, so use page
       await page.waitForFunction(
         () => {
           const root = document.getElementById('storybook-root');
@@ -1404,75 +1279,104 @@ class WorkerPool {
         await page.waitForTimeout(this.config.storyLoadDelay);
       }
 
-      // Get the actual viewport size for display purposes
-      let actualViewport: { width: number; height: number } | undefined = iframeDimensions;
-      if (!actualViewport) {
-        // If we didn't get iframe dimensions, get from current window
-        actualViewport = (await getStoryViewport(page)) || undefined;
-      }
+      // Get the actual viewport size from the page using Storybook's API
+      // This uses the modern approach that queries Storybook's Manager API or Preview API
+      let actualViewport: { width: number; height: number } | undefined;
+      try {
+        if (!page.isClosed()) {
+          // Use the new getStoryViewport function which queries Storybook's API directly
+          const storyViewport = await getStoryViewport(page, story.id);
+          if (storyViewport) {
+            actualViewport = storyViewport;
+            this.log.debug(
+              `Story ${story.id}: Found viewport from Storybook API: ${actualViewport.width}×${actualViewport.height}`,
+            );
 
-      if (actualViewport) {
-        this.log.debug(
-          `Story ${story.id}: Viewport size: ${actualViewport.width}×${actualViewport.height}`,
-        );
-      }
+            // Set the page viewport size to match the story's viewport
+            // This ensures Storybook renders at the correct size
+            await page.setViewportSize(actualViewport);
+            this.log.debug(
+              `Story ${story.id}: Set page viewport size to ${actualViewport.width}×${actualViewport.height}`,
+            );
 
-      if (this.config.domStabilityQuietPeriod && this.config.domStabilityMaxWait) {
-        // Wait for DOM to stabilize: configurable quiet period after last mutation, with max wait timeout
-        const quietPeriodMs: number = Number(this.config.domStabilityQuietPeriod ?? 300); // Default: 300ms after last mutation
-        const maxWaitMs: number = Number(this.config.domStabilityMaxWait ?? 2000); // Default: 2000ms total wait
+            // Wait a bit for Storybook to re-render with the correct viewport
+            await page.waitForTimeout(100);
+          } else {
+            // Fallback: use window dimensions or configured viewport
+            const dimensions = await page.evaluate(() => ({
+              width: window.innerWidth,
+              height: window.innerHeight,
+            }));
+            actualViewport = { width: dimensions.width, height: dimensions.height };
+            this.log.debug(
+              `Story ${story.id}: Using window dimensions as fallback: ${actualViewport.width}×${actualViewport.height}`,
+            );
+          }
 
-        const isStable = await page.evaluate(
-          ({ quietPeriodMs, maxWaitMs }) => {
-            return new Promise<boolean>((resolve) => {
-              // Use performance.now() for timing to avoid issues with mocked Date.now()
-              const start = performance.now();
-              let lastMutation = performance.now();
-
-              const obs = new MutationObserver(() => {
-                lastMutation = performance.now();
-              });
-
-              obs.observe(document.body, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                characterData: true,
-              });
-
-              const checkStability = () => {
-                const now = performance.now();
-                const timeSinceLastMutation = now - lastMutation;
-                const totalTime = now - start;
-
-                if (timeSinceLastMutation >= quietPeriodMs) {
-                  // DOM has been stable for quietPeriodMs
-                  obs.disconnect();
-                  resolve(true);
-                } else if (totalTime >= maxWaitMs) {
-                  // We've waited long enough, proceed anyway
-                  obs.disconnect();
-                  resolve(false);
-                } else {
-                  // Keep checking
-                  setTimeout(checkStability, 10);
-                }
-              };
-
-              checkStability();
-            });
-          },
-          { quietPeriodMs, maxWaitMs },
-        );
-
-        if (!isStable) {
           this.log.debug(
-            `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
+            `Story ${story.id}: Actual viewport size: ${actualViewport.width}×${actualViewport.height} (configured: ${viewport ? `${viewport.width}×${viewport.height}` : 'none'})`,
           );
-        } else {
-          this.log.debug(`Story ${story.id}: DOM is stable`);
         }
+      } catch (e) {
+        this.log.debug(`Story ${story.id}: Failed to get actual viewport size:`, e);
+        // Fall back to configured viewport
+        actualViewport = viewport;
       }
+
+      // // Wait for DOM to stabilize: configurable quiet period after last mutation, with max wait timeout
+      // const quietPeriodMs: number = Number(this.config.domStabilityQuietPeriod ?? 300); // Default: 300ms after last mutation
+      // const maxWaitMs: number = Number(this.config.domStabilityMaxWait ?? 2000); // Default: 2000ms total wait
+
+      // const isStable = await page.evaluate(
+      //   ({ quietPeriodMs, maxWaitMs }) => {
+      //     return new Promise<boolean>((resolve) => {
+      //       // Use performance.now() for timing to avoid issues with mocked Date.now()
+      //       const start = performance.now();
+      //       let lastMutation = performance.now();
+
+      //       const obs = new MutationObserver(() => {
+      //         lastMutation = performance.now();
+      //       });
+
+      //       obs.observe(document.body, {
+      //         childList: true,
+      //         subtree: true,
+      //         attributes: true,
+      //         characterData: true,
+      //       });
+
+      //       const checkStability = () => {
+      //         const now = performance.now();
+      //         const timeSinceLastMutation = now - lastMutation;
+      //         const totalTime = now - start;
+
+      //         if (timeSinceLastMutation >= quietPeriodMs) {
+      //           // DOM has been stable for quietPeriodMs
+      //           obs.disconnect();
+      //           resolve(true);
+      //         } else if (totalTime >= maxWaitMs) {
+      //           // We've waited long enough, proceed anyway
+      //           obs.disconnect();
+      //           resolve(false);
+      //         } else {
+      //           // Keep checking
+      //           setTimeout(checkStability, 10);
+      //         }
+      //       };
+
+      //       checkStability();
+      //     });
+      //   },
+      //   { quietPeriodMs, maxWaitMs },
+      // );
+
+      // if (!isStable) {
+      //   this.log.debug(
+      //     `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
+      //   );
+      // } else {
+      //   this.log.debug(`Story ${story.id}: DOM is stable`);
+      // }
 
       // Check for cancellation before screenshot
       if (this.cancelled) {
@@ -1507,18 +1411,15 @@ class WorkerPool {
       // Date is already fixed via context.addInitScript, no need for clock API
 
       // Capture screenshot with settings optimized for visual regression
-      // After potentially navigating to iframe URL, we're always on iframe.html, so use page
       this.log.debug(
         `Story ${story.id}: Capturing screenshot${this.config.fullPage ? ' (full page)' : ''}...`,
       );
       const screenshotStart = Date.now();
-
       await page.screenshot({
         path: actual,
         fullPage: this.config.fullPage,
         type: 'png', // PNG format required for accurate odiff comparison
       });
-
       this.log.debug(`Story ${story.id}: Screenshot captured in ${Date.now() - screenshotStart}ms`);
 
       // Handle baseline logic with odiff visual regression testing

@@ -219,18 +219,106 @@ export const detectViewportsFromIframe = async (page: any): Promise<DetectedView
 };
 
 /**
- * Get the viewport dimensions from the current page/window
+ * Get the viewport for a specific story
  */
 export const getStoryViewport = async (
   page: any,
+  storyId: string,
 ): Promise<{ width: number; height: number } | null> => {
   try {
-    return await page.evaluate(() => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-      return width > 0 && height > 0 ? { width, height } : null;
-    });
+    return await page.evaluate((id: string) => {
+      // Try to access from iframe (when on story page)
+      const iframe = document.querySelector('#storybook-preview-iframe') as HTMLIFrameElement;
+      if (iframe?.contentWindow) {
+        const iframeWindow = iframe.contentWindow as any;
+        const preview = iframeWindow.__STORYBOOK_PREVIEW__;
+
+        if (preview) {
+          // Get story data from preview
+          const story = preview.storyStore?.storyById?.(id) || preview.getCurrentStoryData?.();
+
+          if (story) {
+            // Check for globals viewport (Storybook 8+ way)
+            const globalsViewport = story.globals?.viewport;
+            let viewportName: string | undefined;
+
+            if (typeof globalsViewport === 'string') {
+              viewportName = globalsViewport;
+            } else if (globalsViewport?.value) {
+              viewportName = globalsViewport.value;
+            } else if (story.parameters?.viewport?.defaultViewport) {
+              viewportName = story.parameters.viewport.defaultViewport;
+            }
+
+            if (viewportName) {
+              // Get viewport dimensions
+              const viewports = story.parameters?.viewport?.viewports || {};
+              const viewport = viewports[viewportName];
+
+              if (viewport) {
+                const width = parseInt(
+                  String(viewport.styles?.width || viewport.width || '0').replace(/\D/g, ''),
+                  10,
+                );
+                const height = parseInt(
+                  String(viewport.styles?.height || viewport.height || '0').replace(/\D/g, ''),
+                  10,
+                );
+
+                if (width > 0 && height > 0) {
+                  return { width, height };
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback: Try Manager API (when on manager page)
+      const api = (window as any).__STORYBOOK_MANAGER_API__;
+      if (api) {
+        // Get story data
+        const story = api.storyStore?.storyById?.(id) || api.getCurrentStoryData?.();
+
+        if (story) {
+          // Check for globals viewport (Storybook 8+ way)
+          const globalsViewport = story.globals?.viewport;
+          let viewportName: string | undefined;
+
+          if (typeof globalsViewport === 'string') {
+            viewportName = globalsViewport;
+          } else if (globalsViewport?.value) {
+            viewportName = globalsViewport.value;
+          } else if (story.parameters?.viewport?.defaultViewport) {
+            viewportName = story.parameters.viewport.defaultViewport;
+          }
+
+          if (!viewportName) return null;
+
+          // Get viewport dimensions
+          const viewports = story.parameters?.viewport?.viewports || {};
+
+          const viewport = viewports[viewportName];
+
+          if (!viewport) return null;
+
+          const width = parseInt(
+            String(viewport.styles?.width || viewport.width || '0').replace(/\D/g, ''),
+            10,
+          );
+          const height = parseInt(
+            String(viewport.styles?.height || viewport.height || '0').replace(/\D/g, ''),
+            10,
+          );
+
+          return width > 0 && height > 0 ? { width, height } : null;
+        }
+      }
+
+      return null;
+    }, storyId);
   } catch (error) {
+    // Silently fail
     return null;
   }
 };

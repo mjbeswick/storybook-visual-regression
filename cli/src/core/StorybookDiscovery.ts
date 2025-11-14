@@ -67,58 +67,6 @@ const readJsonSafe = (filePath: string): unknown | undefined => {
   }
 };
 
-/**
- * Converts a glob pattern to a regex pattern.
- * Supports: *, ?, [chars], and basic escaping.
- */
-const globToRegex = (pattern: string): RegExp => {
-  // Use placeholders for glob characters to avoid double-escaping
-  const PLACEHOLDER_STAR = '\u0001';
-  const PLACEHOLDER_QUESTION = '\u0002';
-  const PLACEHOLDER_BRACKET_OPEN = '\u0003';
-  const PLACEHOLDER_BRACKET_CLOSE = '\u0004';
-
-  const regex = pattern
-    // Replace glob characters with placeholders
-    .replace(/\*/g, PLACEHOLDER_STAR)
-    .replace(/\?/g, PLACEHOLDER_QUESTION)
-    .replace(/\[/g, PLACEHOLDER_BRACKET_OPEN)
-    .replace(/\]/g, PLACEHOLDER_BRACKET_CLOSE)
-    // Escape all regex special characters
-    .replace(/[.+^${}()|\\]/g, '\\$&')
-    // Replace placeholders with regex equivalents
-    .replace(new RegExp(PLACEHOLDER_STAR, 'g'), '.*')
-    .replace(new RegExp(PLACEHOLDER_QUESTION, 'g'), '.')
-    .replace(new RegExp(PLACEHOLDER_BRACKET_OPEN, 'g'), '[')
-    .replace(new RegExp(PLACEHOLDER_BRACKET_CLOSE, 'g'), ']');
-
-  // Match anywhere in the string (not anchored to start/end)
-  return new RegExp(regex, 'i');
-};
-
-/**
- * Tests if a string matches a glob pattern.
- * Falls back to substring matching for patterns without glob characters.
- */
-const matchesGlob = (str: string, pattern: string): boolean => {
-  const lowerPattern = pattern.toLowerCase();
-  const lowerStr = str.toLowerCase();
-
-  // If pattern contains glob characters, use regex matching
-  if (lowerPattern.includes('*') || lowerPattern.includes('?') || lowerPattern.includes('[')) {
-    try {
-      const regex = globToRegex(lowerPattern);
-      return regex.test(lowerStr);
-    } catch {
-      // If regex conversion fails, fall back to substring
-      return lowerStr.includes(lowerPattern);
-    }
-  }
-
-  // Otherwise use substring matching for backward compatibility
-  return lowerStr.includes(lowerPattern);
-};
-
 export const discoverStories = async (config: RuntimeConfig): Promise<DiscoveredStory[]> => {
   logger.debug('Starting story discovery process');
 
@@ -243,31 +191,13 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
 
   logger.debug(`Processing ${source.length} raw story entries from index`);
   const stories: StoryIndexEntry[] = source
-    .map((s: any) => {
-      const story = {
-        id: String(s.id ?? s.sid ?? ''),
-        title: String(s.title ?? s.kind ?? ''),
-        name: String(s.name ?? s.story ?? ''),
-        parameters: s.parameters,
-        globals: s.globals,
-      };
-
-      // Debug logging for stories with viewport globals
-      if (s.globals?.viewport || s.parameters?.viewport) {
-        logger.debug(
-          `Story ${story.id}: Found viewport config - globals.viewport: ${JSON.stringify(s.globals?.viewport)}, parameters.viewport: ${JSON.stringify(s.parameters?.viewport)}`,
-        );
-      }
-
-      // Debug logging for attended stories to see what's actually in index.json
-      if (story.id.includes('attended') || story.title.toLowerCase().includes('attended')) {
-        logger.debug(
-          `Story ${story.id}: Raw data from index.json - hasGlobals: ${!!s.globals}, globals: ${JSON.stringify(s.globals)}, hasParameters: ${!!s.parameters}, parameters.viewport: ${JSON.stringify(s.parameters?.viewport)}`,
-        );
-      }
-
-      return story;
-    })
+    .map((s: any) => ({
+      id: String(s.id ?? s.sid ?? ''),
+      title: String(s.title ?? s.kind ?? ''),
+      name: String(s.name ?? s.story ?? ''),
+      parameters: s.parameters,
+      globals: s.globals,
+    }))
     .filter((s) => s.id && s.title && s.name);
   logger.debug(`Parsed ${stories.length} valid story entries`);
 
@@ -283,10 +213,8 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
     }
     const includes = config.includeStories;
     const excludes = config.excludeStories;
-    const match = (patterns?: string[]): boolean => {
-      if (!patterns) return true;
-      return patterns.some((p) => matchesGlob(hay, p));
-    };
+    const match = (patterns?: string[]): boolean =>
+      !patterns || patterns.some((p) => hay.includes(p.toLowerCase()));
     if (includes && !match(includes)) return false;
     if (excludes && match(excludes)) return false;
     return true;
@@ -294,9 +222,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
 
   const mapped: DiscoveredStory[] = filtered.map((s) => ({
     ...s,
-    // Use manager URL format: /?path=/story/story-id
-    // This allows us to access the manager API and screenshot the iframe
-    url: new URL(`/?path=/story/${encodeURIComponent(s.id)}`, config.url).toString(),
+    url: new URL(`iframe.html?id=${encodeURIComponent(s.id)}`, config.url).toString(),
     snapshotRelPath: toSnapshotPath(s),
   }));
 
