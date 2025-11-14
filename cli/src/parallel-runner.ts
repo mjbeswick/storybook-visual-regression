@@ -12,7 +12,6 @@ import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
 import type { RunCallbacks } from './core/VisualRegressionRunner.js';
-import { getStoryViewport } from './core/StorybookConfigDetector.js';
 import { createLogger, setGlobalLogger } from './logger.js';
 
 // Helper to parse fixDate config value into a Date object
@@ -194,6 +193,21 @@ class WorkerPool {
   private cancelled = false;
   private initialBatchStarted = false;
   private storyViewports = new Map<string, { width: number; height: number } | undefined>();
+  private performanceHistory: Array<{ timestamp: number; completed: number; workers: number }> = [];
+  private minWorkers = 2;
+  private maxWorkersLimit = 12;
+  private onWorkersChanged?: (workers: number) => void;
+  private cpuMonitorInterval?: NodeJS.Timeout;
+  private lastCpuUsage: {
+    user: number;
+    nice: number;
+    sys: number;
+    idle: number;
+    irq: number;
+  } | null = null;
+  private currentCpuUsagePercent = 0;
+  private cpuUsageHistory: number[] = []; // Rolling window of CPU samples
+  private readonly CPU_SAMPLE_WINDOW = 10; // Keep last 5 samples (5 seconds)
 
   constructor(
     maxWorkers: number,
@@ -213,6 +227,282 @@ class WorkerPool {
 
     // Pre-calculate viewports for all stories
     this.preCalculateViewports();
+  }
+
+  setWorkersChangedCallback(callback: (workers: number) => void): void {
+    this.onWorkersChanged = callback;
+  }
+
+  setMaxWorkers(newMax: number): void {
+    const clamped = Math.max(this.minWorkers, Math.min(this.maxWorkersLimit, newMax));
+    if (clamped !== this.maxWorkers) {
+      const oldMax = this.maxWorkers;
+      this.maxWorkers = clamped;
+      this.log.debug(`Adjusting worker count: ${oldMax} -> ${clamped}`);
+      this.onWorkersChanged?.(clamped);
+      // Trigger spawning of additional workers if we increased
+      if (
+        clamped > oldMax &&
+        this.queue.length > 0 &&
+        !this.maxFailuresReached &&
+        !this.cancelled
+      ) {
+        setImmediate(() => this.spawnWorker());
+      }
+    }
+  }
+
+  getMaxWorkers(): number {
+    return this.maxWorkers;
+  }
+
+  getCurrentCpuUsage(): number {
+    return this.currentCpuUsagePercent;
+  }
+
+  private calculateCpuUsage(): number {
+    const cpus = os.cpus();
+    if (cpus.length === 0) {
+      return 0;
+    }
+
+    // Sum up all CPU times across all cores
+    const totalCpu = cpus.reduce(
+      (acc, cpu) => {
+        const times = cpu.times;
+        return {
+          user: acc.user + times.user,
+          nice: acc.nice + times.nice,
+          sys: acc.sys + times.sys,
+          idle: acc.idle + times.idle,
+          irq: acc.irq + (times.irq || 0),
+        };
+      },
+      { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },
+    );
+
+    if (this.lastCpuUsage) {
+      // Calculate CPU usage based on time difference between samples
+      const totalUsed =
+        totalCpu.user +
+        totalCpu.nice +
+        totalCpu.sys +
+        totalCpu.irq -
+        (this.lastCpuUsage.user +
+          this.lastCpuUsage.nice +
+          this.lastCpuUsage.sys +
+          this.lastCpuUsage.irq);
+      const totalIdle = totalCpu.idle - this.lastCpuUsage.idle;
+      const totalTime = totalUsed + totalIdle;
+
+      if (totalTime > 0) {
+        return Math.min((totalUsed / totalTime) * 100, 100);
+      }
+    }
+
+    this.lastCpuUsage = totalCpu;
+    return 0;
+  }
+
+  private sampleCpuUsage(): void {
+    const cpuUsage = this.calculateCpuUsage();
+
+    // Add to rolling window
+    if (cpuUsage > 0 || this.cpuUsageHistory.length === 0) {
+      this.cpuUsageHistory.push(cpuUsage);
+
+      // Keep only last N samples
+      if (this.cpuUsageHistory.length > this.CPU_SAMPLE_WINDOW) {
+        this.cpuUsageHistory.shift();
+      }
+    }
+
+    // Calculate rolling average
+    if (this.cpuUsageHistory.length > 0) {
+      const sum = this.cpuUsageHistory.reduce((a, b) => a + b, 0);
+      this.currentCpuUsagePercent = sum / this.cpuUsageHistory.length;
+    }
+  }
+
+  private adjustWorkersBasedOnCpu(): void {
+    if (this.maxFailuresReached || this.cancelled) {
+      return;
+    }
+
+    // Use smoothed CPU usage for worker adjustment
+    const smoothedCpuUsage = this.currentCpuUsagePercent;
+
+    // Adjust workers based on smoothed CPU usage
+    // If CPU is underutilized (< 70%) and we have work, increase workers
+    if (smoothedCpuUsage < 70 && this.maxWorkers < this.maxWorkersLimit && this.queue.length > 0) {
+      const newWorkers = this.maxWorkers + 1;
+      this.setMaxWorkers(newWorkers);
+      this.log.debug(
+        `CPU usage low (${smoothedCpuUsage.toFixed(0)}% avg), increasing workers to ${newWorkers}`,
+      );
+    }
+    // If CPU is overloaded (> 90%), reduce workers
+    else if (smoothedCpuUsage > 90 && this.maxWorkers > this.minWorkers) {
+      const newWorkers = this.maxWorkers - 1;
+      this.setMaxWorkers(newWorkers);
+      this.log.debug(
+        `CPU usage high (${smoothedCpuUsage.toFixed(0)}% avg), reducing workers to ${newWorkers}`,
+      );
+    }
+  }
+
+  private startCpuMonitoring(): void {
+    // Sample CPU every 1 second for smoother rolling average
+    // Adjust workers every 5 seconds based on smoothed CPU usage
+    let sampleCount = 0;
+    this.cpuMonitorInterval = setInterval(() => {
+      if (this.completed < this.total && !this.maxFailuresReached && !this.cancelled) {
+        // Sample CPU usage every second
+        this.sampleCpuUsage();
+        sampleCount++;
+
+        // Adjust workers every 5 seconds (after we have enough samples)
+        if (sampleCount >= 5) {
+          this.adjustWorkersBasedOnCpu();
+          sampleCount = 0;
+        }
+      }
+    }, 1000);
+  }
+
+  private stopCpuMonitoring(): void {
+    if (this.cpuMonitorInterval) {
+      clearInterval(this.cpuMonitorInterval);
+      this.cpuMonitorInterval = undefined;
+    }
+  }
+
+  private trackPerformance(): void {
+    const now = Date.now();
+    this.performanceHistory.push({
+      timestamp: now,
+      completed: this.completed,
+      workers: this.maxWorkers,
+    });
+
+    // Keep only last 2 minutes of history
+    const twoMinutesAgo = now - 120000;
+    this.performanceHistory = this.performanceHistory.filter(
+      (entry) => entry.timestamp > twoMinutesAgo,
+    );
+
+    // Adjust workers after each test completion (once we have minimal data)
+    if (this.completed >= 2 && !this.maxFailuresReached && !this.cancelled) {
+      this.adaptiveAdjustWorkers();
+    }
+  }
+
+  private calculateThroughput(windowStartSeconds: number, windowEndSeconds: number = 0): number {
+    const now = Date.now();
+    const windowStart = now - windowStartSeconds * 1000;
+    const windowEnd = now - windowEndSeconds * 1000;
+    const recent = this.performanceHistory.filter(
+      (entry) => entry.timestamp >= windowStart && entry.timestamp <= windowEnd,
+    );
+
+    if (recent.length < 2) {
+      return 0; // Not enough data
+    }
+
+    const first = recent[0];
+    const last = recent[recent.length - 1];
+    const timeDiff = (last.timestamp - first.timestamp) / 1000; // seconds
+    const completedDiff = last.completed - first.completed;
+
+    if (timeDiff <= 0) {
+      return 0;
+    }
+
+    return (completedDiff / timeDiff) * 60; // tests per minute
+  }
+
+  private adaptiveAdjustWorkers(): void {
+    // Need at least 2 data points to calculate throughput
+    if (this.performanceHistory.length < 2) {
+      // Early stage: if we have work and can add workers, do it
+      if (
+        this.completed >= 2 &&
+        this.maxWorkers < this.maxWorkersLimit &&
+        this.queue.length > 0 &&
+        this.activeWorkers < this.maxWorkers
+      ) {
+        const newWorkers = this.maxWorkers + 1;
+        this.setMaxWorkers(newWorkers);
+        this.log.debug(`Early stage: increasing workers to ${newWorkers}`);
+      }
+      return;
+    }
+
+    // Calculate recent throughput (last 10 seconds) vs slightly older throughput (10-20 seconds ago)
+    // Use shorter windows for more responsive adjustments
+    const recentThroughput = this.calculateThroughput(10, 0);
+    const olderThroughput = this.calculateThroughput(20, 10);
+
+    // If we have meaningful throughput data, use it for adjustment
+    if (recentThroughput > 0 && olderThroughput > 0) {
+      const improvement = (recentThroughput - olderThroughput) / olderThroughput;
+
+      // If throughput improved by more than 3%, try increasing workers (more aggressive)
+      if (improvement > 0.03 && this.maxWorkers < this.maxWorkersLimit && this.queue.length > 0) {
+        const newWorkers = this.maxWorkers + 1;
+        this.setMaxWorkers(newWorkers);
+        this.log.debug(
+          `Throughput improved (${recentThroughput.toFixed(1)} vs ${olderThroughput.toFixed(1)} tests/min), increasing workers to ${newWorkers}`,
+        );
+        return;
+      }
+      // If throughput degraded by more than 5%, reduce workers (more responsive)
+      else if (improvement < -0.05 && this.maxWorkers > this.minWorkers) {
+        const newWorkers = this.maxWorkers - 1;
+        this.setMaxWorkers(newWorkers);
+        this.log.debug(
+          `Throughput degraded (${recentThroughput.toFixed(1)} vs ${olderThroughput.toFixed(1)} tests/min), reducing workers to ${newWorkers}`,
+        );
+        return;
+      }
+    }
+
+    // Fallback: if we have work queued and workers are idle, scale up
+    if (
+      this.queue.length > this.activeWorkers &&
+      this.maxWorkers < this.maxWorkersLimit &&
+      this.completed >= 3
+    ) {
+      // If queue is growing faster than we're processing, add workers
+      const timeSinceStart = Date.now() - this.startTime;
+      const avgTimePerTest = timeSinceStart / Math.max(this.completed, 1);
+      const estimatedQueueTime = this.queue.length * avgTimePerTest;
+      const currentWorkTime = this.activeWorkers * avgTimePerTest;
+
+      // If queue would take longer than current workers can handle, add more
+      if (estimatedQueueTime > currentWorkTime * 1.2) {
+        const newWorkers = Math.min(this.maxWorkers + 1, this.maxWorkersLimit);
+        this.setMaxWorkers(newWorkers);
+        this.log.debug(
+          `Queue pressure: ${this.queue.length} queued, ${this.activeWorkers} active, increasing workers to ${newWorkers}`,
+        );
+        return;
+      }
+    }
+
+    // If we have very few active workers relative to max, and queue is empty, consider scaling down
+    if (
+      this.queue.length === 0 &&
+      this.activeWorkers < this.maxWorkers * 0.5 &&
+      this.maxWorkers > this.minWorkers &&
+      this.completed >= 5
+    ) {
+      const newWorkers = this.maxWorkers - 1;
+      this.setMaxWorkers(newWorkers);
+      this.log.debug(
+        `Queue empty, low activity (${this.activeWorkers}/${this.maxWorkers} active), reducing workers to ${newWorkers}`,
+      );
+    }
   }
 
   private preCalculateViewports(): void {
@@ -273,7 +563,7 @@ class WorkerPool {
     result: 'success' | 'skipped' | 'failed' | 'cancelled',
     duration: number,
     errorDetails?: { reason: string; url: string; diffPath?: string; expectedPath?: string },
-    viewport?: { width: number; height: number },
+    viewportName?: string,
   ): void {
     // Skip output if quiet mode
     if (this.config.quiet) {
@@ -299,8 +589,8 @@ class WorkerPool {
     let line: string;
     let logLevel: 'info' | 'error' = 'info';
 
-    // Format viewport info
-    const viewportInfo = viewport ? chalk.dim(`(${viewport.width}×${viewport.height})`) : '';
+    // Format viewport info - show viewport name if available
+    const viewportInfo = viewportName ? chalk.dim(`(${viewportName})`) : '';
 
     switch (result) {
       case 'success':
@@ -358,10 +648,12 @@ class WorkerPool {
         detailLines.push(`  ${chalk.gray(`Baseline: ${errorDetails.expectedPath}`)}`);
       }
 
-      if (errorDetails.diffPath) {
+      // Only add diff path to detail lines if it wasn't already included in the reason
+      // (for "Visual differences detected", the diff path is already in coloredReason)
+      if (errorDetails.diffPath && reason !== 'Visual differences detected') {
         // Keep a separate diff line as well for easy parsing/copying
         detailLines.push(`  ${chalk.gray(`Diff: ${errorDetails.diffPath}`)}`);
-      } else {
+      } else if (!errorDetails.diffPath) {
         // Provide more context about why diff wasn't generated
         const reason = errorDetails.reason || '';
         if (/target crashed|page crashed|browser crashed/i.test(reason)) {
@@ -442,6 +734,7 @@ class WorkerPool {
     // this.printStoryResult(story, displayName, 'cancelled', duration);
 
     this.completed++;
+    this.trackPerformance();
     this.onProgress?.(this.completed, this.total, this.results);
   }
 
@@ -451,6 +744,9 @@ class WorkerPool {
   ): Promise<{ success: boolean; failed: number }> {
     this.onProgress = onProgress;
     this.onComplete = onComplete;
+
+    // Start CPU monitoring
+    this.startCpuMonitoring();
 
     return new Promise((resolve) => {
       // Start initial workers with staggered launches
@@ -462,6 +758,7 @@ class WorkerPool {
       const checkComplete = () => {
         // Check if maxFailures is reached and no workers are active
         if ((this.maxFailuresReached || this.cancelled) && this.activeWorkers === 0) {
+          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -472,6 +769,7 @@ class WorkerPool {
         }
 
         if (this.completed >= this.total) {
+          this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
           ).length;
@@ -514,9 +812,11 @@ class WorkerPool {
     const startTime = Date.now();
     this.log.debug(`Starting test for story: ${story.id} (${story.title}/${story.name})`);
 
-    // Check if cancelled before starting
-    if (this.cancelled) {
-      this.log.debug(`Story ${story.id}: Test cancelled before execution`);
+    // Check if cancelled or max failures reached before starting
+    if (this.cancelled || this.maxFailuresReached) {
+      this.log.debug(
+        `Story ${story.id}: Test cancelled before execution (cancelled: ${this.cancelled}, maxFailuresReached: ${this.maxFailuresReached})`,
+      );
       this.handleCancelledStory(story, startTime);
       return;
     }
@@ -549,6 +849,7 @@ class WorkerPool {
     let result: string | null = null;
     let page: Page | undefined; // Store page reference for DOM dumping on timeout
     let displayViewport = storyViewport; // Will be updated with actual viewport if available
+    let displayViewportName: string | undefined; // Will be updated with viewport name if available
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -571,12 +872,20 @@ class WorkerPool {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
+        // Check if max failures reached before starting retry attempt
+        if (this.maxFailuresReached || this.cancelled) {
+          this.log.debug(`Story ${story.id}: Test cancelled before retry attempt ${attempt}`);
+          throw new Error('Test cancelled');
+        }
+
         const attemptStart = Date.now();
         const testResult = await this.executeSingleTestAttempt(story, storyViewport);
         result = testResult.result;
         page = testResult.page; // Store page reference for potential DOM dump
         // Use actual viewport from page if available, otherwise fall back to configured viewport
         displayViewport = testResult.actualViewport || storyViewport;
+        // Store viewport name for display
+        displayViewportName = testResult.viewportName;
         const attemptDuration = Date.now() - attemptStart;
         this.log.debug(`Story ${story.id}: Attempt ${attempt} succeeded in ${attemptDuration}ms`);
         lastError = null;
@@ -647,7 +956,7 @@ class WorkerPool {
       });
 
       // Print result using unified method
-      this.printStoryResult(displayName, 'success', duration, undefined, displayViewport);
+      this.printStoryResult(displayName, 'success', duration, undefined, displayViewportName);
     } else {
       // Check if this test was cancelled
       const isCancelled = lastError && String(lastError).includes('Test cancelled');
@@ -716,7 +1025,7 @@ class WorkerPool {
           });
 
           // Print result using unified method
-          this.printStoryResult(displayName, 'skipped', duration, undefined, displayViewport);
+          this.printStoryResult(displayName, 'skipped', duration, undefined, displayViewportName);
         } else {
           // Failed after all retries
           this.results[story.id] = {
@@ -878,13 +1187,14 @@ class WorkerPool {
               diffPath: printDiffPath,
               expectedPath: expected,
             },
-            displayViewport,
+            displayViewportName,
           );
         } // End of else block for missing baseline check
       } // End of else block for cancelled check
     }
 
     this.completed++;
+    this.trackPerformance();
     this.onProgress?.(this.completed, this.total, this.results);
   }
 
@@ -999,9 +1309,15 @@ class WorkerPool {
   private async executeSingleTestAttempt(
     story: DiscoveredStory,
     viewport?: { width: number; height: number },
-  ): Promise<{ result: string; page?: Page; actualViewport?: { width: number; height: number } }> {
+  ): Promise<{
+    result: string;
+    page?: Page;
+    actualViewport?: { width: number; height: number };
+    viewportName?: string;
+  }> {
     let browser: Browser | undefined;
     let page: Page | undefined;
+    let viewportName: string | undefined;
 
     try {
       const browserStart = Date.now();
@@ -1060,7 +1376,7 @@ class WorkerPool {
       this.log.debug(`Story ${story.id}: Browser launched in ${Date.now() - browserStart}ms`);
 
       // Check for cancellation after browser launch
-      if (this.cancelled) {
+      if (this.cancelled || this.maxFailuresReached) {
         this.log.debug(`Story ${story.id}: Test cancelled after browser launch, cleaning up`);
         if (browser.isConnected()) {
           await browser.close();
@@ -1178,7 +1494,7 @@ class WorkerPool {
       }
 
       // Check for cancellation before navigation
-      if (this.cancelled) {
+      if (this.cancelled || this.maxFailuresReached) {
         this.log.debug(`Story ${story.id}: Test cancelled before navigation, cleaning up`);
         await browser.close();
         throw new Error('Test cancelled');
@@ -1219,7 +1535,7 @@ class WorkerPool {
       this.log.debug(`Story ${story.id}: Navigation completed in ${Date.now() - navStart}ms`);
 
       // Check for cancellation before waiting for root
-      if (this.cancelled) {
+      if (this.cancelled || this.maxFailuresReached) {
         this.log.debug(`Story ${story.id}: Test cancelled before waiting for root, cleaning up`);
         await browser.close();
         throw new Error('Test cancelled');
@@ -1279,28 +1595,72 @@ class WorkerPool {
         await page.waitForTimeout(this.config.storyLoadDelay);
       }
 
-      // Get the actual viewport size from the page using Storybook's API
-      // This uses the modern approach that queries Storybook's Manager API or Preview API
+      // Get the viewport name from Storybook's channel and look up dimensions from config
       let actualViewport: { width: number; height: number } | undefined;
       try {
         if (!page.isClosed()) {
-          // Use the new getStoryViewport function which queries Storybook's API directly
-          const storyViewport = await getStoryViewport(page, story.id);
-          if (storyViewport) {
-            actualViewport = storyViewport;
+          // Read viewport name from Storybook's addon channel
+          const channelData = await page.evaluate(() => {
+            if (typeof (window as any).__STORYBOOK_ADDONS_CHANNEL__ !== 'undefined') {
+              const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
+              const data = channel.data || {};
+
+              // Try to get from globalsUpdated (most recent)
+              const globalsUpdated = data.globalsUpdated;
+              if (globalsUpdated && Array.isArray(globalsUpdated) && globalsUpdated.length > 0) {
+                const lastUpdate = globalsUpdated[globalsUpdated.length - 1];
+                if (lastUpdate?.globals?.viewport?.value) {
+                  return lastUpdate.globals.viewport.value;
+                }
+              }
+
+              // Fallback: try setGlobals
+              const setGlobals = data.setGlobals;
+              if (setGlobals && Array.isArray(setGlobals) && setGlobals.length > 0) {
+                const lastSet = setGlobals[setGlobals.length - 1];
+                if (lastSet?.globals?.viewport?.value) {
+                  return lastSet.globals.viewport.value;
+                }
+              }
+
+              return null;
+            }
+            return null;
+          });
+
+          if (channelData) {
+            viewportName = channelData;
             this.log.debug(
-              `Story ${story.id}: Found viewport from Storybook API: ${actualViewport.width}×${actualViewport.height}`,
+              `Story ${story.id}: Found viewport name from Storybook channel: "${viewportName}"`,
             );
 
-            // Set the page viewport size to match the story's viewport
-            // This ensures Storybook renders at the correct size
-            await page.setViewportSize(actualViewport);
-            this.log.debug(
-              `Story ${story.id}: Set page viewport size to ${actualViewport.width}×${actualViewport.height}`,
-            );
+            // Look up viewport dimensions from config
+            const viewportConfig = this.config.viewportSizes.find((v) => v.name === viewportName);
+            if (viewportConfig) {
+              actualViewport = { width: viewportConfig.width, height: viewportConfig.height };
+              this.log.debug(
+                `Story ${story.id}: Found viewport "${viewportName}" in config: ${actualViewport.width}×${actualViewport.height}`,
+              );
 
-            // Wait a bit for Storybook to re-render with the correct viewport
-            await page.waitForTimeout(100);
+              // Set the page viewport size to match the story's viewport
+              await page.setViewportSize(actualViewport);
+              this.log.debug(
+                `Story ${story.id}: Set page viewport size to ${actualViewport.width}×${actualViewport.height} for viewport "${viewportName}"`,
+              );
+
+              // Wait a bit for Storybook to re-render with the correct viewport
+              await page.waitForTimeout(100);
+            } else {
+              this.log.debug(
+                `Story ${story.id}: Viewport "${viewportName}" not found in config, using default`,
+              );
+              // Fallback to configured viewport or window dimensions
+              const dimensions = await page.evaluate(() => ({
+                width: window.innerWidth,
+                height: window.innerHeight,
+              }));
+              actualViewport = { width: dimensions.width, height: dimensions.height };
+            }
           } else {
             // Fallback: use window dimensions or configured viewport
             const dimensions = await page.evaluate(() => ({
@@ -1309,16 +1669,12 @@ class WorkerPool {
             }));
             actualViewport = { width: dimensions.width, height: dimensions.height };
             this.log.debug(
-              `Story ${story.id}: Using window dimensions as fallback: ${actualViewport.width}×${actualViewport.height}`,
+              `Story ${story.id}: Could not read viewport from Storybook channel, using window dimensions: ${actualViewport.width}×${actualViewport.height}`,
             );
           }
-
-          this.log.debug(
-            `Story ${story.id}: Actual viewport size: ${actualViewport.width}×${actualViewport.height} (configured: ${viewport ? `${viewport.width}×${viewport.height}` : 'none'})`,
-          );
         }
       } catch (e) {
-        this.log.debug(`Story ${story.id}: Failed to get actual viewport size:`, e);
+        this.log.debug(`Story ${story.id}: Failed to get viewport from Storybook channel:`, e);
         // Fall back to configured viewport
         actualViewport = viewport;
       }
@@ -1379,7 +1735,7 @@ class WorkerPool {
       // }
 
       // Check for cancellation before screenshot
-      if (this.cancelled) {
+      if (this.cancelled || this.maxFailuresReached) {
         this.log.debug(`Story ${story.id}: Test cancelled before screenshot, cleaning up`);
         await browser.close();
         throw new Error('Test cancelled');
@@ -1552,7 +1908,7 @@ class WorkerPool {
         }
       }
 
-      return { result, page, actualViewport };
+      return { result, page, actualViewport, viewportName };
     } finally {
       // Aggressive cleanup to prevent memory leaks
       try {
@@ -1607,14 +1963,50 @@ export async function runParallelTests(options: {
     `Timeouts: testTimeout=${config.testTimeout ?? 'default (60000ms)'}, overlayTimeout=${config.overlayTimeout ?? 'default'}`,
   );
 
-  // Default to half of CPU cores to balance performance with memory constraints
-  // Each browser worker can use significant memory, so we limit concurrency
-  // Cap at 8 workers to prevent excessive memory usage even on high-core machines
+  // Calculate optimal worker count based on CPU cores and current system load
+  // Browsers are I/O-bound (network, rendering), so we can use more workers than CPU cores
+  // However, each browser instance uses significant memory (200-500MB+), so we cap to prevent OOM
   const cpuCount = os.cpus().length;
-  const defaultWorkers = Math.min(8, Math.max(1, Math.floor(cpuCount / 2))); // Half cores, max 8, min 1
+  const loadAvg = os.loadavg();
+  const currentLoad = loadAvg[0]; // 1-minute load average
+  const loadAvailable = currentLoad > 0 || loadAvg.some((v) => v > 0); // Check if loadavg is available (Windows returns [0,0,0])
+
+  // Base calculation: use CPU cores directly (browsers are I/O-bound)
+  let baseWorkers = cpuCount;
+
+  // Adjust based on current system load (if available)
+  // If system is already under load, reduce workers to avoid overloading
+  // If system is idle, we can use more workers
+  if (loadAvailable) {
+    if (currentLoad > cpuCount * 1.5) {
+      // System is heavily loaded - reduce workers significantly
+      baseWorkers = Math.max(1, Math.floor(cpuCount * 0.5));
+      log.debug(
+        `System load is high (${currentLoad.toFixed(2)}), reducing workers to ${baseWorkers}`,
+      );
+    } else if (currentLoad > cpuCount) {
+      // System is moderately loaded - reduce workers slightly
+      baseWorkers = Math.max(2, Math.floor(cpuCount * 0.75));
+      log.debug(
+        `System load is moderate (${currentLoad.toFixed(2)}), reducing workers to ${baseWorkers}`,
+      );
+    } else if (currentLoad < cpuCount * 0.5) {
+      // System is mostly idle - can use more workers (up to 1.5x cores)
+      baseWorkers = Math.floor(cpuCount * 1.5);
+      log.debug(`System load is low (${currentLoad.toFixed(2)}), using ${baseWorkers} workers`);
+    } else {
+      log.debug(`System load is normal (${currentLoad.toFixed(2)}), using ${baseWorkers} workers`);
+    }
+  } else {
+    log.debug('System load not available (Windows or unavailable), using CPU count directly');
+  }
+
+  // Cap at 12 workers to balance performance with memory usage
+  // Minimum of 2 workers for better throughput on any machine
+  const defaultWorkers = Math.min(12, Math.max(2, baseWorkers));
   const numWorkers = config.workers || defaultWorkers;
   log.debug(
-    `Worker pool: ${numWorkers} workers (${cpuCount} CPU cores available, using ${defaultWorkers} by default)`,
+    `Worker pool: ${numWorkers} workers (${cpuCount} CPU cores${loadAvailable ? `, load: ${currentLoad.toFixed(2)}` : ''}, using ${defaultWorkers} by default)`,
   );
 
   // In test mode, filter out stories that don't have snapshots
@@ -1667,6 +2059,12 @@ export async function runParallelTests(options: {
 
   const pool = new WorkerPool(numWorkers, config, filteredStories, printUnderSpinner, callbacks);
 
+  // Track current worker count for status display
+  let currentWorkers = numWorkers;
+  pool.setWorkersChangedCallback((workers: number) => {
+    currentWorkers = workers;
+  });
+
   const startTime = Date.now();
 
   // Create ora spinner when --progress is passed (not when only --summary is passed)
@@ -1713,7 +2111,26 @@ export async function runParallelTests(options: {
       const elapsedMinutes = Math.max(elapsed / 60000, 0.001);
       const storiesPerMinute = completed > 0 ? Math.round(completed / elapsedMinutes) : 0;
 
-      spinnerText = ` ${chalk.yellow(`${completed}/${total}`)} (${chalk.cyan(`${percent}%`)}) ${chalk.dim('•')} ${chalk.cyan(timeStr)} remaining ${chalk.dim('•')} ${chalk.magenta(`${storiesPerMinute}/m`)}`;
+      // Get CPU usage from the pool (updated every 5 seconds)
+      const cpuUsagePercent = pool.getCurrentCpuUsage();
+
+      // Build status line components
+      const statusParts: (string | null)[] = [
+        chalk.yellow(`${completed}/${total}`),
+        chalk.cyan(`${percent}%`),
+        chalk.cyan(`~${timeStr}`),
+        chalk.magenta(`${storiesPerMinute}/m`),
+        chalk.blue(`${currentWorkers} workers`),
+      ];
+
+      // Add CPU usage if we have a valid measurement
+      if (cpuUsagePercent > 0) {
+        const loadColor =
+          cpuUsagePercent < 50 ? chalk.green : cpuUsagePercent < 90 ? chalk.yellow : chalk.red;
+        statusParts.push(loadColor(`CPU: ${cpuUsagePercent.toFixed(0)}%`));
+      }
+
+      spinnerText = ` ${statusParts.filter(Boolean).join(` ${chalk.dim('•')} `)}`;
       spinner.text = spinnerText;
     }
   };

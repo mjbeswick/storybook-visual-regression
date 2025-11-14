@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { defaultConfig, type VisualRegressionConfig } from './config/defaultConfig.js';
+import {
+  defaultConfig,
+  type VisualRegressionConfig,
+  type ViewportSize,
+} from './config/defaultConfig.js';
 import { createLogger } from './logger.js';
 
 export type CliFlags = {
@@ -134,6 +138,28 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     } else {
       // New format: { ... } - treat the root object as visualRegression config
       fileVisual = fileConfigRaw as Partial<VisualRegressionConfig>;
+    }
+
+    // Convert viewport object format to viewportSizes array if needed
+    // Support both formats: viewport: { "name": { width, height } } and viewportSizes: [{ name, width, height }]
+    if (
+      fileConfigRaw.viewport &&
+      typeof fileConfigRaw.viewport === 'object' &&
+      !Array.isArray(fileConfigRaw.viewport)
+    ) {
+      const viewportObj = fileConfigRaw.viewport as Record<
+        string,
+        { width?: number; height?: number }
+      >;
+      const viewportSizes: ViewportSize[] = [];
+      for (const [name, size] of Object.entries(viewportObj)) {
+        if (size && typeof size.width === 'number' && typeof size.height === 'number') {
+          viewportSizes.push({ name, width: size.width, height: size.height });
+        }
+      }
+      if (viewportSizes.length > 0) {
+        fileVisual.viewportSizes = viewportSizes;
+      }
     }
   } else {
     fileVisual = {};
