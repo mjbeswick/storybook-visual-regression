@@ -8,6 +8,8 @@ import os from 'node:os';
 import { chromium, Browser, Page } from 'playwright';
 import ora from 'ora';
 import { compare as odiffCompare } from 'odiff-bin';
+import pixelmatch from 'pixelmatch';
+import { PNG } from 'pngjs';
 import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
@@ -81,6 +83,87 @@ function removeEmptyDirectories(dirPath: string, stopAt?: string): void {
   }
 }
 
+// Helper to compare images in memory using pixelmatch
+type InMemoryComparisonResult = {
+  match: boolean;
+  diffPixels: number;
+  diffImage?: Buffer;
+  reason?: string;
+};
+
+function compareImagesInMemory(
+  actualBuffer: Buffer,
+  expectedBuffer: Buffer,
+  threshold: number,
+): InMemoryComparisonResult {
+  try {
+    // Parse PNG images from buffers
+    const actualImg = PNG.sync.read(actualBuffer) as PNG;
+    const expectedImg = PNG.sync.read(expectedBuffer) as PNG;
+
+    // Check dimensions match
+    if (actualImg.width !== expectedImg.width || actualImg.height !== expectedImg.height) {
+      return {
+        match: false,
+        diffPixels: 0,
+        reason: `Image dimensions differ: actual ${actualImg.width}×${actualImg.height}, expected ${expectedImg.width}×${expectedImg.height}`,
+      };
+    }
+
+    // Create diff image buffer
+    const diffImg = new PNG({ width: actualImg.width, height: actualImg.height });
+
+    // Compare images using pixelmatch
+    // pixelmatch threshold is 0-1, where 0.1 = 10% difference per pixel (color difference)
+    // Our threshold is also 0-1, representing the percentage of pixels that can differ
+    // We use pixelmatch's threshold for per-pixel color difference, then check total diff percentage
+    const pixelmatchThreshold = 0.1; // Per-pixel color difference threshold
+    const diffPixels = pixelmatch(
+      actualImg.data,
+      expectedImg.data,
+      diffImg.data,
+      actualImg.width,
+      actualImg.height,
+      {
+        threshold: pixelmatchThreshold,
+        alpha: 0.1, // Ignore differences in alpha channel below 10%
+        diffColor: [255, 0, 0], // Red for differences
+        diffColorAlt: [0, 0, 255], // Blue for differences (alternate)
+      },
+    );
+
+    // Calculate total pixels and difference percentage
+    const totalPixels = actualImg.width * actualImg.height;
+    const diffPercent = (diffPixels / totalPixels) * 100;
+
+    // Determine if images match based on threshold
+    // threshold is 0-1, representing the percentage of pixels that can differ
+    // e.g., threshold=0.2 means 20% of pixels can differ
+    const match = diffPixels === 0 || diffPercent <= threshold * 100;
+
+    // Encode diff image to buffer if there are differences
+    let diffImageBuffer: Buffer | undefined;
+    if (diffPixels > 0) {
+      diffImageBuffer = PNG.sync.write(diffImg) as Buffer;
+    }
+
+    return {
+      match,
+      diffPixels,
+      diffImage: diffImageBuffer,
+      reason: match
+        ? undefined
+        : `${diffPixels} pixels differ (${diffPercent.toFixed(2)}% of image)`,
+    };
+  } catch (error) {
+    return {
+      match: false,
+      diffPixels: 0,
+      reason: `Comparison failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 // Summary message helper
 type SummaryParams = {
   passed: number;
@@ -94,6 +177,7 @@ type SummaryParams = {
   verbose?: boolean;
   context: 'update' | 'test';
   testsPerMinute: string;
+  duration?: string; // Duration in seconds (e.g., "150.5")
 };
 
 export function generateSummaryMessage({
@@ -108,6 +192,7 @@ export function generateSummaryMessage({
   verbose = false,
   context,
   testsPerMinute,
+  duration,
 }: SummaryParams): string {
   const lines: string[] = [];
 
@@ -158,6 +243,14 @@ export function generateSummaryMessage({
       breakdown.push(`Stories/m: ${testsPerMinute}`);
     }
     breakdown.push(`Total: ${total}`);
+    if (duration) {
+      const durationSeconds = parseFloat(duration);
+      const minutes = Math.floor(durationSeconds / 60);
+      const seconds = Math.floor(durationSeconds % 60);
+      const durationStr =
+        minutes > 0 ? `${minutes}m ${seconds}s` : `${durationSeconds.toFixed(1)}s`;
+      breakdown.push(`Time: ${durationStr}`);
+    }
     lines.push(breakdown.join(chalk.dim(' • ')));
     lines.push(chalk.cyan(`Success Rate: ${successPercent.toFixed(1)}%`));
   }
@@ -206,8 +299,20 @@ class WorkerPool {
     irq: number;
   } | null = null;
   private currentCpuUsagePercent = 0;
-  private readonly CPU_SAMPLE_WINDOW = 5; // Keep last 5 samples
+  private readonly CPU_SAMPLE_WINDOW = 10; // Keep last 10 samples
   private cpuUsageHistory: number[] = []; // Rolling window of CPU samples
+  private lastWorkerIncreaseTime = 0; // Timestamp of last worker increase
+  private cpuUsageBeforeLastIncrease = 0; // CPU usage when we last increased workers
+  private readonly STORY_DURATION_WINDOW = 20; // Keep last 20 story durations
+  private storyDurationHistory: number[] = []; // Rolling window of story execution times (ms)
+  private baselineStoryDuration = 0; // Baseline average story duration (ms)
+  private readonly BASE_WORKER_INCREASE_COOLDOWN = 8_000; // Base cooldown: 8 seconds
+  private readonly MIN_WORKER_INCREASE_COOLDOWN = 5_000; // Minimum cooldown: 5 seconds (when story times are stable)
+  private readonly MAX_WORKER_INCREASE_COOLDOWN = 20_000; // Maximum cooldown: 20 seconds (when story times are increasing)
+  private readonly WORKER_STABILIZATION_PERIOD = 5_000; // Wait 5 seconds after adding worker before evaluating CPU
+  private readonly BASE_WORKER_STAGGER_DELAY = 500; // Base delay: 500ms before starting new worker
+  private readonly STORY_DURATION_DEGRADATION_THRESHOLD = 1.15; // 15% increase triggers protection
+  private workerStabilizationEndTime = 0; // Timestamp when worker stabilization period ends
 
   constructor(
     maxWorkersLimit: number,
@@ -234,7 +339,13 @@ class WorkerPool {
   }
 
   setMaxWorkers(newMax: number): void {
-    const clamped = Math.max(this.minWorkers, Math.min(this.maxWorkersLimit, newMax));
+    // Ensure workers only increase by 1 at a time to prevent spikes
+    const targetMax = Math.max(this.minWorkers, Math.min(this.maxWorkersLimit, newMax));
+    const clamped =
+      targetMax > this.maxWorkers
+        ? this.maxWorkers + 1 // Only increase by 1
+        : targetMax; // Can decrease by any amount
+
     if (clamped !== this.maxWorkers) {
       const oldMax = this.maxWorkers;
       this.maxWorkers = clamped;
@@ -247,7 +358,19 @@ class WorkerPool {
         !this.maxFailuresReached &&
         !this.cancelled
       ) {
-        setImmediate(() => this.spawnWorker());
+        // Stagger the new worker launch to prevent spikes
+        // Adaptive delay based on current worker count - more workers = longer delay
+        // This reduces resource contention and prevents performance spikes
+        // Formula: base delay + (worker count * 100ms) to spread out browser startups
+        const adaptiveDelay = this.BASE_WORKER_STAGGER_DELAY + clamped * 100;
+        this.log.debug(
+          `Staggering new worker launch: ${adaptiveDelay}ms delay (base: ${this.BASE_WORKER_STAGGER_DELAY}ms + ${clamped} workers * 100ms)`,
+        );
+        setTimeout(() => {
+          if (!this.maxFailuresReached && !this.cancelled) {
+            this.spawnWorker(true); // Use staggerLaunch for dynamically added workers
+          }
+        }, adaptiveDelay);
       }
     }
   }
@@ -317,69 +440,307 @@ class WorkerPool {
       }
     }
 
-    // Calculate rolling average
+    // Calculate weighted moving average (exponential smoothing)
+    // Give more weight to recent samples for more responsive scaling
     if (this.cpuUsageHistory.length > 0) {
-      const sum = this.cpuUsageHistory.reduce((a, b) => a + b, 0);
-      this.currentCpuUsagePercent = sum / this.cpuUsageHistory.length;
+      if (this.cpuUsageHistory.length === 1) {
+        this.currentCpuUsagePercent = this.cpuUsageHistory[0];
+      } else {
+        // Use exponential weighted moving average (EWMA)
+        // More recent samples have higher weight
+        const alpha = 0.3; // Smoothing factor (0-1), higher = more responsive
+        let weightedSum = 0;
+        let totalWeight = 0;
+        for (let i = 0; i < this.cpuUsageHistory.length; i++) {
+          const weight = Math.pow(1 - alpha, this.cpuUsageHistory.length - 1 - i);
+          weightedSum += this.cpuUsageHistory[i] * weight;
+          totalWeight += weight;
+        }
+        this.currentCpuUsagePercent = weightedSum / totalWeight;
+      }
     }
   }
 
+  /**
+   * Intelligent worker scaling strategy targeting 95% CPU while preventing story time degradation
+   * Uses both CPU usage and story duration metrics to make scaling decisions
+   */
   private adjustWorkersBasedOnCpu(): void {
     if (this.maxFailuresReached || this.cancelled) {
+      return;
+    }
+
+    const now = Date.now();
+
+    // Don't evaluate CPU during stabilization period after adding workers
+    if (now < this.workerStabilizationEndTime) {
+      const remainingStabilization = ((this.workerStabilizationEndTime - now) / 1000).toFixed(1);
+      this.log.debug(
+        `Worker stabilization period active (${remainingStabilization}s remaining), skipping CPU evaluation`,
+      );
       return;
     }
 
     // Use smoothed CPU usage for worker adjustment
     const smoothedCpuUsage = this.currentCpuUsagePercent;
 
-    // Target CPU usage: just under 100% (aim for 95% as optimal)
+    // Target CPU usage: 95% (as requested)
     const TARGET_CPU_USAGE = 95;
-    const CPU_TOLERANCE = 3; // Allow 3% variance
+    const CPU_TOLERANCE = 3; // Allow 3% variance (92-98% range)
 
     // Need at least a few samples before making adjustments
     if (this.cpuUsageHistory.length < 5) {
       return;
     }
 
-    // Gradually increase workers to maximize CPU usage
-    // If CPU is significantly underutilized (< 90%) and we have work, increase workers
-    if (
-      smoothedCpuUsage < TARGET_CPU_USAGE - CPU_TOLERANCE &&
-      this.maxWorkers < this.maxWorkersLimit &&
-      this.queue.length > 0
-    ) {
-      const newWorkers = this.maxWorkers + 1;
-      this.setMaxWorkers(newWorkers);
-      this.log.debug(
-        `CPU usage low (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%), increasing workers to ${newWorkers}`,
-      );
+    // Calculate CPU trend (is it increasing or decreasing?)
+    const recentSamples = this.cpuUsageHistory.slice(-5);
+    const olderSamples = this.cpuUsageHistory.slice(0, -5);
+    const recentAvg = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
+    const olderAvg =
+      olderSamples.length > 0
+        ? olderSamples.reduce((a, b) => a + b, 0) / olderSamples.length
+        : recentAvg;
+    const cpuTrend = recentAvg - olderAvg; // Positive = increasing, negative = decreasing
+
+    const timeSinceLastIncrease = now - this.lastWorkerIncreaseTime;
+
+    // Get story duration metrics for intelligent scaling
+    const currentStoryAvg = this.getCurrentAverageStoryDuration();
+    const storyDurationTrend = this.getStoryDurationTrend();
+    const hasBaseline = this.baselineStoryDuration > 0;
+
+    // Calculate adaptive cooldown based on multiple factors:
+    // 1. Distance from CPU target
+    // 2. Story duration stability (stable = shorter cooldown, increasing = longer)
+    // 3. CPU trend
+    const distanceFromTarget = TARGET_CPU_USAGE - smoothedCpuUsage;
+
+    // Base cooldown based on distance from target
+    let adaptiveCooldown = this.BASE_WORKER_INCREASE_COOLDOWN;
+    if (distanceFromTarget > 20) {
+      // Very low CPU (< 75%), longer cooldown
+      adaptiveCooldown = this.MAX_WORKER_INCREASE_COOLDOWN;
+    } else if (distanceFromTarget > 10) {
+      // Low CPU (75-85%), moderate cooldown
+      adaptiveCooldown = this.BASE_WORKER_INCREASE_COOLDOWN * 1.3;
+    } else if (distanceFromTarget > 5) {
+      // Getting close (85-90%), base cooldown
+      adaptiveCooldown = this.BASE_WORKER_INCREASE_COOLDOWN;
+    } else {
+      // Very close (90-95%), shorter cooldown
+      adaptiveCooldown = this.MIN_WORKER_INCREASE_COOLDOWN;
     }
-    // If CPU is overloaded (> 98%), reduce workers to prevent system overload
-    else if (
-      smoothedCpuUsage > TARGET_CPU_USAGE + CPU_TOLERANCE &&
-      this.maxWorkers > this.minWorkers
-    ) {
+
+    // Adjust cooldown based on story duration stability
+    // If story times are stable or improving, we can scale faster
+    // If story times are increasing, scale slower
+    if (hasBaseline) {
+      if (storyDurationTrend < -2) {
+        // Story times improving, scale faster
+        adaptiveCooldown *= 0.8;
+      } else if (storyDurationTrend > 5) {
+        // Story times increasing, scale much slower
+        adaptiveCooldown *= 2.0;
+      } else if (storyDurationTrend > 0) {
+        // Story times slightly increasing, scale slower
+        adaptiveCooldown *= 1.5;
+      }
+    }
+
+    // Adjust based on CPU trend
+    if (cpuTrend > 3) {
+      // CPU rising quickly, can scale slightly faster
+      adaptiveCooldown *= 0.9;
+    } else if (cpuTrend < -3) {
+      // CPU dropping, scale slower
+      adaptiveCooldown *= 1.3;
+    }
+
+    // Check if last worker increase helped
+    const cpuImproved =
+      this.cpuUsageBeforeLastIncrease > 0
+        ? smoothedCpuUsage > this.cpuUsageBeforeLastIncrease + 2
+        : true;
+
+    if (!cpuImproved && this.lastWorkerIncreaseTime > 0) {
+      // Last increase didn't help, wait longer
+      adaptiveCooldown *= 1.5;
+    }
+
+    // Clamp cooldown to min/max bounds
+    adaptiveCooldown = Math.max(
+      this.MIN_WORKER_INCREASE_COOLDOWN,
+      Math.min(this.MAX_WORKER_INCREASE_COOLDOWN, adaptiveCooldown),
+    );
+
+    // DECREASE workers if CPU is overloaded (respond quickly to overload)
+    if (smoothedCpuUsage > TARGET_CPU_USAGE + CPU_TOLERANCE && this.maxWorkers > this.minWorkers) {
       const newWorkers = this.maxWorkers - 1;
       this.setMaxWorkers(newWorkers);
       this.log.debug(
-        `CPU usage high (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%), reducing workers to ${newWorkers}`,
+        `CPU overloaded (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%), reducing workers to ${newWorkers}`,
+      );
+      return;
+    }
+
+    // INCREASE workers if CPU is underutilized
+    if (
+      smoothedCpuUsage < TARGET_CPU_USAGE - CPU_TOLERANCE &&
+      this.maxWorkers < this.maxWorkersLimit &&
+      this.queue.length > 0 &&
+      timeSinceLastIncrease >= adaptiveCooldown
+    ) {
+      // Critical check: Would adding a worker degrade story performance?
+      if (this.wouldAddingWorkerDegradePerformance()) {
+        // Story times would likely increase, don't add worker
+        return;
+      }
+
+      // Additional safety checks
+      const timeSinceStabilization = now - this.workerStabilizationEndTime;
+      const recentWorkerAddition = timeSinceLastIncrease < adaptiveCooldown * 2;
+
+      // If CPU is close to target and trending down, wait
+      if (
+        smoothedCpuUsage > TARGET_CPU_USAGE - CPU_TOLERANCE &&
+        cpuTrend < -1 &&
+        timeSinceLastIncrease < adaptiveCooldown * 1.5
+      ) {
+        this.log.debug(
+          `CPU trending down (${cpuTrend.toFixed(1)}%) and close to target, waiting before increasing workers`,
+        );
+        return;
+      }
+
+      // If we recently added a worker, wait a bit more for stabilization
+      if (recentWorkerAddition && timeSinceStabilization < 2000) {
+        this.log.debug(
+          `Recent worker addition detected, waiting for system to stabilize (${((2000 - timeSinceStabilization) / 1000).toFixed(1)}s remaining)`,
+        );
+        return;
+      }
+
+      // All checks passed - safe to add worker
+      const newWorkers = this.maxWorkers + 1;
+      this.setMaxWorkers(newWorkers);
+      this.lastWorkerIncreaseTime = now;
+      this.cpuUsageBeforeLastIncrease = smoothedCpuUsage;
+      this.workerStabilizationEndTime = now + this.WORKER_STABILIZATION_PERIOD;
+
+      const storyInfo = hasBaseline
+        ? `story avg: ${currentStoryAvg.toFixed(0)}ms (trend: ${storyDurationTrend > 0 ? '+' : ''}${storyDurationTrend.toFixed(1)}%)`
+        : 'establishing baseline';
+
+      this.log.debug(
+        `CPU usage low (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%, trend: ${cpuTrend > 0 ? '+' : ''}${cpuTrend.toFixed(1)}%), ${storyInfo}, increasing workers to ${newWorkers} (cooldown: ${(adaptiveCooldown / 1000).toFixed(1)}s, waited: ${(timeSinceLastIncrease / 1000).toFixed(1)}s)`,
       );
     }
   }
 
+  /**
+   * Track story duration to monitor performance and predict impact of scaling
+   */
+  private trackStoryDuration(durationMs: number): void {
+    // Add to rolling window
+    this.storyDurationHistory.push(durationMs);
+    if (this.storyDurationHistory.length > this.STORY_DURATION_WINDOW) {
+      this.storyDurationHistory.shift();
+    }
+
+    // Establish baseline after first few stories
+    if (this.baselineStoryDuration === 0 && this.storyDurationHistory.length >= 5) {
+      const sum = this.storyDurationHistory.reduce((a, b) => a + b, 0);
+      this.baselineStoryDuration = sum / this.storyDurationHistory.length;
+      this.log.debug(
+        `Established baseline story duration: ${this.baselineStoryDuration.toFixed(0)}ms`,
+      );
+    }
+  }
+
+  /**
+   * Get current average story duration from recent samples
+   */
+  private getCurrentAverageStoryDuration(): number {
+    if (this.storyDurationHistory.length === 0) {
+      return 0;
+    }
+    const sum = this.storyDurationHistory.reduce((a, b) => a + b, 0);
+    return sum / this.storyDurationHistory.length;
+  }
+
+  /**
+   * Get story duration trend (positive = increasing, negative = decreasing)
+   */
+  private getStoryDurationTrend(): number {
+    if (this.storyDurationHistory.length < 10) {
+      return 0;
+    }
+
+    const recentSamples = this.storyDurationHistory.slice(-5);
+    const olderSamples = this.storyDurationHistory.slice(-10, -5);
+    const recentAvg = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
+    const olderAvg = olderSamples.reduce((a, b) => a + b, 0) / olderSamples.length;
+
+    // Return percentage change
+    return ((recentAvg - olderAvg) / olderAvg) * 100;
+  }
+
+  /**
+   * Check if adding a worker would likely cause story duration degradation
+   * Uses predictive analysis based on current story times and CPU load
+   */
+  private wouldAddingWorkerDegradePerformance(): boolean {
+    // Need baseline to make predictions
+    if (this.baselineStoryDuration === 0 || this.storyDurationHistory.length < 10) {
+      return false;
+    }
+
+    const currentAvg = this.getCurrentAverageStoryDuration();
+    const durationTrend = this.getStoryDurationTrend();
+    const cpuUsage = this.currentCpuUsagePercent;
+
+    // If story durations are already increasing significantly, don't add workers
+    if (currentAvg > this.baselineStoryDuration * this.STORY_DURATION_DEGRADATION_THRESHOLD) {
+      this.log.debug(
+        `Story durations already degraded (${((currentAvg / this.baselineStoryDuration - 1) * 100).toFixed(1)}% above baseline), preventing worker increase`,
+      );
+      return true;
+    }
+
+    // If story durations are trending up (>5% increase) and CPU is already high (>85%), don't add
+    if (durationTrend > 5 && cpuUsage > 85) {
+      this.log.debug(
+        `Story durations trending up (${durationTrend.toFixed(1)}%) with high CPU (${cpuUsage.toFixed(0)}%), preventing worker increase`,
+      );
+      return true;
+    }
+
+    // If story durations are trending up significantly (>10%), don't add regardless of CPU
+    if (durationTrend > 10) {
+      this.log.debug(
+        `Story durations trending up significantly (${durationTrend.toFixed(1)}%), preventing worker increase`,
+      );
+      return true;
+    }
+
+    return false;
+  }
+
   private startCpuMonitoring(): void {
-    // Sample CPU every 1 second for smoother rolling average
-    // Adjust workers every 3 seconds for more responsive scaling
+    // Sample CPU every 500ms for smoother rolling average
+    // Adjust workers every 5 seconds (10 samples) for more gradual scaling
+    // This prevents rapid worker increases that cause performance spikes
     let sampleCount = 0;
     this.cpuMonitorInterval = setInterval(() => {
       if (this.completed < this.total && !this.maxFailuresReached && !this.cancelled) {
-        // Sample CPU usage every second
+        // Sample CPU usage every 500ms
         this.sampleCpuUsage();
         sampleCount++;
 
-        // Adjust workers every 3 seconds (after we have enough samples)
-        // More frequent adjustments allow for gentler scaling
-        if (sampleCount >= 3) {
+        // Adjust workers every 5 seconds (10 samples) for gradual scaling
+        // Combined with cooldown period, this ensures workers increase slowly
+        if (sampleCount >= 10) {
           this.adjustWorkersBasedOnCpu();
           sampleCount = 0;
         }
@@ -853,8 +1214,25 @@ class WorkerPool {
 
       // Check for completion periodically
       const checkComplete = () => {
-        // Check if maxFailures is reached and no workers are active
-        if ((this.maxFailuresReached || this.cancelled) && this.activeWorkers === 0) {
+        // If maxFailures is reached, exit immediately without waiting for active workers
+        // Active workers will finish their current tests and stop at the next cancellation checkpoint
+        if (this.maxFailuresReached) {
+          this.stopCpuMonitoring();
+          const failed = Object.values(this.results).filter(
+            (r) => !r.success && r.action === 'failed',
+          ).length;
+          const success = failed === 0;
+
+          // Clean up empty directories now that all tests are complete/stopped
+          this.cleanupEmptyDirectories();
+
+          this.onComplete?.(this.results);
+          resolve({ success, failed });
+          return;
+        }
+
+        // Check if cancelled and no workers are active
+        if (this.cancelled && this.activeWorkers === 0) {
           this.stopCpuMonitoring();
           const failed = Object.values(this.results).filter(
             (r) => !r.success && r.action === 'failed',
@@ -970,7 +1348,7 @@ class WorkerPool {
           for (let i = 0; i < story.id.length; i++) {
             hash = ((hash << 5) - hash + story.id.charCodeAt(i)) & 0xffffffff;
           }
-          const delay = Math.abs(hash) % 50; // 0-49ms staggered delay based on story ID
+          const delay = Math.abs(hash) % 150; // 0-150ms staggered delay based on story ID
           this.log.debug(
             `Story ${story.id}: Staggering browser launch (delay: ${delay.toFixed(1)}ms)`,
           );
@@ -1042,6 +1420,9 @@ class WorkerPool {
     this.log.debug(
       `Story ${story.id}: Test completed in ${duration}ms with result: ${result || 'failed'}`,
     );
+
+    // Track story duration for performance monitoring
+    this.trackStoryDuration(duration);
 
     if (result !== null) {
       // Success
@@ -1444,6 +1825,12 @@ class WorkerPool {
     }
   }
 
+  /**
+   * Execute a single test attempt for a given story and viewport
+   * @param story - The story to test
+   * @param viewport - The viewport to test in
+   * @returns A promise that resolves to the test result
+   */
   private async executeSingleTestAttempt(
     story: DiscoveredStory,
     viewport?: { width: number; height: number },
@@ -1879,96 +2266,20 @@ class WorkerPool {
         throw new Error('Test cancelled');
       }
 
-      // Optimized screenshot capture
+      // Optimized screenshot capture - capture to buffer in memory
       const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
-
-      // In update mode, capture directly to expected location to avoid writing to results
-      const actual = this.config.update
-        ? expected
-        : path.join(
-            path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-            path.basename(story.snapshotRelPath),
-          );
+      const actual = path.join(
+        path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
+        path.basename(story.snapshotRelPath),
+      );
+      const diffPath = path.join(
+        path.dirname(actual),
+        `${path.basename(actual, path.extname(actual))}.diff.png`,
+      );
 
       this.log.debug(
         `Story ${story.id}: Screenshot paths - expected: ${expected}, actual: ${actual}`,
       );
-
-      // Pre-create directory to avoid contention
-      // Use the exact same path calculation as the file path to ensure consistency
-      // Create directory with retry logic to handle race conditions
-      const ensureDirectoryExists = (dirPath: string, retries = 3): void => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-          try {
-            // Check if directory already exists
-            if (fs.existsSync(dirPath)) {
-              // Verify it's actually a directory and writable
-              const stats = fs.statSync(dirPath);
-              if (!stats.isDirectory()) {
-                throw new Error(`Path exists but is not a directory: ${dirPath}`);
-              }
-              // Check write permissions
-              fs.accessSync(dirPath, fs.constants.W_OK);
-              return; // Directory exists and is writable
-            }
-
-            // Directory doesn't exist, create it recursively
-            this.log.debug(
-              `Story ${story.id}: Creating directory (attempt ${attempt}/${retries}): ${dirPath}`,
-            );
-            fs.mkdirSync(dirPath, { recursive: true });
-
-            // Verify it was created
-            if (!fs.existsSync(dirPath)) {
-              throw new Error(
-                `Directory creation reported success but directory doesn't exist: ${dirPath}`,
-              );
-            }
-
-            // Verify it's writable
-            fs.accessSync(dirPath, fs.constants.W_OK);
-            this.log.debug(`Story ${story.id}: Directory created and verified: ${dirPath}`);
-            return;
-          } catch (error) {
-            const errorMsg = String(error);
-            // If it's the last attempt, throw the error
-            if (attempt === retries) {
-              throw new Error(
-                `Failed to create directory after ${retries} attempts: ${dirPath}. Error: ${errorMsg}`,
-              );
-            }
-            // Otherwise, wait a bit and retry (helps with race conditions)
-            this.log.debug(
-              `Story ${story.id}: Directory creation attempt ${attempt} failed, retrying... Error: ${errorMsg}`,
-            );
-            // Small delay to allow other processes to finish
-            const delay = attempt * 10; // 10ms, 20ms, 30ms delays
-            const start = Date.now();
-            while (Date.now() - start < delay) {
-              // Busy wait for precise timing
-            }
-          }
-        }
-      };
-
-      try {
-        const targetDir = path.dirname(actual);
-        // Ensure base results directory exists first
-        if (!fs.existsSync(this.config.resultsPath)) {
-          this.log.debug(
-            `Story ${story.id}: Creating base results directory: ${this.config.resultsPath}`,
-          );
-          fs.mkdirSync(this.config.resultsPath, { recursive: true });
-        }
-        // Then ensure the target directory exists
-        ensureDirectoryExists(targetDir);
-      } catch (dirError) {
-        const errorMsg = `Failed to create directory for screenshot: ${dirError}`;
-        this.log.error(`Story ${story.id}: ${errorMsg}`);
-        throw new Error(errorMsg);
-      }
-
-      // Date is already fixed via context.addInitScript, no need for clock API
 
       // Verify page is still open before attempting screenshot
       if (page.isClosed()) {
@@ -1977,32 +2288,17 @@ class WorkerPool {
         throw new Error(errorMsg);
       }
 
-      // Final verification right before screenshot (safety check for race conditions)
-      const targetDir = path.dirname(actual);
-      if (!fs.existsSync(targetDir)) {
-        this.log.warn(
-          `Story ${story.id}: Directory missing immediately before screenshot, recreating: ${targetDir}`,
-        );
-        try {
-          ensureDirectoryExists(targetDir, 2); // Quick retry with fewer attempts
-        } catch (recreateError) {
-          const errorMsg = `Directory does not exist and could not be created: ${targetDir}. Error: ${recreateError}`;
-          this.log.error(`Story ${story.id}: ${errorMsg}`);
-          throw new Error(errorMsg);
-        }
-      }
-
-      // Capture screenshot with settings optimized for visual regression
+      // Capture screenshot to buffer (in memory) - no file system operations needed yet
       this.log.debug(
         `Story ${story.id}: Capturing screenshot${this.config.fullPage ? ' (full page)' : ''}...`,
       );
       const screenshotStart = Date.now();
+      let actualBuffer: Buffer;
       try {
-        await page.screenshot({
-          path: actual,
+        actualBuffer = (await page.screenshot({
           fullPage: this.config.fullPage,
-          type: 'png', // PNG format required for accurate odiff comparison
-        });
+          type: 'png', // PNG format required for accurate comparison
+        })) as Buffer;
         this.log.debug(
           `Story ${story.id}: Screenshot captured in ${Date.now() - screenshotStart}ms`,
         );
@@ -2014,50 +2310,6 @@ class WorkerPool {
         // Check if page closed during screenshot
         if (page.isClosed()) {
           throw new Error(`Screenshot capture failed: page closed during capture. ${errorDetails}`);
-        }
-
-        // Check for ENOENT errors - verify directory still exists and provide detailed diagnostics
-        if (/ENOENT|no such file/i.test(errorMsg)) {
-          const targetDir = path.dirname(actual);
-          const dirExists = fs.existsSync(targetDir);
-          const dirIsWritable = dirExists
-            ? (() => {
-                try {
-                  fs.accessSync(targetDir, fs.constants.W_OK);
-                  return true;
-                } catch {
-                  return false;
-                }
-              })()
-            : false;
-
-          const diagnosticInfo = [
-            `Target directory: ${targetDir}`,
-            `Directory exists: ${dirExists}`,
-            `Directory writable: ${dirIsWritable}`,
-            `Target file: ${actual}`,
-            `Parent directory exists: ${fs.existsSync(path.dirname(targetDir))}`,
-          ].join(', ');
-
-          this.log.error(`Story ${story.id}: ENOENT diagnostic - ${diagnosticInfo}`);
-
-          // Try to recreate directory one more time
-          if (!dirExists) {
-            try {
-              this.log.warn(`Story ${story.id}: Attempting to recreate directory: ${targetDir}`);
-              fs.mkdirSync(targetDir, { recursive: true });
-              if (fs.existsSync(targetDir)) {
-                this.log.info(`Story ${story.id}: Directory recreated successfully`);
-                // Don't throw - let the error propagate with context
-              }
-            } catch (recreateError) {
-              this.log.error(`Story ${story.id}: Failed to recreate directory: ${recreateError}`);
-            }
-          }
-
-          throw new Error(
-            `Screenshot capture failed: file system error - directory may not exist or is not writable. ${errorDetails}. Diagnostic: ${diagnosticInfo}`,
-          );
         }
 
         // Check for specific error types and provide more context
@@ -2072,14 +2324,7 @@ class WorkerPool {
         throw new Error(`Screenshot capture failed: ${errorDetails}`);
       }
 
-      // Verify screenshot file was actually created
-      if (!fs.existsSync(actual)) {
-        const errorMsg = `Screenshot file was not created at ${actual}. Screenshot capture may have failed silently.`;
-        this.log.error(`Story ${story.id}: ${errorMsg}`);
-        throw new Error(errorMsg);
-      }
-
-      // Handle baseline logic with odiff visual regression testing
+      // Handle baseline logic with in-memory comparison
       const missingBaseline = !fs.existsSync(expected);
       let result: string;
 
@@ -2087,135 +2332,104 @@ class WorkerPool {
         `Story ${story.id}: Baseline check - expected: ${expected}, missing: ${missingBaseline}, update mode: ${this.config.update}`,
       );
 
+      // Helper to ensure directory exists (only needed when writing files)
+      const ensureDirectoryExists = (filePath: string): void => {
+        const dirPath = path.dirname(filePath);
+        if (!fs.existsSync(dirPath)) {
+          fs.mkdirSync(dirPath, { recursive: true });
+        }
+      };
+
       if (this.config.update) {
-        // In update mode, screenshot is already captured directly to expected location
+        // In update mode, write screenshot buffer to expected location
+        ensureDirectoryExists(expected);
+        fs.writeFileSync(expected, actualBuffer);
         result = missingBaseline ? 'Created baseline' : 'Updated baseline';
         this.log.debug(`Story ${story.id}: ${result}`);
       } else if (missingBaseline) {
         this.log.debug(`Story ${story.id}: Missing baseline, skipping test`);
-        // Check if actual screenshot was captured successfully
-        if (fs.existsSync(actual)) {
-          this.log.warn(
-            `Story ${story.id}: Baseline missing but screenshot captured. Consider running with --update to create baseline.`,
-          );
-        }
         throw new Error(`Missing baseline: ${expected}`);
       } else {
-        // Perform visual regression test using odiff
-        const diffPath = path.join(
-          path.dirname(actual),
-          `${path.basename(actual, path.extname(actual))}.diff.png`,
-        );
-
+        // Perform visual regression test using in-memory comparison
         try {
-          // Verify both files exist before comparison
-          if (!fs.existsSync(actual)) {
-            throw new Error(`Screenshot file does not exist: ${actual}`);
-          }
-          if (!fs.existsSync(expected)) {
-            throw new Error(`Baseline file does not exist: ${expected}`);
-          }
+          // Load baseline from file
+          const expectedBuffer = fs.readFileSync(expected);
 
-          // Run odiff comparison using Node.js bindings
-          // Wrap in a timeout to prevent hanging in CI environments
+          // Compare images in memory
           const compareStart = Date.now();
-          const odiffTimeout = 30000; // 30 second timeout for odiff comparison
           this.log.debug(
-            `Story ${story.id}: Comparing images with odiff (threshold: ${this.config.threshold}, timeout: ${odiffTimeout}ms)`,
+            `Story ${story.id}: Comparing images in memory (threshold: ${this.config.threshold})`,
           );
 
-          const odiffResult = await Promise.race([
-            odiffCompare(expected, actual, diffPath, {
-              threshold: this.config.threshold,
-              outputDiffMask: true,
-            }),
-            new Promise<never>((_, reject) =>
-              setTimeout(
-                () => reject(new Error(`odiff comparison timed out after ${odiffTimeout}ms`)),
-                odiffTimeout,
-              ),
-            ),
-          ]);
-
-          this.log.debug(
-            `Story ${story.id}: odiff comparison completed in ${Date.now() - compareStart}ms, match: ${odiffResult.match}`,
+          const comparisonResult = compareImagesInMemory(
+            actualBuffer,
+            expectedBuffer,
+            this.config.threshold,
           );
 
-          if (odiffResult.match) {
-            // Images are identical within threshold
+          this.log.debug(
+            `Story ${story.id}: Comparison completed in ${Date.now() - compareStart}ms, match: ${comparisonResult.match}`,
+          );
+
+          if (comparisonResult.match) {
+            // Images are identical within threshold - no files needed!
             result = 'Visual regression passed';
             this.log.debug(`Story ${story.id}: Visual regression test passed`);
-
-            // Clean up diff file if it exists (odiff may create it)
-            if (fs.existsSync(diffPath)) {
-              try {
-                fs.unlinkSync(diffPath);
-              } catch {}
-            }
-
-            // Delete the actual screenshot since it matches the baseline
-            if (fs.existsSync(actual)) {
-              try {
-                fs.unlinkSync(actual);
-                this.log.debug(`Story ${story.id}: Deleted actual screenshot (matches baseline)`);
-
-                // Don't remove empty directories during parallel execution to avoid race conditions
-                // where another worker might be trying to create a screenshot in the same directory
-                // Directory cleanup will happen at the end if needed
-                // const actualDir = path.dirname(actual);
-                // removeEmptyDirectories(actualDir, this.config.resultsPath);
-              } catch (error) {
-                this.log.debug(`Story ${story.id}: Failed to delete actual screenshot: ${error}`);
-              }
-            }
+            // No file system operations needed for successful tests
           } else {
-            // Images differ beyond threshold
-            this.log.debug(`Story ${story.id}: Images differ - reason: ${odiffResult.reason}`);
-            this.log.debug(`Story ${story.id}: Diff image saved to: ${diffPath}`);
-            throw new Error(`Visual regression failed: images differ (diff: ${diffPath})`);
+            // Images differ beyond threshold - write files for display
+            this.log.debug(`Story ${story.id}: Images differ - reason: ${comparisonResult.reason}`);
+
+            // Ensure directories exist before writing files
+            ensureDirectoryExists(actual);
+            ensureDirectoryExists(diffPath);
+
+            // Write actual screenshot
+            fs.writeFileSync(actual, actualBuffer);
+
+            // Write diff image if available
+            if (comparisonResult.diffImage) {
+              fs.writeFileSync(diffPath, comparisonResult.diffImage);
+              this.log.debug(`Story ${story.id}: Diff image saved to: ${diffPath}`);
+            }
+
+            throw new Error(
+              `Visual regression failed: images differ (${comparisonResult.reason || 'unknown reason'}, diff: ${diffPath})`,
+            );
           }
         } catch (error: any) {
-          // odiff comparison failed
-          if (error?.message && error.message.includes('images differ')) {
-            throw error; // Re-throw our own error
+          // If it's our own error (visual regression failed), files are already written, just re-throw
+          if (error?.message && error.message.includes('Visual regression failed')) {
+            throw error;
           }
+
+          // For any comparison failure, write the actual screenshot to results
+          ensureDirectoryExists(actual);
+          fs.writeFileSync(actual, actualBuffer);
 
           // Check for missing baseline file error
           const errMsg = error?.message || String(error);
-          if (errMsg.includes('Could not load base image')) {
-            // Verify if baseline file exists
+          if (errMsg.includes('ENOENT') || errMsg.includes('no such file')) {
             if (!fs.existsSync(expected)) {
               this.log.error(
                 `Story ${story.id}: Baseline file does not exist: ${expected}. Consider running with --update to create baseline.`,
               );
+              this.log.debug(`Story ${story.id}: Actual screenshot saved to: ${actual}`);
               throw new Error(`Missing baseline: ${expected}`);
             } else {
-              // File exists but odiff can't load it - might be corrupted
+              // File exists but can't be read - might be corrupted
               this.log.error(
-                `Story ${story.id}: Baseline file exists but cannot be loaded (possibly corrupted): ${expected}`,
+                `Story ${story.id}: Baseline file exists but cannot be read (possibly corrupted): ${expected}`,
               );
-              throw new Error(`Could not load base image: ${expected}`);
+              this.log.debug(`Story ${story.id}: Actual screenshot saved to: ${actual}`);
+              throw new Error(`Could not read baseline image: ${expected}`);
             }
           }
 
-          // Emit full diagnostic details to help identify the exact failure cause
-          const diagLines: string[] = [];
-          diagLines.push(`odiff error: ${errMsg}`);
-          if (typeof error?.code !== 'undefined') diagLines.push(`code: ${error.code}`);
-          if (typeof error?.exitCode !== 'undefined') diagLines.push(`exitCode: ${error.exitCode}`);
-          if (error?.stderr) diagLines.push(`stderr: ${String(error.stderr).trim()}`);
-          if (error?.stdout) diagLines.push(`stdout: ${String(error.stdout).trim()}`);
-          if (error?.stack) diagLines.push(`stack: ${String(error.stack).trim()}`);
-          if (error?.cause) {
-            const causeMsg =
-              typeof error.cause === 'object'
-                ? error.cause?.message || String(error.cause)
-                : String(error.cause);
-            diagLines.push(`cause: ${causeMsg}`);
-          }
-          this.log.error(`Story ${story.id}: odiff failed\n  ${diagLines.join('\n  ')}`);
-
-          throw new Error(`odiff comparison failed: ${errMsg}`);
+          // For other comparison errors, write files for debugging
+          this.log.error(`Story ${story.id}: Comparison failed: ${errMsg}`);
+          this.log.debug(`Story ${story.id}: Actual screenshot saved to: ${actual}`);
+          throw new Error(`Image comparison failed: ${errMsg}`);
         }
       }
 
@@ -2286,7 +2500,7 @@ export async function runParallelTests(options: {
   } else {
     // Start with 1 worker - will scale up dynamically based on CPU usage
     numWorkers = 0; // Pass 0 to WorkerPool constructor to indicate dynamic scaling
-    maxWorkersLimit = cpuCount * 2; // Allow scaling up to 2x CPU cores
+    maxWorkersLimit = cpuCount * 1.5; // Allow scaling up to 2x CPU cores
     log.debug('Starting with 1 worker, will scale up dynamically based on CPU usage');
   }
   log.debug(
@@ -2454,11 +2668,9 @@ export async function runParallelTests(options: {
 
     // Build status line components
     const statusParts: (string | null)[] = [
-      chalk.yellow(`Stories: ${completed}/${total}`),
-      chalk.cyan(`Completed: ${percent}%`),
-      chalk.cyan(`Time: ~${timeStr}`),
-      chalk.magenta(`Stories/m: ${storiesPerMinute}`),
-      chalk.blue(`Workers: ${currentWorkers}`),
+      chalk.magenta(`Stories: ${completed}/${total} ${storiesPerMinute}/m ${percent}%`),
+      chalk.cyan(`Remaining: ~${timeStr}`),
+      chalk.yellow(`Workers: ${currentWorkers}`),
     ];
 
     // Add CPU usage if we have a valid measurement
@@ -2555,6 +2767,7 @@ export async function runParallelTests(options: {
         verbose: true,
         context,
         testsPerMinute,
+        duration: totalDuration,
       });
 
       log.info('\n' + message);
