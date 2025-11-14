@@ -174,7 +174,7 @@ type TestConfig = RuntimeConfig & {
 class WorkerPool {
   private queue: DiscoveredStory[] = [];
   private activeWorkers = 0;
-  private maxWorkers: number;
+  private maxWorkers: number = 1;
   private results: {
     [storyId: string]: { success: boolean; error?: string; duration: number; action?: string };
   } = {};
@@ -186,7 +186,7 @@ class WorkerPool {
   private onProgress?: (completed: number, total: number, results: any) => void;
   private onComplete?: (results: any) => void;
   private singleLineMode: boolean;
-  private printUnderSpinner?: (line: string) => void;
+  private printUnderSpinner?: (line: string, keepStopped?: boolean) => void;
   private callbacks?: RunCallbacks;
   private log: ReturnType<typeof createLogger>;
   private maxFailuresReached = false;
@@ -194,8 +194,8 @@ class WorkerPool {
   private initialBatchStarted = false;
   private storyViewports = new Map<string, { width: number; height: number } | undefined>();
   private performanceHistory: Array<{ timestamp: number; completed: number; workers: number }> = [];
-  private minWorkers = 2;
-  private maxWorkersLimit = 12;
+  private minWorkers = 1;
+  private maxWorkersLimit = os.cpus().length * 2; // 2x the number of CPU cores
   private onWorkersChanged?: (workers: number) => void;
   private cpuMonitorInterval?: NodeJS.Timeout;
   private lastCpuUsage: {
@@ -206,17 +206,17 @@ class WorkerPool {
     irq: number;
   } | null = null;
   private currentCpuUsagePercent = 0;
+  private readonly CPU_SAMPLE_WINDOW = 5; // Keep last 5 samples
   private cpuUsageHistory: number[] = []; // Rolling window of CPU samples
-  private readonly CPU_SAMPLE_WINDOW = 10; // Keep last 5 samples (5 seconds)
 
   constructor(
-    maxWorkers: number,
+    maxWorkersLimit: number,
     config: TestConfig,
     stories: DiscoveredStory[],
     printUnderSpinner?: (line: string) => void,
     callbacks?: RunCallbacks,
   ) {
-    this.maxWorkers = maxWorkers;
+    this.maxWorkersLimit = maxWorkersLimit;
     this.config = config;
     this.total = stories.length;
     this.queue = [...stories];
@@ -332,28 +332,44 @@ class WorkerPool {
     // Use smoothed CPU usage for worker adjustment
     const smoothedCpuUsage = this.currentCpuUsagePercent;
 
-    // Adjust workers based on smoothed CPU usage
-    // If CPU is underutilized (< 70%) and we have work, increase workers
-    if (smoothedCpuUsage < 70 && this.maxWorkers < this.maxWorkersLimit && this.queue.length > 0) {
+    // Target CPU usage: just under 100% (aim for 95% as optimal)
+    const TARGET_CPU_USAGE = 95;
+    const CPU_TOLERANCE = 3; // Allow 3% variance
+
+    // Need at least a few samples before making adjustments
+    if (this.cpuUsageHistory.length < 5) {
+      return;
+    }
+
+    // Gradually increase workers to maximize CPU usage
+    // If CPU is significantly underutilized (< 90%) and we have work, increase workers
+    if (
+      smoothedCpuUsage < TARGET_CPU_USAGE - CPU_TOLERANCE &&
+      this.maxWorkers < this.maxWorkersLimit &&
+      this.queue.length > 0
+    ) {
       const newWorkers = this.maxWorkers + 1;
       this.setMaxWorkers(newWorkers);
       this.log.debug(
-        `CPU usage low (${smoothedCpuUsage.toFixed(0)}% avg), increasing workers to ${newWorkers}`,
+        `CPU usage low (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%), increasing workers to ${newWorkers}`,
       );
     }
-    // If CPU is overloaded (> 90%), reduce workers
-    else if (smoothedCpuUsage > 90 && this.maxWorkers > this.minWorkers) {
+    // If CPU is overloaded (> 98%), reduce workers to prevent system overload
+    else if (
+      smoothedCpuUsage > TARGET_CPU_USAGE + CPU_TOLERANCE &&
+      this.maxWorkers > this.minWorkers
+    ) {
       const newWorkers = this.maxWorkers - 1;
       this.setMaxWorkers(newWorkers);
       this.log.debug(
-        `CPU usage high (${smoothedCpuUsage.toFixed(0)}% avg), reducing workers to ${newWorkers}`,
+        `CPU usage high (${smoothedCpuUsage.toFixed(0)}% avg, target: ${TARGET_CPU_USAGE}%), reducing workers to ${newWorkers}`,
       );
     }
   }
 
   private startCpuMonitoring(): void {
     // Sample CPU every 1 second for smoother rolling average
-    // Adjust workers every 5 seconds based on smoothed CPU usage
+    // Adjust workers every 3 seconds for more responsive scaling
     let sampleCount = 0;
     this.cpuMonitorInterval = setInterval(() => {
       if (this.completed < this.total && !this.maxFailuresReached && !this.cancelled) {
@@ -361,13 +377,14 @@ class WorkerPool {
         this.sampleCpuUsage();
         sampleCount++;
 
-        // Adjust workers every 5 seconds (after we have enough samples)
-        if (sampleCount >= 5) {
+        // Adjust workers every 3 seconds (after we have enough samples)
+        // More frequent adjustments allow for gentler scaling
+        if (sampleCount >= 3) {
           this.adjustWorkersBasedOnCpu();
           sampleCount = 0;
         }
       }
-    }, 1000);
+    }, 500);
   }
 
   private stopCpuMonitoring(): void {
@@ -609,8 +626,10 @@ class WorkerPool {
     }
 
     // Print the main result line
+    // For failures, stop the spinner and keep it stopped so error details are visible
+    const isFailure = result === 'failed';
     if (this.printUnderSpinner) {
-      this.printUnderSpinner(line);
+      this.printUnderSpinner(line, isFailure);
     } else {
       if (logLevel === 'error') {
         this.log.error(line);
@@ -667,7 +686,10 @@ class WorkerPool {
 
       for (const detailLine of detailLines) {
         if (this.printUnderSpinner) {
-          this.printUnderSpinner(detailLine);
+          // Keep spinner stopped for all error detail lines except the last one
+          // The last detail line will trigger spinner resume after a delay
+          const isLastLine = detailLine === detailLines[detailLines.length - 1];
+          this.printUnderSpinner(detailLine, !isLastLine);
         } else {
           this.log.error(detailLine);
         }
@@ -677,6 +699,81 @@ class WorkerPool {
 
   getResults() {
     return this.results;
+  }
+
+  private cleanupEmptyDirectories(): void {
+    // Only cleanup in test mode (not update mode) since we delete matching screenshots
+    if (this.config.update) {
+      return;
+    }
+
+    try {
+      // Clean up the results directory structure by walking it and removing empty directories
+      // This is safer than trying to track individual story paths during parallel execution
+      this.log.debug('Cleaning up empty directories in results path...');
+
+      // Use a simple approach: walk the results directory and remove empty dirs
+      const cleanupDir = (dirPath: string, stopAt: string): void => {
+        try {
+          if (!fs.existsSync(dirPath)) {
+            return;
+          }
+
+          // Stop if we've reached the stopAt directory
+          const normalizedDirPath = path.normalize(dirPath);
+          const normalizedStopAt = path.normalize(stopAt);
+          if (normalizedDirPath === normalizedStopAt) {
+            return;
+          }
+
+          const files = fs.readdirSync(dirPath);
+          if (files.length === 0) {
+            // Directory is empty, remove it
+            fs.rmdirSync(dirPath);
+            this.log.debug(`Removed empty directory: ${dirPath}`);
+            // Recursively try to remove parent directory
+            const parentDir = path.dirname(dirPath);
+            if (parentDir !== dirPath) {
+              cleanupDir(parentDir, stopAt);
+            }
+          }
+        } catch (error) {
+          // Ignore errors (directory might have been removed by another process, etc.)
+          this.log.debug(`Error cleaning directory ${dirPath}: ${error}`);
+        }
+      };
+
+      // Start cleanup from resultsPath, checking each subdirectory
+      if (fs.existsSync(this.config.resultsPath)) {
+        const walkAndCleanup = (dirPath: string): void => {
+          try {
+            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+
+            // First, recursively clean up subdirectories
+            for (const entry of entries) {
+              if (entry.isDirectory()) {
+                const subDir = path.join(dirPath, entry.name);
+                walkAndCleanup(subDir);
+              }
+            }
+
+            // Then check if this directory is empty (after subdirectories are cleaned)
+            const remainingEntries = fs.readdirSync(dirPath);
+            if (remainingEntries.length === 0 && dirPath !== this.config.resultsPath) {
+              cleanupDir(dirPath, this.config.resultsPath);
+            }
+          } catch (error) {
+            // Ignore errors
+            this.log.debug(`Error walking directory ${dirPath}: ${error}`);
+          }
+        };
+
+        walkAndCleanup(this.config.resultsPath);
+      }
+    } catch (error) {
+      // Don't fail the test run if cleanup fails
+      this.log.debug(`Directory cleanup failed: ${error}`);
+    }
   }
 
   cancel() {
@@ -763,6 +860,10 @@ class WorkerPool {
             (r) => !r.success && r.action === 'failed',
           ).length;
           const success = failed === 0;
+
+          // Clean up empty directories now that all tests are complete/stopped
+          this.cleanupEmptyDirectories();
+
           this.onComplete?.(this.results);
           resolve({ success, failed });
           return;
@@ -774,6 +875,11 @@ class WorkerPool {
             (r) => !r.success && r.action === 'failed',
           ).length;
           const success = failed === 0;
+
+          // Clean up empty directories now that all tests are complete
+          // This is safe to do now since no workers are creating new files
+          this.cleanupEmptyDirectories();
+
           this.onComplete?.(this.results);
           resolve({ success, failed });
         } else {
@@ -845,6 +951,9 @@ class WorkerPool {
 
     // Retry logic: attempt up to retries + 1 times (initial attempt + retries)
     const maxAttempts = (this.config.retries || 0) + 1;
+    this.log.debug(
+      `Story ${story.id}: Retry configuration - retries: ${this.config.retries || 0}, maxAttempts: ${maxAttempts}`,
+    );
     let lastError: Error | null = null;
     let result: string | null = null;
     let page: Page | undefined; // Store page reference for DOM dumping on timeout
@@ -1035,19 +1144,30 @@ class WorkerPool {
             action: 'failed',
           };
 
-          // Check if maxFailures is reached
+          // Check if maxFailures is reached IMMEDIATELY after recording failure
+          // This must happen synchronously to prevent race conditions with parallel workers
           const failedCount = Object.values(this.results).filter(
             (r) => r.action === 'failed',
           ).length;
+          this.log.debug(
+            `Story ${story.id}: Failure count check - failed: ${failedCount}, maxFailures: ${this.config.maxFailures ?? 'unlimited'}`,
+          );
+
+          // Track if we need to stop after processing this error
+          let shouldStop = false;
           if (this.config.maxFailures && failedCount >= this.config.maxFailures) {
             this.maxFailuresReached = true;
+            shouldStop = true;
             const maxFailuresMessage = `Max failures (${this.config.maxFailures}) reached. Stopping test execution.`;
+            this.log.warn(
+              `Story ${story.id}: ${maxFailuresMessage} (failed: ${failedCount}/${this.config.maxFailures})`,
+            );
             if (this.printUnderSpinner) {
               this.printUnderSpinner(maxFailuresMessage);
             } else {
               this.log.warn(maxFailuresMessage);
             }
-            // Cancel all remaining tests
+            // Cancel all remaining tests IMMEDIATELY
             this.cancel();
           }
 
@@ -1156,7 +1276,20 @@ class WorkerPool {
             } else if (/network/i.test(errorStr)) {
               errorReason = 'Network error';
             } else if (errorStr.includes('Screenshot capture failed')) {
-              errorReason = 'Failed to capture screenshot';
+              // Extract the underlying reason from the error message
+              // Format: "Screenshot capture failed: [reason]"
+              const match = errorStr.match(/Screenshot capture failed:\s*(.+)/i);
+              if (match && match[1]) {
+                // Use the underlying reason, but truncate if too long
+                const underlyingReason = match[1].trim();
+                if (underlyingReason.length > 100) {
+                  errorReason = `Failed to capture screenshot: ${underlyingReason.substring(0, 97)}...`;
+                } else {
+                  errorReason = `Failed to capture screenshot: ${underlyingReason}`;
+                }
+              } else {
+                errorReason = 'Failed to capture screenshot';
+              }
             } else {
               // Use the first line of the error as a summary
               errorReason = errorStr.split('\n')[0];
@@ -1189,6 +1322,11 @@ class WorkerPool {
             },
             displayViewportName,
           );
+
+          // If maxFailures was reached, stop processing immediately after printing the error
+          if (shouldStop) {
+            return;
+          }
         } // End of else block for missing baseline check
       } // End of else block for cancelled check
     }
@@ -1756,27 +1894,190 @@ class WorkerPool {
         `Story ${story.id}: Screenshot paths - expected: ${expected}, actual: ${actual}`,
       );
 
-      // Pre-create directory to avoid contention (skip in update mode since we capture directly)
-      if (!this.config.update) {
-        const actualDir = path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath));
-        fs.mkdirSync(actualDir, { recursive: true });
-      } else {
-        fs.mkdirSync(path.dirname(expected), { recursive: true });
+      // Pre-create directory to avoid contention
+      // Use the exact same path calculation as the file path to ensure consistency
+      // Create directory with retry logic to handle race conditions
+      const ensureDirectoryExists = (dirPath: string, retries = 3): void => {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            // Check if directory already exists
+            if (fs.existsSync(dirPath)) {
+              // Verify it's actually a directory and writable
+              const stats = fs.statSync(dirPath);
+              if (!stats.isDirectory()) {
+                throw new Error(`Path exists but is not a directory: ${dirPath}`);
+              }
+              // Check write permissions
+              fs.accessSync(dirPath, fs.constants.W_OK);
+              return; // Directory exists and is writable
+            }
+
+            // Directory doesn't exist, create it recursively
+            this.log.debug(
+              `Story ${story.id}: Creating directory (attempt ${attempt}/${retries}): ${dirPath}`,
+            );
+            fs.mkdirSync(dirPath, { recursive: true });
+
+            // Verify it was created
+            if (!fs.existsSync(dirPath)) {
+              throw new Error(
+                `Directory creation reported success but directory doesn't exist: ${dirPath}`,
+              );
+            }
+
+            // Verify it's writable
+            fs.accessSync(dirPath, fs.constants.W_OK);
+            this.log.debug(`Story ${story.id}: Directory created and verified: ${dirPath}`);
+            return;
+          } catch (error) {
+            const errorMsg = String(error);
+            // If it's the last attempt, throw the error
+            if (attempt === retries) {
+              throw new Error(
+                `Failed to create directory after ${retries} attempts: ${dirPath}. Error: ${errorMsg}`,
+              );
+            }
+            // Otherwise, wait a bit and retry (helps with race conditions)
+            this.log.debug(
+              `Story ${story.id}: Directory creation attempt ${attempt} failed, retrying... Error: ${errorMsg}`,
+            );
+            // Small delay to allow other processes to finish
+            const delay = attempt * 10; // 10ms, 20ms, 30ms delays
+            const start = Date.now();
+            while (Date.now() - start < delay) {
+              // Busy wait for precise timing
+            }
+          }
+        }
+      };
+
+      try {
+        const targetDir = path.dirname(actual);
+        // Ensure base results directory exists first
+        if (!fs.existsSync(this.config.resultsPath)) {
+          this.log.debug(
+            `Story ${story.id}: Creating base results directory: ${this.config.resultsPath}`,
+          );
+          fs.mkdirSync(this.config.resultsPath, { recursive: true });
+        }
+        // Then ensure the target directory exists
+        ensureDirectoryExists(targetDir);
+      } catch (dirError) {
+        const errorMsg = `Failed to create directory for screenshot: ${dirError}`;
+        this.log.error(`Story ${story.id}: ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
       // Date is already fixed via context.addInitScript, no need for clock API
+
+      // Verify page is still open before attempting screenshot
+      if (page.isClosed()) {
+        const errorMsg = `Page was closed before screenshot could be captured`;
+        this.log.error(`Story ${story.id}: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
+
+      // Final verification right before screenshot (safety check for race conditions)
+      const targetDir = path.dirname(actual);
+      if (!fs.existsSync(targetDir)) {
+        this.log.warn(
+          `Story ${story.id}: Directory missing immediately before screenshot, recreating: ${targetDir}`,
+        );
+        try {
+          ensureDirectoryExists(targetDir, 2); // Quick retry with fewer attempts
+        } catch (recreateError) {
+          const errorMsg = `Directory does not exist and could not be created: ${targetDir}. Error: ${recreateError}`;
+          this.log.error(`Story ${story.id}: ${errorMsg}`);
+          throw new Error(errorMsg);
+        }
+      }
 
       // Capture screenshot with settings optimized for visual regression
       this.log.debug(
         `Story ${story.id}: Capturing screenshot${this.config.fullPage ? ' (full page)' : ''}...`,
       );
       const screenshotStart = Date.now();
-      await page.screenshot({
-        path: actual,
-        fullPage: this.config.fullPage,
-        type: 'png', // PNG format required for accurate odiff comparison
-      });
-      this.log.debug(`Story ${story.id}: Screenshot captured in ${Date.now() - screenshotStart}ms`);
+      try {
+        await page.screenshot({
+          path: actual,
+          fullPage: this.config.fullPage,
+          type: 'png', // PNG format required for accurate odiff comparison
+        });
+        this.log.debug(
+          `Story ${story.id}: Screenshot captured in ${Date.now() - screenshotStart}ms`,
+        );
+      } catch (screenshotError) {
+        const errorMsg = String(screenshotError);
+        const errorDetails = screenshotError instanceof Error ? screenshotError.message : errorMsg;
+        this.log.error(`Story ${story.id}: Screenshot capture failed: ${errorMsg}`);
+
+        // Check if page closed during screenshot
+        if (page.isClosed()) {
+          throw new Error(`Screenshot capture failed: page closed during capture. ${errorDetails}`);
+        }
+
+        // Check for ENOENT errors - verify directory still exists and provide detailed diagnostics
+        if (/ENOENT|no such file/i.test(errorMsg)) {
+          const targetDir = path.dirname(actual);
+          const dirExists = fs.existsSync(targetDir);
+          const dirIsWritable = dirExists
+            ? (() => {
+                try {
+                  fs.accessSync(targetDir, fs.constants.W_OK);
+                  return true;
+                } catch {
+                  return false;
+                }
+              })()
+            : false;
+
+          const diagnosticInfo = [
+            `Target directory: ${targetDir}`,
+            `Directory exists: ${dirExists}`,
+            `Directory writable: ${dirIsWritable}`,
+            `Target file: ${actual}`,
+            `Parent directory exists: ${fs.existsSync(path.dirname(targetDir))}`,
+          ].join(', ');
+
+          this.log.error(`Story ${story.id}: ENOENT diagnostic - ${diagnosticInfo}`);
+
+          // Try to recreate directory one more time
+          if (!dirExists) {
+            try {
+              this.log.warn(`Story ${story.id}: Attempting to recreate directory: ${targetDir}`);
+              fs.mkdirSync(targetDir, { recursive: true });
+              if (fs.existsSync(targetDir)) {
+                this.log.info(`Story ${story.id}: Directory recreated successfully`);
+                // Don't throw - let the error propagate with context
+              }
+            } catch (recreateError) {
+              this.log.error(`Story ${story.id}: Failed to recreate directory: ${recreateError}`);
+            }
+          }
+
+          throw new Error(
+            `Screenshot capture failed: file system error - directory may not exist or is not writable. ${errorDetails}. Diagnostic: ${diagnosticInfo}`,
+          );
+        }
+
+        // Check for specific error types and provide more context
+        if (/timeout|Timed out/i.test(errorMsg)) {
+          throw new Error(`Screenshot capture failed: operation timed out. ${errorDetails}`);
+        } else if (/Target crashed|page crashed|browser crashed/i.test(errorMsg)) {
+          throw new Error(`Screenshot capture failed: browser/page crashed. ${errorDetails}`);
+        } else if (/Protocol error/i.test(errorMsg)) {
+          throw new Error(`Screenshot capture failed: protocol error. ${errorDetails}`);
+        }
+
+        throw new Error(`Screenshot capture failed: ${errorDetails}`);
+      }
+
+      // Verify screenshot file was actually created
+      if (!fs.existsSync(actual)) {
+        const errorMsg = `Screenshot file was not created at ${actual}. Screenshot capture may have failed silently.`;
+        this.log.error(`Story ${story.id}: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
 
       // Handle baseline logic with odiff visual regression testing
       const missingBaseline = !fs.existsSync(expected);
@@ -1807,6 +2108,14 @@ class WorkerPool {
         );
 
         try {
+          // Verify both files exist before comparison
+          if (!fs.existsSync(actual)) {
+            throw new Error(`Screenshot file does not exist: ${actual}`);
+          }
+          if (!fs.existsSync(expected)) {
+            throw new Error(`Baseline file does not exist: ${expected}`);
+          }
+
           // Run odiff comparison using Node.js bindings
           // Wrap in a timeout to prevent hanging in CI environments
           const compareStart = Date.now();
@@ -1850,9 +2159,11 @@ class WorkerPool {
                 fs.unlinkSync(actual);
                 this.log.debug(`Story ${story.id}: Deleted actual screenshot (matches baseline)`);
 
-                // Remove empty directories up to but not including resultsPath root
-                const actualDir = path.dirname(actual);
-                removeEmptyDirectories(actualDir, this.config.resultsPath);
+                // Don't remove empty directories during parallel execution to avoid race conditions
+                // where another worker might be trying to create a screenshot in the same directory
+                // Directory cleanup will happen at the end if needed
+                // const actualDir = path.dirname(actual);
+                // removeEmptyDirectories(actualDir, this.config.resultsPath);
               } catch (error) {
                 this.log.debug(`Story ${story.id}: Failed to delete actual screenshot: ${error}`);
               }
@@ -1947,7 +2258,7 @@ export async function runParallelTests(options: {
 
   log.debug(`Starting parallel test run with ${stories.length} stories`);
   log.debug(
-    `Configuration: workers=${config.workers || 'default'}, retries=${config.retries}, threshold=${config.threshold}, update=${config.update}`,
+    `Configuration: workers=${config.workers || 'default'}, retries=${config.retries ?? 0}, maxFailures=${config.maxFailures ?? 'unlimited'}, threshold=${config.threshold}, update=${config.update}`,
   );
   log.debug(
     `Log level: ${config.logLevel}, quiet: ${config.quiet}, summary: ${config.summary}, progress: ${config.showProgress}`,
@@ -1963,50 +2274,23 @@ export async function runParallelTests(options: {
     `Timeouts: testTimeout=${config.testTimeout ?? 'default (60000ms)'}, overlayTimeout=${config.overlayTimeout ?? 'default'}`,
   );
 
-  // Calculate optimal worker count based on CPU cores and current system load
-  // Browsers are I/O-bound (network, rendering), so we can use more workers than CPU cores
-  // However, each browser instance uses significant memory (200-500MB+), so we cap to prevent OOM
+  // If workers are explicitly configured, use that value
+  // Otherwise, start with 1 worker and let it scale up dynamically based on CPU usage
   const cpuCount = os.cpus().length;
-  const loadAvg = os.loadavg();
-  const currentLoad = loadAvg[0]; // 1-minute load average
-  const loadAvailable = currentLoad > 0 || loadAvg.some((v) => v > 0); // Check if loadavg is available (Windows returns [0,0,0])
-
-  // Base calculation: use CPU cores directly (browsers are I/O-bound)
-  let baseWorkers = cpuCount;
-
-  // Adjust based on current system load (if available)
-  // If system is already under load, reduce workers to avoid overloading
-  // If system is idle, we can use more workers
-  if (loadAvailable) {
-    if (currentLoad > cpuCount * 1.5) {
-      // System is heavily loaded - reduce workers significantly
-      baseWorkers = Math.max(1, Math.floor(cpuCount * 0.5));
-      log.debug(
-        `System load is high (${currentLoad.toFixed(2)}), reducing workers to ${baseWorkers}`,
-      );
-    } else if (currentLoad > cpuCount) {
-      // System is moderately loaded - reduce workers slightly
-      baseWorkers = Math.max(2, Math.floor(cpuCount * 0.75));
-      log.debug(
-        `System load is moderate (${currentLoad.toFixed(2)}), reducing workers to ${baseWorkers}`,
-      );
-    } else if (currentLoad < cpuCount * 0.5) {
-      // System is mostly idle - can use more workers (up to 1.5x cores)
-      baseWorkers = Math.floor(cpuCount * 1.5);
-      log.debug(`System load is low (${currentLoad.toFixed(2)}), using ${baseWorkers} workers`);
-    } else {
-      log.debug(`System load is normal (${currentLoad.toFixed(2)}), using ${baseWorkers} workers`);
-    }
+  let numWorkers: number;
+  let maxWorkersLimit: number;
+  if (config.workers !== undefined && config.workers !== null) {
+    numWorkers = config.workers;
+    maxWorkersLimit = numWorkers; // Use configured value as both initial and max
+    log.debug(`Using explicitly configured worker count: ${numWorkers}`);
   } else {
-    log.debug('System load not available (Windows or unavailable), using CPU count directly');
+    // Start with 1 worker - will scale up dynamically based on CPU usage
+    numWorkers = 0; // Pass 0 to WorkerPool constructor to indicate dynamic scaling
+    maxWorkersLimit = cpuCount * 2; // Allow scaling up to 2x CPU cores
+    log.debug('Starting with 1 worker, will scale up dynamically based on CPU usage');
   }
-
-  // Cap at 12 workers to balance performance with memory usage
-  // Minimum of 2 workers for better throughput on any machine
-  const defaultWorkers = Math.min(12, Math.max(2, baseWorkers));
-  const numWorkers = config.workers || defaultWorkers;
   log.debug(
-    `Worker pool: ${numWorkers} workers (${cpuCount} CPU cores${loadAvailable ? `, load: ${currentLoad.toFixed(2)}` : ''}, using ${defaultWorkers} by default)`,
+    `Worker pool: ${numWorkers === 0 ? '1 (will scale dynamically)' : numWorkers} workers (${cpuCount} CPU cores, max: ${maxWorkersLimit})`,
   );
 
   // In test mode, filter out stories that don't have snapshots
@@ -2031,7 +2315,8 @@ export async function runParallelTests(options: {
 
   const mode = config.update ? 'updating snapshots' : 'testing';
   const storyCount = filteredStories.length;
-  const initialMessage = `Running ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(String(numWorkers))} concurrent workers (${chalk.cyan(mode)})...`;
+  const workerDisplay = numWorkers === 0 ? '1 (scaling dynamically)' : String(numWorkers);
+  const initialMessage = `Running ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(workerDisplay)} concurrent workers (${chalk.cyan(mode)})...`;
   if (!config.quiet) {
     log.info(initialMessage);
   }
@@ -2045,22 +2330,40 @@ export async function runParallelTests(options: {
   }
 
   // Helper to print a line under the spinner and then resume spinner
-  const printUnderSpinner = (line: string) => {
+  // If keepStopped is true, the spinner will not be resumed immediately (useful for errors)
+  // It will resume automatically after a short delay or on the next progress update
+  const printUnderSpinner = (line: string, keepStopped = false) => {
     if (spinner) {
-      const currentText = spinnerText;
       spinner.stop();
       spinner.clear();
       log.info(line);
-      spinner = ora(currentText).start();
+      if (!keepStopped) {
+        spinner = ora(spinnerText).start();
+      } else {
+        // For errors, resume spinner after a short delay to ensure error is visible
+        // The spinner will also resume naturally on the next progress update
+        setTimeout(() => {
+          if (spinner && !spinner.isSpinning) {
+            spinner = ora(spinnerText).start();
+          }
+        }, 100);
+      }
     } else {
       log.info(line);
     }
   };
 
-  const pool = new WorkerPool(numWorkers, config, filteredStories, printUnderSpinner, callbacks);
+  const pool = new WorkerPool(
+    maxWorkersLimit,
+    config,
+    filteredStories,
+    printUnderSpinner,
+    callbacks,
+  );
 
   // Track current worker count for status display
-  let currentWorkers = numWorkers;
+  // Initialize from pool's actual worker count (starts at 1 for dynamic scaling)
+  let currentWorkers = pool.getMaxWorkers();
   pool.setWorkersChangedCallback((workers: number) => {
     currentWorkers = workers;
   });
@@ -2078,11 +2381,19 @@ export async function runParallelTests(options: {
     spinnerText = initialText;
   }
 
+  // Time remaining tracking with rolling average
+  const timeRemainingHistory: number[] = []; // Rolling window of time estimates (in seconds)
+  let timeCountdownInterval: NodeJS.Timeout | null = null; // Declare early for cleanup
+
   // Handle Ctrl+C: stop spinner immediately and show aborted message
   let abortHandled = false;
   const handleSigint = () => {
     if (abortHandled) return;
     abortHandled = true;
+    if (timeCountdownInterval) {
+      clearInterval(timeCountdownInterval);
+      timeCountdownInterval = null;
+    }
     if (spinner) {
       try {
         spinner.stop();
@@ -2093,47 +2404,100 @@ export async function runParallelTests(options: {
     process.exit(130);
   };
   process.once('SIGINT', handleSigint);
+  let smoothedTimeRemaining = 0; // Smoothed time remaining in seconds
+  const TIME_SAMPLE_WINDOW = 20; // Keep last 5 estimates
+
+  // Function to update time remaining estimate
+  const updateTimeRemaining = (completed: number, total: number) => {
+    const elapsed = Date.now() - startTime;
+    const avgTimePerTest = elapsed / Math.max(completed, 1);
+    const remaining = (total - completed) * avgTimePerTest;
+    const remainingSeconds = Math.round(remaining / 1000);
+
+    // Add to rolling window
+    timeRemainingHistory.push(remainingSeconds);
+    if (timeRemainingHistory.length > TIME_SAMPLE_WINDOW) {
+      timeRemainingHistory.shift();
+    }
+
+    // Calculate rolling average
+    if (timeRemainingHistory.length > 0) {
+      const sum = timeRemainingHistory.reduce((a, b) => a + b, 0);
+      smoothedTimeRemaining = sum / timeRemainingHistory.length;
+    }
+  };
+
+  // Function to format time remaining
+  const formatTimeRemaining = (seconds: number): string => {
+    const clamped = Math.max(0, Math.round(seconds));
+    const minutes = Math.floor(clamped / 60);
+    const secs = clamped % 60;
+    return minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+  };
+
+  // Function to update spinner display
+  const updateSpinner = (completed: number, total: number) => {
+    if (!spinner) return;
+
+    const percent = Math.round((completed / total) * 100);
+    const elapsed = Date.now() - startTime;
+
+    // Stories per minute (rounded, min 1 when there is progress)
+    const elapsedMinutes = Math.max(elapsed / 60000, 0.001);
+    const storiesPerMinute = completed > 0 ? Math.round(completed / elapsedMinutes) : 0;
+
+    // Get CPU usage from the pool (updated every 5 seconds)
+    const cpuUsagePercent = pool.getCurrentCpuUsage();
+
+    // Use smoothed time remaining
+    const timeStr = formatTimeRemaining(smoothedTimeRemaining);
+
+    // Build status line components
+    const statusParts: (string | null)[] = [
+      chalk.yellow(`Stories: ${completed}/${total}`),
+      chalk.cyan(`Completed: ${percent}%`),
+      chalk.cyan(`Time: ~${timeStr}`),
+      chalk.magenta(`Stories/m: ${storiesPerMinute}`),
+      chalk.blue(`Workers: ${currentWorkers}`),
+    ];
+
+    // Add CPU usage if we have a valid measurement
+    if (cpuUsagePercent > 0) {
+      const loadColor =
+        cpuUsagePercent < 50 ? chalk.green : cpuUsagePercent < 90 ? chalk.yellow : chalk.red;
+      statusParts.push(loadColor(`CPU: ${cpuUsagePercent.toFixed(0)}%`));
+    }
+
+    spinnerText = ` ${statusParts.filter(Boolean).join(` ${chalk.dim('•')} `)}`;
+    spinner.text = spinnerText;
+  };
 
   // Progress callback
   const onProgress = (completed: number, total: number) => {
-    if (spinner) {
-      // Update spinner with progress information
-      const percent = Math.round((completed / total) * 100);
-      const elapsed = Date.now() - startTime;
-      const avgTimePerTest = elapsed / Math.max(completed, 1);
-      const remaining = (total - completed) * avgTimePerTest;
-      const remainingSeconds = Math.round(remaining / 1000);
-      const minutes = Math.floor(remainingSeconds / 60);
-      const seconds = remainingSeconds % 60;
-      const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-
-      // Stories per minute (rounded, min 1 when there is progress)
-      const elapsedMinutes = Math.max(elapsed / 60000, 0.001);
-      const storiesPerMinute = completed > 0 ? Math.round(completed / elapsedMinutes) : 0;
-
-      // Get CPU usage from the pool (updated every 5 seconds)
-      const cpuUsagePercent = pool.getCurrentCpuUsage();
-
-      // Build status line components
-      const statusParts: (string | null)[] = [
-        chalk.yellow(`${completed}/${total}`),
-        chalk.cyan(`${percent}%`),
-        chalk.cyan(`~${timeStr}`),
-        chalk.magenta(`${storiesPerMinute}/m`),
-        chalk.blue(`${currentWorkers} workers`),
-      ];
-
-      // Add CPU usage if we have a valid measurement
-      if (cpuUsagePercent > 0) {
-        const loadColor =
-          cpuUsagePercent < 50 ? chalk.green : cpuUsagePercent < 90 ? chalk.yellow : chalk.red;
-        statusParts.push(loadColor(`CPU: ${cpuUsagePercent.toFixed(0)}%`));
-      }
-
-      spinnerText = ` ${statusParts.filter(Boolean).join(` ${chalk.dim('•')} `)}`;
-      spinner.text = spinnerText;
+    lastCompletedCount = completed;
+    // Update time remaining estimate
+    if (completed > 0) {
+      updateTimeRemaining(completed, total);
     }
+    // Update spinner display
+    updateSpinner(completed, total);
   };
+
+  // Set up interval to decrement time and update display every second
+  let lastCompletedCount = 0;
+  if (spinner) {
+    timeCountdownInterval = setInterval(() => {
+      // Decrement smoothed time remaining by 1 second
+      smoothedTimeRemaining = Math.max(0, smoothedTimeRemaining - 1);
+
+      // Update display with current progress
+      const currentCompleted = Object.keys(pool.getResults()).length;
+      if (currentCompleted > 0 || lastCompletedCount > 0) {
+        lastCompletedCount = currentCompleted;
+        updateSpinner(currentCompleted, filteredStories.length);
+      }
+    }, 1000);
+  }
 
   try {
     // Run the tests
@@ -2142,6 +2506,10 @@ export async function runParallelTests(options: {
     log.debug(`Worker pool completed: success=${success}, failed=${failed}`);
 
     // Clear progress and show final summary
+    if (timeCountdownInterval) {
+      clearInterval(timeCountdownInterval);
+      timeCountdownInterval = null;
+    }
     if (spinner) {
       spinner.stop();
       spinner.clear();
