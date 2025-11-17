@@ -10,7 +10,6 @@ export type ResultEntry = {
   diffPixels?: number;
   diffPercent?: number;
   duration?: number;
-  createdAt: string; // ISO date string
   updatedAt: string; // ISO date string
 };
 
@@ -213,7 +212,6 @@ export class ResultsIndexManager {
       ...(options?.diffPercent !== undefined &&
         options.diffPercent !== 0 && { diffPercent: options.diffPercent }),
       duration: options?.duration,
-      createdAt: existingEntry?.createdAt ?? now,
       updatedAt: now,
     };
 
@@ -482,8 +480,8 @@ export class ResultsIndexManager {
 
       if (existing) {
         // Compare timestamps to keep the most recent one
-        const existingTime = new Date(existing.updatedAt || existing.createdAt).getTime();
-        const currentTime = new Date(entry.updatedAt || entry.createdAt).getTime();
+        const existingTime = new Date(existing.updatedAt).getTime();
+        const currentTime = new Date(entry.updatedAt).getTime();
 
         if (currentTime > existingTime) {
           // Current entry is newer, mark existing as duplicate
