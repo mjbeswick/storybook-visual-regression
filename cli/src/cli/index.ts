@@ -10,6 +10,7 @@ import { listSnapshots } from '../core/ListSnapshots.js';
 import { listResults } from '../core/ListResults.js';
 import prompts from 'prompts';
 import { getCommandName } from '../utils/commandName.js';
+import { EXIT_CODES } from '../parallel-runner.js';
 
 /**
  * Calculate Levenshtein distance between two strings
@@ -479,7 +480,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       }
       const cmdName = getCommandName();
       console.error(`\nRun '${cmdName} --help' for more information.\n`);
-      return 1;
+      return EXIT_CODES.CONFIG_ERROR;
     }
 
     if (err?.code === 'commander.unknownOption') {
@@ -492,7 +493,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       }
       console.error('');
       console.error('Run with --help to see all available options.');
-      return 1;
+      return EXIT_CODES.CONFIG_ERROR;
     }
 
     if (err?.code === 'commander.excessArguments') {
@@ -502,7 +503,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         `\nError: Unknown argument${excessArgs.length > 1 ? 's' : ''}: ${excessArgs.join(', ')}`,
       );
       console.error(`\nRun '${cmdName} --help' for more information.\n`);
-      return 1;
+      return EXIT_CODES.CONFIG_ERROR;
     }
 
     // Re-throw other errors
@@ -527,7 +528,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       console.error(`\nAvailable commands: ${subcommands.join(', ')}`);
     }
     console.error(`\nRun 'svr --help' for more information.\n`);
-    return 1;
+    return EXIT_CODES.CONFIG_ERROR;
   }
 
   if (executedCommand && subcommands.includes(executedCommand)) {
@@ -610,7 +611,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       logger.error(`Error: ${message}`);
     }
 
-    return 2;
+    return EXIT_CODES.CONFIG_ERROR;
   }
 };
 

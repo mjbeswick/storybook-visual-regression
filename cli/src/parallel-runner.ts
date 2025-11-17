@@ -19,20 +19,33 @@ import { ResultsIndexManager } from './core/ResultsIndex.js';
 import { createLogger, setGlobalLogger } from './logger.js';
 import { getCommandName } from './utils/commandName.js';
 
+// Constants
+const DEFAULT_FIX_DATE = '2024-02-02T10:00:00Z';
+// Timestamp threshold: January 1, 2000 00:00:00 UTC in milliseconds
+// Used to distinguish between seconds and milliseconds timestamps
+const TIMESTAMP_THRESHOLD_MS = 946684800000;
+
+// Exit codes
+export const EXIT_CODES = {
+  SUCCESS: 0,
+  TEST_FAILURES: 1, // Visual regression failures detected
+  CONFIG_ERROR: 2, // Configuration or initialization errors
+  RUNTIME_ERROR: 3, // Runtime errors (browser crashes, network issues, etc.)
+  NO_STORIES: 4, // No stories found or no stories to test
+  USER_CANCELLED: 130, // SIGINT (Ctrl+C)
+} as const;
+
 // Helper to parse fixDate config value into a Date object
 function parseFixDate(value: boolean | string | number | undefined): Date {
   if (!value || value === true) {
-    // Default: February 2, 2024, 10:00:00 UTC as requested
-    return new Date('2024-02-02T10:00:00Z');
+    // Default: February 2, 2024, 10:00:00 UTC
+    return new Date(DEFAULT_FIX_DATE);
   }
 
   if (typeof value === 'number') {
     // If it's a number, assume it's already a timestamp
-    if (value < 946684800000) {
-      // Looks like seconds, convert to milliseconds
-      return new Date(value * 1000);
-    }
-    return new Date(value);
+    // If less than threshold, assume it's in seconds and convert to milliseconds
+    return value < TIMESTAMP_THRESHOLD_MS ? new Date(value * 1000) : new Date(value);
   }
 
   if (typeof value === 'string') {
@@ -43,19 +56,17 @@ function parseFixDate(value: boolean | string | number | undefined): Date {
     // Try as numeric string
     const numValue = Number(value);
     if (!isNaN(numValue)) {
-      if (numValue < 946684800000) {
-        return new Date(numValue * 1000);
-      }
-      return new Date(numValue);
+      // If less than threshold, assume it's in seconds and convert to milliseconds
+      return numValue < TIMESTAMP_THRESHOLD_MS ? new Date(numValue * 1000) : new Date(numValue);
     }
   }
 
   // Fallback to default
-  return new Date('2024-02-02T10:00:00Z');
+  return new Date(DEFAULT_FIX_DATE);
 }
 
-// Helper to remove empty directories recursively
-function removeEmptyDirectories(dirPath: string, stopAt?: string): void {
+// Helper to remove empty directories recursively (currently unused but kept for potential future use)
+function _removeEmptyDirectories(dirPath: string, stopAt?: string): void {
   try {
     // Normalize paths for comparison (handle different path separators)
     const normalizedDirPath = path.normalize(dirPath);
@@ -76,7 +87,7 @@ function removeEmptyDirectories(dirPath: string, stopAt?: string): void {
         const parentDir = path.dirname(normalizedDirPath);
         if (parentDir !== normalizedDirPath) {
           // Only recurse if we haven't reached the root
-          removeEmptyDirectories(parentDir, stopAt);
+          _removeEmptyDirectories(parentDir, stopAt);
         }
       }
     }
@@ -261,21 +272,29 @@ type TestConfig = RuntimeConfig & {
   resultsPath: string;
 };
 
+// Types
+type StoryResult = {
+  success: boolean;
+  error?: string;
+  duration: number;
+  action?: string;
+};
+
+type StoryResults = Record<string, StoryResult>;
+
 // Optimized worker pool for handling thousands of URLs
 class WorkerPool {
   private queue: DiscoveredStory[] = [];
   private activeWorkers = 0;
   private maxWorkers: number;
-  private results: {
-    [storyId: string]: { success: boolean; error?: string; duration: number; action?: string };
-  } = {};
+  private results: StoryResults = {};
   private cancelledStories = new Set<string>();
   private startTime = Date.now();
   private completed = 0;
   private total: number;
   private config: TestConfig;
-  private onProgress?: (completed: number, total: number, results: any) => void;
-  private onComplete?: (results: any) => void;
+  private onProgress?: (completed: number, total: number, results: StoryResults) => void;
+  private onComplete?: (results: StoryResults) => void;
   private singleLineMode: boolean;
   private printUnderSpinner?: (line: string, keepStopped?: boolean) => void;
   private callbacks?: RunCallbacks;
@@ -707,8 +726,8 @@ class WorkerPool {
   }
 
   async run(
-    onProgress?: (completed: number, total: number, results: any) => void,
-    onComplete?: (results: any) => void,
+    onProgress?: (completed: number, total: number, results: StoryResults) => void,
+    onComplete?: (results: StoryResults) => void,
   ): Promise<{ success: boolean; failed: number }> {
     this.onProgress = onProgress;
     this.onComplete = onComplete;
@@ -2124,7 +2143,7 @@ export async function runParallelTests(options: {
 
   if (stories.length === 0) {
     log.error('No stories to test');
-    return 1;
+    return EXIT_CODES.NO_STORIES;
   }
 
   log.debug(`Output mode: ${config.showProgress ? 'spinner' : 'streaming'}`);
@@ -2162,6 +2181,12 @@ export async function runParallelTests(options: {
       log.info(
         `Skipped ${skippedCount} stories with no baseline snapshots (run '${cmdName} update' to create them)`,
       );
+    }
+
+    // Check if all stories were filtered out
+    if (filteredStories.length === 0) {
+      log.error('No stories to test after filtering');
+      return EXIT_CODES.NO_STORIES;
     }
   }
   // Log fixDate configuration once before tests start
@@ -2250,7 +2275,7 @@ export async function runParallelTests(options: {
       } catch {}
     }
     log.error('Aborted by user. Visual regression run stopped.');
-    process.exit(130);
+    process.exit(EXIT_CODES.USER_CANCELLED);
   };
   process.once('SIGINT', handleSigint);
   let smoothedTimeRemaining = 0; // Smoothed time remaining in seconds
@@ -2412,13 +2437,13 @@ export async function runParallelTests(options: {
       log.info('\n' + message);
     }
 
-    return success ? 0 : 1;
+    return success ? EXIT_CODES.SUCCESS : EXIT_CODES.TEST_FAILURES;
   } catch (error) {
     if (spinner) {
       spinner.stop();
       spinner.clear();
     }
     log.error('Unexpected error:', error);
-    return 1;
+    return EXIT_CODES.RUNTIME_ERROR;
   }
 }
