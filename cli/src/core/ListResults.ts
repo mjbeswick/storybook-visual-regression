@@ -191,27 +191,35 @@ export function listResults(
     ? entries.filter((e) => e.status === options.status)
     : entries;
 
-  writeLine(`\n📊 Test Results\n`);
-  writeLine('═'.repeat(80));
+  // Determine if we should show a concise format (only failed results, no summary)
+  const isConciseFormat = options?.status === 'failed' && filteredEntries.length > 0;
 
-  // Show summary of all results
-  const totalAll = entries.length;
-  const passedAll = allByStatus.passed.length;
-  const failedAll = allByStatus.failed.length;
-  const newSnapshotsAll = allByStatus.new.length;
-  const missingAll = allByStatus.missing.length;
+  if (!isConciseFormat) {
+    writeLine(`\n${chalk.bold('Test Results:')}\n`);
+    writeLine('═'.repeat(80));
 
-  writeLine(`\nSummary:`);
-  writeLine(`  ${colorize(`✓ Passed: ${passedAll}`, STATUS_COLORS.passed)}`);
-  writeLine(`  ${colorize(`✗ Failed: ${failedAll}`, STATUS_COLORS.failed)}`);
-  writeLine(`  ${colorize(`🆕 New: ${newSnapshotsAll}`, STATUS_COLORS.new)}`);
-  writeLine(`  ${colorize(`⚠ Missing: ${missingAll}`, STATUS_COLORS.missing)}`);
-  writeLine(`  Total: ${totalAll}`);
+    // Show summary of all results
+    const totalAll = entries.length;
+    const passedAll = allByStatus.passed.length;
+    const failedAll = allByStatus.failed.length;
+    const newSnapshotsAll = allByStatus.new.length;
+    const missingAll = allByStatus.missing.length;
+
+    writeLine(`\nSummary:`);
+    writeLine(`  ${colorize(`✓ Passed: ${passedAll}`, STATUS_COLORS.passed)}`);
+    writeLine(`  ${colorize(`✗ Failed: ${failedAll}`, STATUS_COLORS.failed)}`);
+    writeLine(`  ${colorize(`+ New: ${newSnapshotsAll}`, STATUS_COLORS.new)}`);
+    writeLine(`  ${colorize(`⚠ Missing: ${missingAll}`, STATUS_COLORS.missing)}`);
+    writeLine(`  Total: ${totalAll}`);
+  } else {
+    // Concise format: just the header with separator
+    writeLine('\n' + chalk.bold('Test Results'));
+  }
 
   if (filteredEntries.length === 0) {
     const statusText = options?.status ? `${options.status} ` : '';
     writeLine(`\nNo ${statusText}results to display.`.trim());
-    if (options?.status === 'failed' && totalAll > 0) {
+    if (options?.status === 'failed' && entries.length > 0) {
       writeLine(`\nUse --all to see all results, or --status passed to see passed tests.`);
     }
     writeLine('');
@@ -246,7 +254,7 @@ export function listResults(
 
   const sorted = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
-  if (filteredEntries.length > 0) {
+  if (filteredEntries.length > 0 && !isConciseFormat) {
     const filteredTotal = filteredEntries.length;
     writeLine(
       `\nDetails (${filteredTotal} ${options?.status || 'filtered'} result${filteredTotal === 1 ? '' : 's'}):`,
@@ -385,9 +393,14 @@ export function listResults(
     }
   }
 
-  writeLine('\n' + '═'.repeat(80));
-  const filteredTotal = filteredEntries.length;
-  writeLine(`\nTotal: ${filteredTotal} result(s) across ${sorted.length} story path(s)\n`);
+  if (!isConciseFormat) {
+    writeLine('\n' + '═'.repeat(80));
+    const filteredTotal = filteredEntries.length;
+    writeLine(`\nTotal: ${filteredTotal} result(s) across ${sorted.length} story path(s)\n`);
+  } else {
+    // Add newline after last item in concise format
+    writeLine('');
+  }
 
   // Write to file if specified
   if (options?.outputFile) {

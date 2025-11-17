@@ -216,28 +216,6 @@ export function generateSummaryMessage({
 }: SummaryParams): string {
   const lines: string[] = [];
 
-  if (context === 'update') {
-    if (updated === total && failed === 0) {
-      lines.push(chalk.green(`${total} snapshots updated successfully.`));
-    } else if (updated > 0 && failed > 0) {
-      lines.push(chalk.yellow(`${updated} snapshots updated, ${failed} failed.`));
-    } else if (failed === total) {
-      lines.push(chalk.red(`All ${total} snapshot updates failed.`));
-    } else {
-      lines.push(chalk.gray(`No snapshots were updated.`));
-    }
-  } else if (context === 'test') {
-    if (passed === total && failed === 0) {
-      lines.push(chalk.green(`All ${total} tests passed.`));
-    } else if (passed > 0 && failed > 0) {
-      lines.push(chalk.yellow(`${passed} tests passed, ${failed} failed.`));
-    } else if (failed === total) {
-      lines.push(chalk.red(`All ${total} tests failed.`));
-    } else {
-      lines.push(chalk.gray(`No tests were run.`));
-    }
-  }
-
   if (verbose) {
     const breakdown: string[] = [];
     if (context === 'update') {
@@ -855,11 +833,6 @@ class WorkerPool {
 
     const displayName = toDisplayName();
 
-    // Retry logic: attempt up to retries + 1 times (initial attempt + retries)
-    const maxAttempts = (this.config.retries || 0) + 1;
-    this.log.debug(
-      `Story ${story.id}: Retry configuration - retries: ${this.config.retries || 0}, maxAttempts: ${maxAttempts}`,
-    );
     let lastError: Error | null = null;
     let result: string | null = null;
     let page: Page | undefined; // Store page reference for DOM dumping on timeout
@@ -867,83 +840,55 @@ class WorkerPool {
     let displayViewportName: string | undefined; // Will be updated with viewport name if available
     let comparisonResult: InMemoryComparisonResult | null = null; // Store comparison result for result tracking
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        // Small staggered delay to stagger browser launches and reduce resource contention
-        // Only apply staggering to the initial batch of workers
-        if (attempt === 1 && staggerLaunch) {
-          // Use a simple hash of story ID to create consistent, staggered delays
-          let hash = 0;
-          for (let i = 0; i < story.id.length; i++) {
-            hash = ((hash << 5) - hash + story.id.charCodeAt(i)) & 0xffffffff;
-          }
-          const delay = Math.abs(hash) % 150; // 0-150ms staggered delay based on story ID
+    try {
+      // Small staggered delay to stagger browser launches and reduce resource contention
+      if (staggerLaunch) {
+        // Use a simple hash of story ID to create consistent, staggered delays
+        let hash = 0;
+        for (let i = 0; i < story.id.length; i++) {
+          hash = ((hash << 5) - hash + story.id.charCodeAt(i)) & 0xffffffff;
+        }
+        const delay = Math.abs(hash) % 150; // 0-150ms staggered delay based on story ID
+        this.log.debug(
+          `Story ${story.id}: Staggering browser launch (delay: ${delay.toFixed(1)}ms)`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+
+      // Check if max failures reached before starting test
+      if (this.maxFailuresReached || this.cancelled) {
+        this.log.debug(`Story ${story.id}: Test cancelled`);
+        throw new Error('Test cancelled');
+      }
+
+      const attemptStart = Date.now();
+      const testResult = await this.executeSingleTestAttempt(story, storyViewport);
+      result = testResult.result;
+      page = testResult.page; // Store page reference for potential DOM dump
+      // Use actual viewport from page if available, otherwise fall back to configured viewport
+      displayViewport = testResult.actualViewport || storyViewport;
+      // Store viewport name for display
+      displayViewportName = testResult.viewportName;
+      // Store comparison result for result tracking
+      comparisonResult = testResult.comparisonResult || null;
+      const attemptDuration = Date.now() - attemptStart;
+      this.log.debug(`Story ${story.id}: Test succeeded in ${attemptDuration}ms`);
+    } catch (error) {
+      lastError = error as Error;
+
+      // Dump DOM if timeout or crash occurred
+      const isTimeout =
+        lastError && /timeout|Timed out|Operation timed out/i.test(String(lastError));
+      const isCrash = lastError && /Target crashed|crashed|Protocol error/i.test(String(lastError));
+      if ((isTimeout || isCrash) && page && !page.isClosed()) {
+        try {
+          await this.dumpPageStateOnTimeout(story, page);
+        } catch (dumpError) {
           this.log.debug(
-            `Story ${story.id}: Staggering browser launch (delay: ${delay.toFixed(1)}ms)`,
+            `Story ${story.id}: Failed to dump DOM on ${isTimeout ? 'timeout' : 'crash'}:`,
+            dumpError,
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        } else {
-          // Add a small delay between retries
-          this.log.debug(`Story ${story.id}: Waiting before retry attempt ${attempt}`);
-          await new Promise((resolve) => setTimeout(resolve, 100));
         }
-
-        // Check if max failures reached before starting retry attempt
-        if (this.maxFailuresReached || this.cancelled) {
-          this.log.debug(`Story ${story.id}: Test cancelled before retry attempt ${attempt}`);
-          throw new Error('Test cancelled');
-        }
-
-        const attemptStart = Date.now();
-        const testResult = await this.executeSingleTestAttempt(story, storyViewport);
-        result = testResult.result;
-        page = testResult.page; // Store page reference for potential DOM dump
-        // Use actual viewport from page if available, otherwise fall back to configured viewport
-        displayViewport = testResult.actualViewport || storyViewport;
-        // Store viewport name for display
-        displayViewportName = testResult.viewportName;
-        // Store comparison result for result tracking
-        comparisonResult = testResult.comparisonResult || null;
-        const attemptDuration = Date.now() - attemptStart;
-        this.log.debug(`Story ${story.id}: Attempt ${attempt} succeeded in ${attemptDuration}ms`);
-        lastError = null;
-        break; // Success, exit retry loop
-      } catch (error) {
-        lastError = error as Error;
-
-        // Check if this is a cancellation error - don't retry these
-        const isCancelled = String(lastError).includes('Test cancelled');
-        if (isCancelled) {
-          this.log.debug(`Story ${story.id}: Test cancelled, not retrying`);
-          break; // Exit retry loop
-        }
-
-        // Dump DOM if timeout or crash occurred (on any attempt, not just last)
-        const isTimeout =
-          lastError && /timeout|Timed out|Operation timed out/i.test(String(lastError));
-        const isCrash =
-          lastError && /Target crashed|crashed|Protocol error/i.test(String(lastError));
-        if ((isTimeout || isCrash) && page && !page.isClosed()) {
-          try {
-            await this.dumpPageStateOnTimeout(story, page);
-          } catch (dumpError) {
-            this.log.debug(
-              `Story ${story.id}: Failed to dump DOM on ${isTimeout ? 'timeout' : 'crash'}:`,
-              dumpError,
-            );
-          }
-        }
-
-        if (attempt < maxAttempts) {
-          // Will retry, log if debug mode
-          this.log.debug(
-            `Story ${story.id}: Attempt ${attempt}/${maxAttempts} failed, retrying...`,
-          );
-          if (lastError) {
-            this.log.debug(`  Error: ${String(lastError)}`);
-          }
-        }
-        // If this is the last attempt, error will be handled below
       }
     }
 
@@ -2165,7 +2110,7 @@ export async function runParallelTests(options: {
 
   log.debug(`Starting parallel test run with ${stories.length} stories`);
   log.debug(
-    `Configuration: workers=${config.workers || 'default'}, retries=${config.retries ?? 0}, maxFailures=${config.maxFailures ?? 'unlimited'}, threshold=${config.threshold}, update=${config.update}`,
+    `Configuration: workers=${config.workers || 'default'}, maxFailures=${config.maxFailures ?? 'unlimited'}, threshold=${config.threshold}, update=${config.update}`,
   );
   log.debug(
     `Log level: ${config.logLevel}, quiet: ${config.quiet}, summary: ${config.summary}, progress: ${config.showProgress}`,
@@ -2213,21 +2158,21 @@ export async function runParallelTests(options: {
       );
     }
   }
-
-  const mode = config.update ? 'updating snapshots' : 'testing';
-  const storyCount = filteredStories.length;
-  const workerDisplay = numWorkers === 0 ? '1 (scaling dynamically)' : String(numWorkers);
-  const initialMessage = `Checking ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(workerDisplay)} concurrent workers...`;
-  if (!config.quiet) {
-    log.info(initialMessage);
-  }
-
   // Log fixDate configuration once before tests start
   if (config.fixDate) {
     const fixedDate = parseFixDate(config.fixDate);
     log.info(
       `Date fixing enabled - config value: ${JSON.stringify(config.fixDate)}, fixed date: ${fixedDate.toISOString()}`,
     );
+  }
+
+  const storyCount = filteredStories.length;
+  const workerDisplay = numWorkers === 0 ? '1 (scaling dynamically)' : String(numWorkers);
+  const initialMessage = `Checking ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(workerDisplay)} concurrent workers...`;
+  if (!config.quiet) {
+    log.info('');
+    log.info(chalk.bold(initialMessage));
+    log.info('');
   }
 
   // Helper to print a line under the spinner and then resume spinner

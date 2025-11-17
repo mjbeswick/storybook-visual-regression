@@ -68,7 +68,6 @@ const optsToFlags = (opts: Record<string, unknown>): CliFlags => {
   // Number options
   if (opts.workers !== undefined) flags.workers = Number(opts.workers);
   if (opts.webserverTimeout !== undefined) flags.webserverTimeout = Number(opts.webserverTimeout);
-  if (opts.retries !== undefined) flags.retries = Number(opts.retries);
   if (opts.maxFailures !== undefined) flags.maxFailures = Number(opts.maxFailures);
   if (opts.threshold !== undefined) flags.threshold = Number(opts.threshold);
   if (opts.maxDiffPixels !== undefined) flags.maxDiffPixels = Number(opts.maxDiffPixels);
@@ -136,21 +135,22 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
   program
     .name(cmdName)
     .description('Storybook Visual Regression CLI')
+    .allowExcessArguments(false)
     .addCommand(
       new Command('test')
         .description('Run visual regression tests')
+        .allowExcessArguments(false)
         .option('--config <path>', 'Config file path')
         .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
         .option('-w, --workers <n>', 'Parallel workers', Number)
         .option('-c, --command <cmd>', 'Command to run')
         .option('--webserver-timeout <ms>', 'Webserver timeout', Number)
-        .option('--retries <n>', 'Playwright retries', Number)
         .option('--max-failures <n>', 'Bail after N failures', Number)
         .option('--timezone <tz>', 'Timezone')
         .option('--locale <locale>', 'Locale')
         .option('--browser <name>', 'chromium|firefox|webkit')
-        .option('--threshold <0..1>', 'Diff threshold (default 0.2)', Number)
+        .option('--threshold <0..1>', 'Diff threshold as percentage (default 0.2 = 0.2%)', Number)
         .option('--max-diff-pixels <n>', 'Max differing pixels (default 0)', Number)
         .option('--full-page', 'Full page screenshots')
         .option('--mutation-wait <ms>', 'Quiet window wait (default 200)', Number)
@@ -170,8 +170,14 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
         .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
         .option('--snapshot-delay <ms>', 'Delay between retries', Number)
-        .option('--include <patterns>', 'Comma-separated include filters')
-        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option(
+          '--include <patterns>',
+          'Comma-separated include filters (supports wildcards * and normalizes spaces/slashes)',
+        )
+        .option(
+          '--exclude <patterns>',
+          'Comma-separated exclude filters (supports wildcards * and normalizes spaces/slashes)',
+        )
         .option('--grep <regex>', 'Filter by storyId')
         .option('--missing-only', 'Create only missing baselines')
         .option('--failed-only', 'Rerun only previously failed')
@@ -197,6 +203,8 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           '--results-file <path>',
           'Write results report to file (defaults to results directory if no filename)',
         )
+        .option('--all', 'Show all results (not just failed)')
+        .option('--status <status>', 'Filter by status: passed|failed|new|missing')
         .action(async (opts) => {
           try {
             const flags = optsToFlags(opts);
@@ -207,7 +215,11 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
 
             // Show report if requested
             if (opts.results || opts.resultsFile) {
-              // Determine output file path
+              // Default to showing only failed results unless --all is explicitly passed
+              // Note: --include/--exclude/--grep filter which stories are tested, not which results are shown
+              const status = opts.all ? undefined : opts.status || 'failed';
+
+              // Determine output file path (only set if --results-file is explicitly provided)
               let outputFile: string | undefined;
               if (opts.resultsFile) {
                 const outputPath = String(opts.resultsFile);
@@ -220,14 +232,12 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
                 } else {
                   outputFile = outputPath;
                 }
-              } else if (opts.results) {
-                // --results without --results-file: use default location in results directory
-                const resultsDir = config.resolvePath(config.resultsPath);
-                outputFile = path.join(resultsDir, 'report.txt');
               }
+              // If only --results is used (without --results-file), outputFile remains undefined
+              // which causes listResults to display to console instead of writing to file
 
               listResults(config, {
-                status: undefined, // Show all by default when using --results
+                status: status as any,
                 include: config.includeStories,
                 exclude: config.excludeStories,
                 grep: config.grep,
@@ -246,13 +256,13 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     .addCommand(
       new Command('update')
         .description('Update or create snapshot baselines')
+        .allowExcessArguments(false)
         .option('--config <path>', 'Config file path')
         .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
         .option('-w, --workers <n>', 'Parallel workers', Number)
         .option('-c, --command <cmd>', 'Command to run')
         .option('--webserver-timeout <ms>', 'Webserver timeout', Number)
-        .option('--retries <n>', 'Playwright retries', Number)
         .option('--max-failures <n>', 'Bail after N failures', Number)
         .option('--timezone <tz>', 'Timezone')
         .option('--locale <locale>', 'Locale')
@@ -275,8 +285,14 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
         .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
         .option('--snapshot-delay <ms>', 'Delay between retries', Number)
-        .option('--include <patterns>', 'Comma-separated include filters')
-        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option(
+          '--include <patterns>',
+          'Comma-separated include filters (supports wildcards * and normalizes spaces/slashes)',
+        )
+        .option(
+          '--exclude <patterns>',
+          'Comma-separated exclude filters (supports wildcards * and normalizes spaces/slashes)',
+        )
         .option('--grep <regex>', 'Filter by storyId')
         .option('--missing-only', 'Create only missing baselines')
         .option('--progress', 'Show progress during run')
@@ -315,10 +331,17 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     .addCommand(
       new Command('snapshots')
         .description('List all snapshots')
+        .allowExcessArguments(false)
         .option('--config <path>', 'Config file path')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
-        .option('--include <patterns>', 'Comma-separated include filters')
-        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option(
+          '--include <patterns>',
+          'Comma-separated include filters (supports wildcards * and normalizes spaces/slashes)',
+        )
+        .option(
+          '--exclude <patterns>',
+          'Comma-separated exclude filters (supports wildcards * and normalizes spaces/slashes)',
+        )
         .option('--grep <regex>', 'Filter by storyId')
         .action(async (opts) => {
           const flags = optsToFlags(opts);
@@ -335,17 +358,27 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     .addCommand(
       new Command('results')
         .description('List test results (shows failed by default)')
+        .allowExcessArguments(false)
         .option('--config <path>', 'Config file path')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
-        .option('--output-file <path>', 'Output file path (paths will be relative to this file)')
+        .option(
+          '--output-file <path>',
+          'Base path for relative file paths in output (paths will be relative to this file)',
+        )
         .option(
           '--results-file <path>',
-          'Write results report to file (defaults to results directory if no filename)',
+          'Write results report to file (defaults to results directory if path is a directory)',
         )
         .option('--all', 'Show all results (not just failed)')
         .option('--status <status>', 'Filter by status: passed|failed|new|missing')
-        .option('--include <patterns>', 'Comma-separated include filters')
-        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option(
+          '--include <patterns>',
+          'Comma-separated include filters (supports wildcards * and normalizes spaces/slashes)',
+        )
+        .option(
+          '--exclude <patterns>',
+          'Comma-separated exclude filters (supports wildcards * and normalizes spaces/slashes)',
+        )
         .option('--grep <regex>', 'Filter by storyId')
         .action(async (opts) => {
           const flags = optsToFlags(opts);
@@ -459,6 +492,16 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       }
       console.error('');
       console.error('Run with --help to see all available options.');
+      return 1;
+    }
+
+    if (err?.code === 'commander.excessArguments') {
+      const cmdName = getCommandName();
+      const excessArgs = err.args || [];
+      console.error(
+        `\nError: Unknown argument${excessArgs.length > 1 ? 's' : ''}: ${excessArgs.join(', ')}`,
+      );
+      console.error(`\nRun '${cmdName} --help' for more information.\n`);
       return 1;
     }
 

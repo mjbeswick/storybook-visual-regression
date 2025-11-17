@@ -117,6 +117,19 @@ By default, `results` shows only failed tests. Use `--all` to show all results:
 npx storybook-visual-regression results --all
 ```
 
+Filter results by status:
+
+```bash
+npx storybook-visual-regression results --status failed
+npx storybook-visual-regression results --status passed
+```
+
+Write results to a file:
+
+```bash
+npx storybook-visual-regression results --results-file results.txt
+```
+
 #### Initialize Config
 
 ```bash
@@ -134,12 +147,13 @@ npx storybook-visual-regression init
 #### Test Execution
 
 - `--workers <number>` - Number of parallel workers (default: `12`)
-- `--retries <number>` - Number of retries on failure (default: `0`)
 - `--max-failures <number>` - Stop after N failures (default: `10`, `0` = stop on first failure)
 - `--output <dir>` - Output directory for results (default: `visual-regression`)
 - `--grep <pattern>` - Filter stories by regex pattern
-- `--include <patterns>` - Include stories matching these patterns (comma-separated)
-- `--exclude <patterns>` - Exclude stories matching these patterns (comma-separated)
+- `--include <patterns>` - Include stories matching these patterns (comma-separated, supports wildcards `*`)
+- `--exclude <patterns>` - Exclude stories matching these patterns (comma-separated, supports wildcards `*`)
+- `--results` - Show test results after tests complete (defaults to failed only, use `--all` to show all)
+- `--results-file <path>` - Write test results to a file (use with `--results` or `results` command)
 
 #### Browser Configuration
 
@@ -149,7 +163,7 @@ npx storybook-visual-regression init
 
 #### Screenshot Configuration
 
-- `--threshold <number>` - Screenshot comparison threshold (0.0-1.0, default: `0.2`)
+- `--threshold <number>` - Screenshot comparison threshold as percentage (default: `0.2` = 0.2%)
 - `--max-diff-pixels <number>` - Maximum number of pixels that can differ (default: `0`)
 - `--full-page` - Capture full-page screenshots
 
@@ -180,6 +194,13 @@ npx storybook-visual-regression init
 - `--progress` - Show progress spinners and time estimates
 - `--no-progress` - Disable progress spinners (useful for CI pipelines)
 
+#### Results Options
+
+- `--results` - Show test results after tests complete (defaults to failed only, use `--all` to show all)
+- `--results-file <path>` - Write test results to a file (relative to results directory if path is not absolute)
+- `--status <status>` - Filter results by status: `passed`, `failed`, `new`, or `missing` (for `results` command)
+- `--all` - Show all results, not just failed ones (for `results` command or `test --results`)
+
 #### CI/CD Options
 
 - `--install-browsers [browser]` - Install Playwright browsers before running (`chromium`, `firefox`, `webkit`, or `all`)
@@ -195,13 +216,35 @@ npx storybook-visual-regression test \
   --url http://localhost:6006 \
   --workers 8 \
   --browser chromium \
-  --threshold 0.1
+  --threshold 0.1 \
+  --results
 ```
 
 #### Test Specific Stories
 
 ```bash
+# Using regex pattern
 npx storybook-visual-regression test --grep "Button|Modal"
+
+# Using include patterns (supports wildcards and spaces/slashes)
+npx storybook-visual-regression test --include "Components/Button"
+npx storybook-visual-regression test --include "colleague*void"
+
+# Exclude specific stories
+npx storybook-visual-regression test --exclude "**/Docs", "**/Experimental"
+```
+
+#### Show Results After Tests
+
+```bash
+# Show failed results after tests complete
+npx storybook-visual-regression test --results
+
+# Show all results after tests complete
+npx storybook-visual-regression test --results --all
+
+# Write results to a file
+npx storybook-visual-regression test --results --results-file test-results.txt
 ```
 
 #### Update Baselines for Failed Tests Only
@@ -271,7 +314,6 @@ export default {
 
   // Test execution
   workers: 16, // Number of parallel workers
-  retries: 0, // Number of retries on failure
   maxFailures: 10, // Stop after N failures (0 = no limit)
   output: 'visual-regression', // Output directory for results
 
@@ -291,12 +333,13 @@ export default {
   waitUntil: 'load', // 'load' | 'domcontentloaded' | 'networkidle' | 'commit'
 
   // Story filtering (optional)
-  // include: ['Components/*', 'Screens/*'],
+  // Supports wildcards (*) and normalizes spaces/slashes
+  // include: ['Components/*', 'Screens / Colleague / Void'],
   // exclude: ['**/Docs', '**/Experimental'],
   // grep: 'button|modal',
 
   // Screenshot configuration
-  threshold: 0.2, // Comparison threshold (0.0-1.0)
+  threshold: 0.2, // Comparison threshold as percentage (0.2 = 0.2%)
   maxDiffPixels: 0, // Maximum pixels that can differ
   fullPage: false, // Capture full-page screenshots
 
@@ -372,12 +415,13 @@ jobs:
             --command "npm run storybook" \
             --url http://localhost:6006 \
             --workers 4 \
-            --threshold 0.5 \
+            --threshold 0.1 \
             --max-diff-pixels 200 \
             --timezone UTC \
             --locale en-US \
             --no-progress \
-            --max-failures 0
+            --max-failures 0 \
+            --results --results-file test-results.txt
       - uses: actions/upload-artifact@v3
         if: failure()
         with:
@@ -419,7 +463,7 @@ See the root [CROSS-PLATFORM-FONTS.md](../CROSS-PLATFORM-FONTS.md) for more deta
 **Solutions**:
 
 - Use Docker for consistent rendering (see [CROSS-PLATFORM-FONTS.md](../CROSS-PLATFORM-FONTS.md))
-- Increase `--threshold` and `--max-diff-pixels` for CI environments
+- Increase `--threshold` (e.g., `0.1` for 0.1%) and `--max-diff-pixels` for CI environments
 - Use `--timezone UTC` and `--locale en-US` for consistency
 
 ### Slow Test Execution

@@ -10,7 +10,6 @@ export type VisualRegressionConfig = {
   resultsPath: string;
   browser: 'chromium' | 'firefox' | 'webkit';
   workers?: number;
-  retries: number;
   maxFailures?: number;
   threshold: number; // Percentage of pixels that can differ (e.g., 0.2 = 0.2%, 20 = 20%)
   maxDiffPixels: number;
@@ -61,8 +60,7 @@ export const defaultConfig = (): VisualRegressionConfig => {
     resultsPath: `${outputDir}/results`,
     browser: 'chromium',
     workers: undefined,
-    retries: 0,
-    maxFailures: undefined,
+    maxFailures: 2,
     threshold: 0.2,
     maxDiffPixels: 0,
     fullPage: false,

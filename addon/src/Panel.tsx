@@ -21,7 +21,6 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   // CLI configuration state
   const [cliConfig, setCliConfig] = useState({
     workers: 4,
-    retries: 1,
     browser: 'chromium' as 'chromium' | 'firefox' | 'webkit',
     threshold: 0.2,
     maxDiffPixels: 0,
@@ -486,18 +485,6 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                         max="16"
                         value={cliConfig.workers}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, workers: Number(e.target.value) }))}
-                        className={styles.configInput}
-                      />
-                    </div>
-
-                    <div className={styles.field}>
-                      <label className={styles.fieldLabel}>Retries</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="10"
-                        value={cliConfig.retries}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCliConfig(prev => ({ ...prev, retries: Number(e.target.value) }))}
                         className={styles.configInput}
                       />
                     </div>

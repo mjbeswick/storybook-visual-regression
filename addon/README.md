@@ -616,7 +616,6 @@ res.setHeader('Access-Control-Allow-Origin', '*');
 
 - **Graceful degradation**: UI remains functional even if tests fail
 - **Clear error messages**: User-friendly error descriptions
-- **Retry mechanisms**: Automatic retries for transient failures
 - **Progress indication**: Clear progress indicators during long operations
 
 ## Development

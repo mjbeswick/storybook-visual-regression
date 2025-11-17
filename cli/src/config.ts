@@ -15,7 +15,6 @@ export type CliFlags = {
   workers?: number;
   command?: string;
   webserverTimeout?: number;
-  retries?: number;
   maxFailures?: number;
   timezone?: string;
   locale?: string;
@@ -194,7 +193,6 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     frozenTime: fileVisual.frozenTime ?? base.frozenTime,
     masks: fileVisual.masks ?? base.masks,
     perStory: fileVisual.perStory ?? base.perStory,
-    retries: flags.retries ?? fileVisual.retries ?? base.retries,
     maxFailures: flags.maxFailures ?? fileVisual.maxFailures ?? base.maxFailures,
   };
 
@@ -277,7 +275,6 @@ export const saveEffectiveConfig = (
   if (flags.output !== undefined) visualRegression.outputDir = config.outputDir;
   if (flags.browser !== undefined) visualRegression.browser = config.browser;
   if (flags.workers !== undefined) visualRegression.workers = config.workers;
-  if (flags.retries !== undefined) visualRegression.retries = config.retries;
   if (flags.maxFailures !== undefined) visualRegression.maxFailures = config.maxFailures;
   if (flags.threshold !== undefined) visualRegression.threshold = config.threshold;
   if (flags.maxDiffPixels !== undefined) visualRegression.maxDiffPixels = config.maxDiffPixels;

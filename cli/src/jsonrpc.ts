@@ -85,7 +85,6 @@ export interface RunParams {
   url?: string;
   output?: string;
   workers?: number;
-  retries?: number;
   maxFailures?: number;
   browser?: 'chromium' | 'firefox' | 'webkit';
   threshold?: number;
