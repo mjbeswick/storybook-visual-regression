@@ -14,6 +14,8 @@ import chalk from 'chalk';
 import type { RuntimeConfig } from './config.js';
 import type { DiscoveredStory } from './core/StorybookDiscovery.js';
 import type { RunCallbacks } from './core/VisualRegressionRunner.js';
+import { SnapshotIndexManager } from './core/SnapshotIndex.js';
+import { ResultsIndexManager } from './core/ResultsIndex.js';
 import { createLogger, setGlobalLogger } from './logger.js';
 
 // Helper to parse fixDate config value into a Date object
@@ -87,6 +89,7 @@ function removeEmptyDirectories(dirPath: string, stopAt?: string): void {
 type InMemoryComparisonResult = {
   match: boolean;
   diffPixels: number;
+  diffPercent: number;
   diffImage?: Buffer;
   reason?: string;
 };
@@ -106,6 +109,7 @@ function compareImagesInMemory(
       return {
         match: false,
         diffPixels: 0,
+        diffPercent: 0,
         reason: `Image dimensions differ: actual ${actualImg.width}×${actualImg.height}, expected ${expectedImg.width}×${expectedImg.height}`,
       };
     }
@@ -134,7 +138,7 @@ function compareImagesInMemory(
 
     // Calculate total pixels and difference percentage
     const totalPixels = actualImg.width * actualImg.height;
-    const diffPercent = (diffPixels / totalPixels) * 100;
+    const diffPercent = totalPixels > 0 ? (diffPixels / totalPixels) * 100 : 0;
 
     // Determine if images match based on threshold
     // threshold is 0-1, representing the percentage of pixels that can differ
@@ -150,6 +154,7 @@ function compareImagesInMemory(
     return {
       match,
       diffPixels,
+      diffPercent,
       diffImage: diffImageBuffer,
       reason: match
         ? undefined
@@ -159,6 +164,7 @@ function compareImagesInMemory(
     return {
       match: false,
       diffPixels: 0,
+      diffPercent: 0,
       reason: `Comparison failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -297,15 +303,28 @@ class WorkerPool {
   private cpuUsageHistory: number[] = []; // Rolling window of CPU samples
   private readonly CPU_SAMPLE_WINDOW = 10; // Keep last 10 samples
 
+  private indexManager: SnapshotIndexManager;
+  private resultsIndexManager: ResultsIndexManager;
+
   constructor(
     maxWorkers: number,
     config: TestConfig,
     stories: DiscoveredStory[],
     printUnderSpinner?: (line: string) => void,
     callbacks?: RunCallbacks,
+    indexManager?: SnapshotIndexManager,
+    resultsIndexManager?: ResultsIndexManager,
   ) {
     this.maxWorkers = maxWorkers;
     this.config = config;
+    if (!indexManager) {
+      throw new Error('indexManager is required');
+    }
+    if (!resultsIndexManager) {
+      throw new Error('resultsIndexManager is required');
+    }
+    this.indexManager = indexManager;
+    this.resultsIndexManager = resultsIndexManager;
     this.total = stories.length;
     this.queue = [...stories];
     this.callbacks = callbacks;
@@ -857,6 +876,7 @@ class WorkerPool {
     let page: Page | undefined; // Store page reference for DOM dumping on timeout
     let displayViewport = storyViewport; // Will be updated with actual viewport if available
     let displayViewportName: string | undefined; // Will be updated with viewport name if available
+    let comparisonResult: InMemoryComparisonResult | null = null; // Store comparison result for result tracking
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -893,6 +913,8 @@ class WorkerPool {
         displayViewport = testResult.actualViewport || storyViewport;
         // Store viewport name for display
         displayViewportName = testResult.viewportName;
+        // Store comparison result for result tracking
+        comparisonResult = testResult.comparisonResult || null;
         const attemptDuration = Date.now() - attemptStart;
         this.log.debug(`Story ${story.id}: Attempt ${attempt} succeeded in ${attemptDuration}ms`);
         lastError = null;
@@ -944,6 +966,19 @@ class WorkerPool {
     if (result !== null) {
       // Success
       this.results[story.id] = { success: true, duration, action: result };
+
+      // Record result in results index (skip in update mode - we're updating baselines, not running tests)
+      if (!this.config.update && story.snapshotId) {
+        const status = result.includes('baseline') ? 'new' : 'passed';
+        const browser = this.config.browser || 'chromium';
+        this.resultsIndexManager.setResult(story.id, story.snapshotId, status, {
+          browser,
+          viewportName: displayViewportName,
+          diffPixels: comparisonResult ? comparisonResult.diffPixels : 0,
+          diffPercent: comparisonResult ? comparisonResult.diffPercent : 0,
+          duration,
+        });
+      }
 
       // Notify callbacks of successful result
       this.callbacks?.onResult?.({
@@ -1014,6 +1049,16 @@ class WorkerPool {
             action: 'skipped',
           };
 
+          // Record result in results index (skip in update mode)
+          if (!this.config.update && story.snapshotId) {
+            const browser = this.config.browser || 'chromium';
+            this.resultsIndexManager.setResult(story.id, story.snapshotId, 'missing', {
+              browser,
+              viewportName: displayViewportName,
+              duration,
+            });
+          }
+
           // Notify callbacks of skipped result
           this.callbacks?.onResult?.({
             storyId: story.id,
@@ -1041,6 +1086,39 @@ class WorkerPool {
             duration,
             action: 'failed',
           };
+
+          // Record result in results index (skip in update mode)
+          if (!this.config.update && story.snapshotId) {
+            // Extract diff information from error message if available
+            const errorStr = lastError ? String(lastError) : '';
+            let diffPixels: number | undefined;
+            let diffPercent: number | undefined;
+
+            // Try to extract diff info from comparison result or error message
+            if (comparisonResult) {
+              diffPixels = comparisonResult.diffPixels;
+              diffPercent = comparisonResult.diffPercent;
+            } else {
+              // Try to parse from error message: "X pixels differ (Y% of image)"
+              const pixelsMatch = errorStr.match(/(\d+)\s+pixels\s+differ/);
+              const percentMatch = errorStr.match(/\(([\d.]+)%\s+of\s+image\)/);
+              if (pixelsMatch) {
+                diffPixels = parseInt(pixelsMatch[1], 10);
+              }
+              if (percentMatch) {
+                diffPercent = parseFloat(percentMatch[1]);
+              }
+            }
+
+            const browser = this.config.browser || 'chromium';
+            this.resultsIndexManager.setResult(story.id, story.snapshotId, 'failed', {
+              browser,
+              viewportName: displayViewportName,
+              diffPixels,
+              diffPercent,
+              duration,
+            });
+          }
 
           // Check if maxFailures is reached IMMEDIATELY after recording failure
           // This must happen synchronously to prevent race conditions with parallel workers
@@ -1076,18 +1154,26 @@ class WorkerPool {
 
           // If no diff in error message but we have a timeout, check if screenshot was captured
           // and generate a diff to help debug the timeout
-          if (!diffPath && /timeout/i.test(errorStr)) {
+          if (!diffPath && /timeout/i.test(errorStr) && story.snapshotId) {
             try {
-              const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
-              const actual = path.join(
-                path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-                path.basename(story.snapshotRelPath),
+              const expected = this.indexManager.getSnapshotPath(
+                story.snapshotId,
+                this.config.snapshotPath,
+                story.id,
+              );
+              const actual = this.resultsIndexManager.getResultPath(
+                story.snapshotId,
+                this.config.resultsPath,
+                'actual',
+                story.id,
               );
               if (fs.existsSync(actual) && fs.existsSync(expected)) {
                 // Generate diff for timeout cases to show what was captured
-                const timeoutDiffPath = path.join(
-                  path.dirname(actual),
-                  `${path.basename(actual, path.extname(actual))}.diff.png`,
+                const timeoutDiffPath = this.resultsIndexManager.getResultPath(
+                  story.snapshotId,
+                  this.config.resultsPath,
+                  'diff',
+                  story.id,
                 );
                 try {
                   const odiffResult = await odiffCompare(expected, actual, timeoutDiffPath, {
@@ -1160,11 +1246,13 @@ class WorkerPool {
               errorReason = 'Image comparison failed (odiff)';
             } else if (/target crashed|page crashed/i.test(errorStr)) {
               errorReason = 'Browser crashed (likely due to resource constraints)';
-            } else if (/timeout/i.test(errorStr)) {
+            } else if (/timeout/i.test(errorStr) && story.snapshotId) {
               // Check if crash occurred during timeout
-              const actual = path.join(
-                path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-                path.basename(story.snapshotRelPath),
+              const actual = this.resultsIndexManager.getResultPath(
+                story.snapshotId,
+                this.config.resultsPath,
+                'actual',
+                story.id,
               );
               if (!fs.existsSync(actual) && /target crashed|page crashed/i.test(errorStr)) {
                 errorReason = 'Operation timed out (browser crashed before screenshot)';
@@ -1207,7 +1295,13 @@ class WorkerPool {
               displayUrl = story.url;
             }
           }
-          const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
+          const expected = story.snapshotId
+            ? this.indexManager.getSnapshotPath(
+                story.snapshotId,
+                this.config.snapshotPath,
+                story.id,
+              )
+            : path.join(this.config.snapshotPath, story.snapshotRelPath || '');
           this.printStoryResult(
             displayName,
             'failed',
@@ -1355,6 +1449,7 @@ class WorkerPool {
     page?: Page;
     actualViewport?: { width: number; height: number };
     viewportName?: string;
+    comparisonResult?: InMemoryComparisonResult;
   }> {
     let browser: Browser | undefined;
     let page: Page | undefined;
@@ -1783,14 +1878,39 @@ class WorkerPool {
       }
 
       // Optimized screenshot capture - capture to buffer in memory
-      const expected = path.join(this.config.snapshotPath, story.snapshotRelPath);
-      const actual = path.join(
-        path.dirname(path.join(this.config.resultsPath, story.snapshotRelPath)),
-        path.basename(story.snapshotRelPath),
+      // Get snapshot ID with viewport name if available (creates separate entries for each viewport)
+      const browserName = this.config.browser || 'chromium';
+      let snapshotId = story.snapshotId;
+      if (viewportName) {
+        // Get or create snapshot ID for this specific viewport
+        snapshotId = this.indexManager.getSnapshotId(story.id, browserName, viewportName);
+        // Update story's snapshotId for this viewport
+        story.snapshotId = snapshotId;
+      } else if (!snapshotId) {
+        // Fallback: get snapshot ID without viewport name
+        snapshotId = this.indexManager.getSnapshotId(story.id, browserName);
+        story.snapshotId = snapshotId;
+      }
+
+      if (!snapshotId) {
+        throw new Error(`Story ${story.id} has no snapshotId assigned`);
+      }
+      const expected = this.indexManager.getSnapshotPath(
+        snapshotId,
+        this.config.snapshotPath,
+        story.id,
       );
-      const diffPath = path.join(
-        path.dirname(actual),
-        `${path.basename(actual, path.extname(actual))}.diff.png`,
+      const actual = this.resultsIndexManager.getResultPath(
+        snapshotId,
+        this.config.resultsPath,
+        'actual',
+        story.id,
+      );
+      const diffPath = this.resultsIndexManager.getResultPath(
+        snapshotId,
+        this.config.resultsPath,
+        'diff',
+        story.id,
       );
 
       this.log.debug(
@@ -1856,12 +1976,19 @@ class WorkerPool {
         }
       };
 
+      let comparisonResult: InMemoryComparisonResult | undefined;
+
       if (this.config.update) {
-        // In update mode, write screenshot buffer to expected location
+        // In update mode, write screenshot buffer to expected location only
+        // Don't write to results directory - we're updating baselines, not running tests
         ensureDirectoryExists(expected);
         fs.writeFileSync(expected, actualBuffer);
         result = missingBaseline ? 'Created baseline' : 'Updated baseline';
         this.log.debug(`Story ${story.id}: ${result}`);
+
+        // Snapshot entry already has viewport name from getSnapshotId call above
+
+        comparisonResult = { match: true, diffPixels: 0, diffPercent: 0 }; // Update mode - no diff
       } else if (missingBaseline) {
         this.log.debug(`Story ${story.id}: Missing baseline, skipping test`);
         throw new Error(`Missing baseline: ${expected}`);
@@ -1877,24 +2004,27 @@ class WorkerPool {
             `Story ${story.id}: Comparing images in memory (threshold: ${this.config.threshold})`,
           );
 
-          const comparisonResult = compareImagesInMemory(
+          const comparisonResultData = compareImagesInMemory(
             actualBuffer,
             expectedBuffer,
             this.config.threshold,
           );
+          comparisonResult = comparisonResultData;
 
           this.log.debug(
-            `Story ${story.id}: Comparison completed in ${Date.now() - compareStart}ms, match: ${comparisonResult.match}`,
+            `Story ${story.id}: Comparison completed in ${Date.now() - compareStart}ms, match: ${comparisonResultData.match}`,
           );
 
-          if (comparisonResult.match) {
-            // Images are identical within threshold - no files needed!
+          if (comparisonResultData.match) {
+            // Images are identical within threshold - test passed
+            // No need to write files when images match - comparison is done in memory
             result = 'Visual regression passed';
-            this.log.debug(`Story ${story.id}: Visual regression test passed`);
-            // No file system operations needed for successful tests
+            this.log.debug(`Story ${story.id}: Visual regression test passed (no files written)`);
           } else {
             // Images differ beyond threshold - write files for display
-            this.log.debug(`Story ${story.id}: Images differ - reason: ${comparisonResult.reason}`);
+            this.log.debug(
+              `Story ${story.id}: Images differ - reason: ${comparisonResultData.reason}`,
+            );
 
             // Ensure directories exist before writing files
             ensureDirectoryExists(actual);
@@ -1904,13 +2034,13 @@ class WorkerPool {
             fs.writeFileSync(actual, actualBuffer);
 
             // Write diff image if available
-            if (comparisonResult.diffImage) {
-              fs.writeFileSync(diffPath, comparisonResult.diffImage);
+            if (comparisonResultData.diffImage) {
+              fs.writeFileSync(diffPath, comparisonResultData.diffImage);
               this.log.debug(`Story ${story.id}: Diff image saved to: ${diffPath}`);
             }
 
             throw new Error(
-              `Visual regression failed: images differ (${comparisonResult.reason || 'unknown reason'}, diff: ${diffPath})`,
+              `Visual regression failed: images differ (${comparisonResultData.reason || 'unknown reason'}, diff: ${diffPath})`,
             );
           }
         } catch (error: any) {
@@ -1919,7 +2049,8 @@ class WorkerPool {
             throw error;
           }
 
-          // For any comparison failure, write the actual screenshot to results
+          // For comparison errors (not mismatches), write the actual screenshot for debugging
+          // This handles cases like file read errors, corrupted images, etc.
           ensureDirectoryExists(actual);
           fs.writeFileSync(actual, actualBuffer);
 
@@ -1949,7 +2080,13 @@ class WorkerPool {
         }
       }
 
-      return { result, page, actualViewport, viewportName };
+      return {
+        result,
+        page,
+        actualViewport,
+        viewportName,
+        comparisonResult: comparisonResult || undefined,
+      };
     } finally {
       // Aggressive cleanup to prevent memory leaks
       try {
@@ -1980,8 +2117,10 @@ export async function runParallelTests(options: {
   runtimePath: string;
   debug: boolean;
   callbacks?: RunCallbacks;
+  indexManager: SnapshotIndexManager;
+  resultsIndexManager: ResultsIndexManager;
 }): Promise<number> {
-  const { stories, config, debug, callbacks } = options;
+  const { stories, config, debug, callbacks, indexManager, resultsIndexManager } = options;
   // Initialize global logger
   setGlobalLogger(config.logLevel);
   const log = createLogger(config.logLevel);
@@ -2012,7 +2151,15 @@ export async function runParallelTests(options: {
   let filteredStories = stories;
   if (!config.update) {
     filteredStories = stories.filter((story) => {
-      const snapshotPath = path.join(config.snapshotPath, story.snapshotRelPath);
+      if (!story.snapshotId) {
+        log.debug(`Skipping story ${story.id}: no snapshot ID assigned`);
+        return false;
+      }
+      const snapshotPath = indexManager.getSnapshotPath(
+        story.snapshotId,
+        config.snapshotPath,
+        story.id,
+      );
       const hasSnapshot = fs.existsSync(snapshotPath);
       if (!hasSnapshot) {
         log.debug(`Skipping story ${story.id}: no baseline snapshot exists`);
@@ -2031,7 +2178,7 @@ export async function runParallelTests(options: {
   const mode = config.update ? 'updating snapshots' : 'testing';
   const storyCount = filteredStories.length;
   const workerDisplay = numWorkers === 0 ? '1 (scaling dynamically)' : String(numWorkers);
-  const initialMessage = `Running ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(workerDisplay)} concurrent workers (${chalk.cyan(mode)})...`;
+  const initialMessage = `Checking ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(workerDisplay)} concurrent workers...`;
   if (!config.quiet) {
     log.info(initialMessage);
   }
@@ -2068,7 +2215,15 @@ export async function runParallelTests(options: {
     }
   };
 
-  const pool = new WorkerPool(numWorkers, config, filteredStories, printUnderSpinner, callbacks);
+  const pool = new WorkerPool(
+    numWorkers,
+    config,
+    filteredStories,
+    printUnderSpinner,
+    callbacks,
+    indexManager,
+    resultsIndexManager,
+  );
 
   // Track current worker count for status display
   const currentWorkers = numWorkers;

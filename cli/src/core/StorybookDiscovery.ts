@@ -22,7 +22,8 @@ export type StoryIndexEntry = {
 
 export type DiscoveredStory = StoryIndexEntry & {
   url: string;
-  snapshotRelPath: string;
+  snapshotId?: string; // Will be set by index manager
+  snapshotRelPath?: string; // Deprecated, kept for backward compatibility
 };
 
 const sanitizeSegment = (segment: string): string =>
@@ -111,7 +112,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
 
   // Prefer running server index.json; fallback to static
   logger.debug('Preparing candidate locations for story index');
-  
+
   // Build candidates list - if host.docker.internal fails, we'll try gateway IP
   // Track the working URL so we can use it for building story URLs
   let workingUrl = config.url;
@@ -140,7 +141,9 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
 
     if (candidate.startsWith('http')) {
       // Log both display URL (for user) and actual URL (for debugging)
-      logger.debug(`Attempting to fetch story index from: ${displayCandidate} (actual: ${candidate})`);
+      logger.debug(
+        `Attempting to fetch story index from: ${displayCandidate} (actual: ${candidate})`,
+      );
       attemptedUrls.push(candidate); // Use actual URL attempted in error messages for accuracy
       try {
         const res = await fetch(candidate, {
@@ -193,7 +196,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       fs.existsSync('/.dockerenv') ||
       (process.env.HOSTNAME && process.env.HOSTNAME.includes('docker')) ||
       process.env.DOCKER_BUILD === '1';
-    
+
     if (isLikelyDocker) {
       logger.debug('localhost failed in Docker, trying host.docker.internal as fallback');
       const hostDockerInternalUrl = workingUrl.replace(/localhost/g, 'host.docker.internal');
@@ -201,11 +204,13 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
         new URL('index.json', hostDockerInternalUrl).toString(),
         new URL('stories.json', hostDockerInternalUrl).toString(),
       ];
-      
+
       for (const hostDockerInternalCandidate of hostDockerInternalCandidates) {
         attemptedUrls.push(hostDockerInternalCandidate);
         try {
-          logger.debug(`Attempting host.docker.internal fallback fetch from: ${hostDockerInternalCandidate}`);
+          logger.debug(
+            `Attempting host.docker.internal fallback fetch from: ${hostDockerInternalCandidate}`,
+          );
           const res = await fetch(hostDockerInternalCandidate, {
             signal: AbortSignal.timeout(10000),
           });
@@ -222,16 +227,19 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
           const err = e as Error;
           let errorMsg = err.message;
           if (err.message === 'fetch failed') {
-            errorMsg = 'fetch failed (connection refused - host.docker.internal may not be available)';
+            errorMsg =
+              'fetch failed (connection refused - host.docker.internal may not be available)';
           }
           errors.push(`${hostDockerInternalCandidate}: ${errorMsg}`);
           logger.debug(`host.docker.internal fallback fetch failed: ${errorMsg}`);
         }
       }
-      
+
       // If host.docker.internal also failed, try Docker gateway IP as fallback
       if (!indexData) {
-        logger.debug('host.docker.internal failed, attempting to detect Docker gateway IP as fallback');
+        logger.debug(
+          'host.docker.internal failed, attempting to detect Docker gateway IP as fallback',
+        );
         const gatewayIP = getDockerGatewayIP();
         if (gatewayIP) {
           logger.debug(`Detected Docker gateway IP: ${gatewayIP}, trying as fallback`);
@@ -240,7 +248,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
             new URL('index.json', gatewayUrl).toString(),
             new URL('stories.json', gatewayUrl).toString(),
           ];
-          
+
           for (const gatewayCandidate of gatewayCandidates) {
             attemptedUrls.push(gatewayCandidate);
             try {
@@ -251,7 +259,9 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
               if (res.ok) {
                 indexData = await res.json();
                 workingUrl = gatewayUrl; // Update working URL to use gateway IP
-                logger.debug(`Successfully loaded story index from Docker gateway IP: ${gatewayIP}`);
+                logger.debug(
+                  `Successfully loaded story index from Docker gateway IP: ${gatewayIP}`,
+                );
                 break;
               } else {
                 const errorMsg = `HTTP ${res.status} ${res.statusText}`;
@@ -389,7 +399,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
   }));
 
   logger.info(
-    `Discovered ${mapped.length} stories (${stories.length} total, ${stories.length - mapped.length} filtered out)`,
+    `Discovered ${mapped.length} stories (${stories.length} total, ${stories.length - mapped.length} excluded)`,
   );
   logger.debug(`Story filtering: total=${stories.length}, after filters=${mapped.length}`);
 

@@ -5,6 +5,46 @@ import { Command } from '@commander-js/extra-typings';
 import { run } from '../core/VisualRegressionRunner.js';
 import { JsonRpcServer, CLI_METHODS, CLI_EVENTS } from '../jsonrpc.js';
 import { setGlobalLogger, logger } from '../logger.js';
+import { listSnapshots } from '../core/ListSnapshots.js';
+import { listResults } from '../core/ListResults.js';
+import prompts from 'prompts';
+
+/**
+ * Calculate Levenshtein distance between two strings
+ * Used for command suggestions
+ */
+function levenshteinDistance(str1: string, str2: string): number {
+  const matrix: number[][] = [];
+  const len1 = str1.length;
+  const len2 = str2.length;
+
+  if (len1 === 0) return len2;
+  if (len2 === 0) return len1;
+
+  for (let i = 0; i <= len2; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= len1; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= len2; i++) {
+    for (let j = 1; j <= len1; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1,
+        );
+      }
+    }
+  }
+
+  return matrix[len2][len1];
+}
 
 // Helper to convert Commander.js opts to CliFlags format
 const optsToFlags = (opts: Record<string, unknown>): CliFlags => {
@@ -82,69 +122,230 @@ const optsToFlags = (opts: Record<string, unknown>): CliFlags => {
   return flags;
 };
 
-const main = async (): Promise<number> => {
-  const argv = process.argv.slice(2);
+const mainWithArgv = async (argv: string[]): Promise<number> => {
 
   // Use Commander.js for all argument parsing
   const program = new Command();
+  
+  // Store exit code for commands that execute
+  let commandExitCode: number | null = null;
+  
   program
     .name('svr')
     .description('Storybook Visual Regression CLI')
-    .option('--config <path>', 'Config file path')
-    .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
-    .option('-o, --output <dir>', 'Output root (default visual-regression)')
-    .option('-w, --workers <n>', 'Parallel workers', Number)
-    .option('-c, --command <cmd>', 'Command to run')
-    .option('--webserver-timeout <ms>', 'Webserver timeout', Number)
-    .option('--retries <n>', 'Playwright retries', Number)
-    .option('--max-failures <n>', 'Bail after N failures', Number)
-    .option('--timezone <tz>', 'Timezone')
-    .option('--locale <locale>', 'Locale')
-    .option('--browser <name>', 'chromium|firefox|webkit')
-    .option('--threshold <0..1>', 'Diff threshold (default 0.2)', Number)
-    .option('--max-diff-pixels <n>', 'Max differing pixels (default 0)', Number)
-    .option('--full-page', 'Full page screenshots')
-    .option('--mutation-wait <ms>', 'Quiet window wait (default 200)', Number)
-    .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)', Number)
-    .option('--dom-stability-quiet-period <ms>', 'DOM stability quiet period (default 300)', Number)
-    .option('--dom-stability-max-wait <ms>', 'DOM stability max wait (default 2000)', Number)
-    .option('--story-load-delay <ms>', 'Delay after storybook root found (default 1000)', Number)
-    .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
-    .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
-    .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
-    .option('--snapshot-delay <ms>', 'Delay between retries', Number)
-    .option('--include <patterns>', 'Comma-separated include filters')
-    .option('--exclude <patterns>', 'Comma-separated exclude filters')
-    .option('--grep <regex>', 'Filter by storyId')
-    .option('--update', 'Update baselines')
-    .option('--missing-only', 'Create only missing baselines')
-    .option('--failed-only', 'Rerun only previously failed')
-    .option('--progress', 'Show progress during run')
-    .option('--no-progress', 'Disable progress display')
-    .option('--summary', 'Show summary at the end')
-    .option('--no-summary', 'Disable summary display')
-    .option('--log-level <level>', 'silent|error|warn|info|debug')
-    .option('--save-config', 'Write effective config JSON')
-    .option('--quiet', 'Suppress per-test output')
-    .option('--debug', 'Enable debug logging')
-    .option('--install-browsers [browser]', 'Install browsers (optionally specify browser)')
-    .option('--install-deps', 'Install browser dependencies')
-    .option('--not-found-check', 'Check for not found errors')
-    .option('--not-found-retry-delay <ms>', 'Retry delay for not found errors', Number)
-    .option('--json-rpc', 'Enable JSON-RPC mode')
-    .option(
-      '--fix-date [date]',
-      'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
+    .addCommand(
+      new Command('test')
+        .description('Run visual regression tests')
+        .option('--config <path>', 'Config file path')
+        .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
+        .option('-o, --output <dir>', 'Output root (default visual-regression)')
+        .option('-w, --workers <n>', 'Parallel workers', Number)
+        .option('-c, --command <cmd>', 'Command to run')
+        .option('--webserver-timeout <ms>', 'Webserver timeout', Number)
+        .option('--retries <n>', 'Playwright retries', Number)
+        .option('--max-failures <n>', 'Bail after N failures', Number)
+        .option('--timezone <tz>', 'Timezone')
+        .option('--locale <locale>', 'Locale')
+        .option('--browser <name>', 'chromium|firefox|webkit')
+        .option('--threshold <0..1>', 'Diff threshold (default 0.2)', Number)
+        .option('--max-diff-pixels <n>', 'Max differing pixels (default 0)', Number)
+        .option('--full-page', 'Full page screenshots')
+        .option('--mutation-wait <ms>', 'Quiet window wait (default 200)', Number)
+        .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)', Number)
+        .option('--dom-stability-quiet-period <ms>', 'DOM stability quiet period (default 300)', Number)
+        .option('--dom-stability-max-wait <ms>', 'DOM stability max wait (default 2000)', Number)
+        .option('--story-load-delay <ms>', 'Delay after storybook root found (default 1000)', Number)
+        .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
+        .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
+        .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
+        .option('--snapshot-delay <ms>', 'Delay between retries', Number)
+        .option('--include <patterns>', 'Comma-separated include filters')
+        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option('--grep <regex>', 'Filter by storyId')
+        .option('--missing-only', 'Create only missing baselines')
+        .option('--failed-only', 'Rerun only previously failed')
+        .option('--progress', 'Show progress during run')
+        .option('--no-progress', 'Disable progress display')
+        .option('--summary', 'Show summary at the end')
+        .option('--no-summary', 'Disable summary display')
+        .option('--log-level <level>', 'silent|error|warn|info|debug')
+        .option('--save-config', 'Write effective config JSON')
+        .option('--quiet', 'Suppress per-test output')
+        .option('--debug', 'Enable debug logging')
+        .option('--install-browsers [browser]', 'Install browsers (optionally specify browser)')
+        .option('--install-deps', 'Install browser dependencies')
+        .option('--not-found-check', 'Check for not found errors')
+        .option('--not-found-retry-delay <ms>', 'Retry delay for not found errors', Number)
+        .option('--json-rpc', 'Enable JSON-RPC mode')
+        .option(
+          '--fix-date [date]',
+          'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
+        )
+        .action(async (opts) => {
+          try {
+            const flags = optsToFlags(opts);
+            const config = resolveConfig(flags);
+            setGlobalLogger(config.logLevel);
+            const code = await run(config);
+            commandExitCode = code;
+            // Don't throw - let the main function handle the exit code
+          } catch (err) {
+            logger.error(`Error in test command: ${err instanceof Error ? err.message : String(err)}`);
+            commandExitCode = 1;
+          }
+        })
     )
+    .addCommand(
+      new Command('update')
+        .description('Update or create snapshot baselines')
+        .option('--config <path>', 'Config file path')
+        .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
+        .option('-o, --output <dir>', 'Output root (default visual-regression)')
+        .option('-w, --workers <n>', 'Parallel workers', Number)
+        .option('-c, --command <cmd>', 'Command to run')
+        .option('--webserver-timeout <ms>', 'Webserver timeout', Number)
+        .option('--retries <n>', 'Playwright retries', Number)
+        .option('--max-failures <n>', 'Bail after N failures', Number)
+        .option('--timezone <tz>', 'Timezone')
+        .option('--locale <locale>', 'Locale')
+        .option('--browser <name>', 'chromium|firefox|webkit')
+        .option('--full-page', 'Full page screenshots')
+        .option('--mutation-wait <ms>', 'Quiet window wait (default 200)', Number)
+        .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)', Number)
+        .option('--dom-stability-quiet-period <ms>', 'DOM stability quiet period (default 300)', Number)
+        .option('--dom-stability-max-wait <ms>', 'DOM stability max wait (default 2000)', Number)
+        .option('--story-load-delay <ms>', 'Delay after storybook root found (default 1000)', Number)
+        .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
+        .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
+        .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
+        .option('--snapshot-delay <ms>', 'Delay between retries', Number)
+        .option('--include <patterns>', 'Comma-separated include filters')
+        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option('--grep <regex>', 'Filter by storyId')
+        .option('--missing-only', 'Create only missing baselines')
+        .option('--progress', 'Show progress during run')
+        .option('--no-progress', 'Disable progress display')
+        .option('--summary', 'Show summary at the end')
+        .option('--no-summary', 'Disable summary display')
+        .option('--log-level <level>', 'silent|error|warn|info|debug')
+        .option('--save-config', 'Write effective config JSON')
+        .option('--quiet', 'Suppress per-test output')
+        .option('--debug', 'Enable debug logging')
+        .option('--install-browsers [browser]', 'Install browsers (optionally specify browser)')
+        .option('--install-deps', 'Install browser dependencies')
+        .option('--not-found-check', 'Check for not found errors')
+        .option('--not-found-retry-delay <ms>', 'Retry delay for not found errors', Number)
+        .option(
+          '--fix-date [date]',
+          'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
+        )
+        .action(async (opts) => {
+          try {
+            const flags = optsToFlags(opts);
+            flags.update = true; // Set update flag
+            const config = resolveConfig(flags);
+            setGlobalLogger(config.logLevel);
+            const code = await run(config);
+            commandExitCode = code;
+            // Don't throw - let the main function handle the exit code
+          } catch (err) {
+            logger.error(`Error in update command: ${err instanceof Error ? err.message : String(err)}`);
+            commandExitCode = 1;
+          }
+        })
+    )
+    .addCommand(
+      new Command('snapshots')
+        .description('List all snapshots')
+        .option('--config <path>', 'Config file path')
+        .option('-o, --output <dir>', 'Output root (default visual-regression)')
+        .action(async (opts) => {
+          const flags = optsToFlags(opts);
+          const config = resolveConfig(flags);
+          setGlobalLogger(config.logLevel);
+          listSnapshots(config);
+          commandExitCode = 0;
+        })
+    )
+    .addCommand(
+      new Command('results')
+        .description('List test results (shows failed by default)')
+        .option('--config <path>', 'Config file path')
+        .option('-o, --output <dir>', 'Output root (default visual-regression)')
+        .option('--all', 'Show all results (not just failed)')
+        .option('--status <status>', 'Filter by status: passed|failed|new|missing')
+        .action(async (opts) => {
+          const flags = optsToFlags(opts);
+          const config = resolveConfig(flags);
+          setGlobalLogger(config.logLevel);
+          // If --all is specified, don't filter; if --status is specified, use it; otherwise default to 'failed'
+          const status = opts.all ? undefined : (opts.status || 'failed');
+          listResults(config, { status: status as any });
+          commandExitCode = 0;
+        })
+    )
+    // Default action: if no subcommand provided, show help
+    .action(async () => {
+      try {
+        program.help();
+      } catch (err: any) {
+        // Help display throws an error, but we want to exit gracefully
+        if (err?.code === 'commander.help' || err?.code === 'commander.helpDisplayed') {
+          return;
+        }
+        throw err;
+      }
+    })
     .helpOption('-h, --help', 'Show help');
 
   program.exitOverride();
+  
   let parsedOpts: Record<string, unknown>;
   try {
-    program.parse(['node', 'svr', ...argv]);
+    await program.parseAsync(['node', 'svr', ...argv]);
     parsedOpts = program.opts();
+    
+    // If a command set an exit code, return it
+    if (commandExitCode !== null) {
+      return commandExitCode;
+    }
+    
+    // Check if a subcommand was executed by checking if argv[0] matches a known command
+    const subcommands = ['test', 'update', 'snapshots', 'results'];
+    const executedCommand = argv[0];
+    if (executedCommand && subcommands.includes(executedCommand)) {
+      // A subcommand was executed - it should have set commandExitCode
+      // If we reach here, something went wrong, but don't run fallback code
+      return commandExitCode ?? 0;
+    }
   } catch (err: any) {
-    if (err?.code === 'commander.helpDisplayed') return 0;
+    // Handle help display gracefully
+    if (err?.code === 'commander.helpDisplayed' || err?.code === 'commander.help') {
+      return 0;
+    }
+    
+    // Handle unknown commands with suggestions
+    if (err?.code === 'commander.unknownCommand') {
+      const unknownCmd = err.args?.[0] || argv[0];
+      const availableCommands = ['test', 'update', 'snapshots', 'results'];
+      
+      // Find similar commands
+      const suggestions = availableCommands.filter(cmd => {
+        const distance = levenshteinDistance(unknownCmd.toLowerCase(), cmd.toLowerCase());
+        return distance <= 2 && distance < cmd.length;
+      });
+      
+      console.error(`\nUnknown command: ${unknownCmd}`);
+      if (suggestions.length > 0) {
+        console.error(`\nDid you mean one of these?`);
+        suggestions.forEach(cmd => console.error(`  ${cmd}`));
+      } else {
+        console.error(`\nAvailable commands: ${availableCommands.join(', ')}`);
+      }
+      console.error(`\nRun 'svr --help' for more information.\n`);
+      return 1;
+    }
+    
     if (err?.code === 'commander.unknownOption') {
       console.error('');
       if (err.message?.includes('--mock-date')) {
@@ -157,7 +358,68 @@ const main = async (): Promise<number> => {
       console.error('Run with --help to see all available options.');
       return 1;
     }
+    
+    // Re-throw other errors
     throw err;
+  }
+
+  // Check if a subcommand was executed - if so, don't run fallback code
+  const subcommands = ['test', 'update', 'snapshots', 'results'];
+  const executedCommand = argv[0];
+  
+  // If a command was provided but it's not a valid subcommand, return error
+  if (executedCommand && !subcommands.includes(executedCommand)) {
+    console.error(`\nUnknown command: ${executedCommand}`);
+    const suggestions = subcommands.filter(cmd => {
+      const distance = levenshteinDistance(executedCommand.toLowerCase(), cmd.toLowerCase());
+      return distance <= 2 && distance < cmd.length;
+    });
+    if (suggestions.length > 0) {
+      console.error(`\nDid you mean one of these?`);
+      suggestions.forEach(cmd => console.error(`  ${cmd}`));
+    } else {
+      console.error(`\nAvailable commands: ${subcommands.join(', ')}`);
+    }
+    console.error(`\nRun 'svr --help' for more information.\n`);
+    return 1;
+  }
+  
+  if (executedCommand && subcommands.includes(executedCommand)) {
+    // A subcommand was executed - it should have handled everything and exited
+    // If we reach here, return gracefully
+    return 0;
+  }
+
+  // No command provided - show interactive prompt
+  if (!executedCommand) {
+    try {
+      const response = await prompts({
+        type: 'select',
+        name: 'command',
+        message: 'What would you like to do?',
+        choices: [
+          { title: 'Run visual regression tests', value: 'test', description: 'Execute visual regression tests' },
+          { title: 'Update snapshot baselines', value: 'update', description: 'Update or create snapshot baselines' },
+          { title: 'List snapshots', value: 'snapshots', description: 'Show all stored snapshots' },
+          { title: 'List test results', value: 'results', description: 'Show test results' },
+        ],
+      });
+
+      if (!response.command) {
+        // User cancelled (Ctrl+C)
+        return 0;
+      }
+
+      // Re-parse with the selected command
+      const newArgv = [response.command, ...argv.slice(1)];
+      return await mainWithArgv(newArgv);
+    } catch (err) {
+      // Handle cancellation gracefully
+      if ((err as any)?.name === 'ExitPrompt') {
+        return 0;
+      }
+      throw err;
+    }
   }
 
   // Convert Commander.js opts to CliFlags format
@@ -320,6 +582,11 @@ const runJsonRpcMode = async (flags: CliFlags): Promise<number> => {
   return new Promise(() => {
     // Never resolve - process stays alive until killed
   });
+};
+
+// Main function wrapper that uses process.argv
+const main = async (): Promise<number> => {
+  return mainWithArgv(process.argv.slice(2));
 };
 
 // Main function now handles its own errors and exits

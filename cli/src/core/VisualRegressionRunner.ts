@@ -6,6 +6,8 @@ import { detectViewports } from './StorybookConfigDetector.js';
 import { writeRuntimeOptions, getRuntimeOptionsPath } from '../runtime/runtime-options.js';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../logger.js';
+import { SnapshotIndexManager } from './SnapshotIndex.js';
+import { ResultsIndexManager } from './ResultsIndex.js';
 
 export const ensureDirs = (config: RuntimeConfig): void => {
   logger.debug(
@@ -21,18 +23,38 @@ export const cleanStaleArtifacts = (resultsPath: string): void => {
     logger.debug(`Results path does not exist, skipping cleanup: ${resultsPath}`);
     return;
   }
-  // Best-effort cleanup: remove orphaned empty directories
-  const walk = (dir: string) => {
-    for (const name of fs.readdirSync(dir)) {
-      const full = path.join(dir, name);
-      const stat = fs.statSync(full);
-      if (stat.isDirectory()) {
-        walk(full);
-        if (fs.readdirSync(full).length === 0) fs.rmSync(full, { recursive: true, force: true });
+  cleanEmptyDirectories(resultsPath);
+};
+
+export const cleanEmptyDirectories = (dirPath: string): void => {
+  if (!fs.existsSync(dirPath)) {
+    return;
+  }
+
+  const walk = (dir: string): void => {
+    try {
+      const entries = fs.readdirSync(dir);
+      for (const name of entries) {
+        const full = path.join(dir, name);
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+          walk(full);
+          // Check again after walking subdirectories
+          if (fs.existsSync(full) && fs.readdirSync(full).length === 0) {
+            try {
+              fs.rmSync(full, { recursive: true, force: true });
+            } catch (e) {
+              // Ignore errors (permissions, etc.)
+            }
+          }
+        }
       }
+    } catch (e) {
+      // Ignore errors
     }
   };
-  walk(resultsPath);
+
+  walk(dirPath);
 };
 
 export const cleanStaleSnapshots = (
@@ -110,8 +132,14 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     `Configuration: url=${config.url}, update=${config.update}, workers=${config.workers}, threshold=${config.threshold}`,
   );
 
+  const outputDir = config.resolvePath(config.outputDir);
   ensureDirs(config);
-  cleanStaleArtifacts(config.resolvePath(config.resultsPath));
+
+  // Initialize index managers - store index files in their respective directories
+  const snapshotsDir = config.resolvePath(config.snapshotPath);
+  const resultsDir = config.resolvePath(config.resultsPath);
+  const indexManager = new SnapshotIndexManager(snapshotsDir);
+  const resultsIndexManager = new ResultsIndexManager(resultsDir);
 
   // Discover stories
   logger.debug('Discovering stories from Storybook');
@@ -122,11 +150,95 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     );
   }
 
+  // Assign snapshot IDs to stories using index manager
+  const browser = config.browser || 'chromium';
+  for (const story of baseStories) {
+    const snapshotId = indexManager.getSnapshotId(story.id, browser);
+    story.snapshotId = snapshotId;
+    // Keep snapshotRelPath for backward compatibility during migration
+    if (!story.snapshotRelPath) {
+      story.snapshotRelPath = indexManager.getSnapshotPath(
+        snapshotId,
+        config.snapshotPath,
+        story.id,
+      );
+    }
+  }
+
   // Clean up stale snapshots when updating
   if (config.update) {
-    logger.debug('Cleaning stale snapshots during update mode');
+    logger.debug('Cleaning stale snapshots and results during update mode');
     try {
-      cleanStaleSnapshots(config.resolvePath(config.snapshotPath), baseStories);
+      // Create a set of discovered storyIds for efficient lookup
+      const discoveredStoryIds = new Set(baseStories.map((s) => s.id));
+
+      // Clean up snapshots and entries for stories that no longer exist
+      const snapshotCleanup = indexManager.cleanupStaleStories(
+        discoveredStoryIds,
+        config.resolvePath(config.snapshotPath),
+      );
+      if (snapshotCleanup.deletedSnapshots > 0 || snapshotCleanup.deletedEntries > 0) {
+        logger.info(
+          `Cleaned up ${snapshotCleanup.deletedSnapshots} snapshot file(s) and ${snapshotCleanup.deletedEntries} index entr${snapshotCleanup.deletedEntries === 1 ? 'y' : 'ies'} for removed stories`,
+        );
+      }
+
+      // Clean up results and entries for stories that no longer exist
+      const resultsCleanup = resultsIndexManager.cleanupStaleStories(
+        discoveredStoryIds,
+        config.resolvePath(config.resultsPath),
+      );
+      if (resultsCleanup.deletedResults > 0 || resultsCleanup.deletedEntries > 0) {
+        logger.info(
+          `Cleaned up ${resultsCleanup.deletedResults} result file(s) and ${resultsCleanup.deletedEntries} index entr${resultsCleanup.deletedEntries === 1 ? 'y' : 'ies'} for removed stories`,
+        );
+      }
+
+      // Clean up duplicate entries (keep most recent, remove older duplicates)
+      const duplicateSnapshotCleanup = indexManager.cleanupDuplicateEntries();
+      if (duplicateSnapshotCleanup.deletedEntries > 0) {
+        logger.info(
+          `Cleaned up ${duplicateSnapshotCleanup.deletedEntries} duplicate snapshot entr${duplicateSnapshotCleanup.deletedEntries === 1 ? 'y' : 'ies'}`,
+        );
+      }
+
+      const duplicateResultsCleanup = resultsIndexManager.cleanupDuplicateEntries();
+      if (duplicateResultsCleanup.deletedEntries > 0) {
+        logger.info(
+          `Cleaned up ${duplicateResultsCleanup.deletedEntries} duplicate result entr${duplicateResultsCleanup.deletedEntries === 1 ? 'y' : 'ies'}`,
+        );
+      }
+
+      // Clean up orphaned entries (entries without files)
+      indexManager.cleanupOrphanedEntries(config.resolvePath(config.snapshotPath));
+      resultsIndexManager.cleanupOrphanedEntries(config.resolvePath(config.resultsPath));
+
+      // Clean up orphaned snapshot files (files without entries in index.json, hash dirs, chromium dirs)
+      const orphanedSnapshotFilesCleanup = indexManager.cleanupOrphanedFiles(
+        config.resolvePath(config.snapshotPath),
+      );
+      if (
+        orphanedSnapshotFilesCleanup.deletedFiles > 0 ||
+        orphanedSnapshotFilesCleanup.deletedDirectories > 0
+      ) {
+        logger.info(
+          `Cleaned up ${orphanedSnapshotFilesCleanup.deletedFiles} orphaned snapshot file(s) and ${orphanedSnapshotFilesCleanup.deletedDirectories} director${orphanedSnapshotFilesCleanup.deletedDirectories === 1 ? 'y' : 'ies'}`,
+        );
+      }
+
+      // Clean up orphaned result files (files without entries in index.json)
+      const orphanedFilesCleanup = resultsIndexManager.cleanupOrphanedFiles(
+        config.resolvePath(config.resultsPath),
+      );
+      if (orphanedFilesCleanup.deletedFiles > 0 || orphanedFilesCleanup.deletedDirectories > 0) {
+        logger.info(
+          `Cleaned up ${orphanedFilesCleanup.deletedFiles} orphaned result file(s) and ${orphanedFilesCleanup.deletedDirectories} empty director${orphanedFilesCleanup.deletedDirectories === 1 ? 'y' : 'ies'}`,
+        );
+      }
+
+      // Clean up empty directories
+      cleanEmptyDirectories(config.resolvePath(config.snapshotPath));
+      cleanEmptyDirectories(config.resolvePath(config.resultsPath));
     } catch (e) {
       // Best-effort only, don't fail the run if cleanup has issues
       logger.warn(`Failed to clean stale snapshots: ${(e as Error).message}`);
@@ -139,7 +251,8 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     const snapshotRoot = config.resolvePath(config.snapshotPath);
     let missing = 0;
     for (const s of baseStories) {
-      const expected = path.join(snapshotRoot, s.snapshotRelPath);
+      const snapshotId = s.snapshotId!;
+      const expected = indexManager.getSnapshotPath(snapshotId, snapshotRoot, s.id);
       if (!fs.existsSync(expected)) missing += 1;
     }
     if (missing > 0 && !config.update && !config.missingOnly) {
@@ -167,7 +280,14 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
   const here = path.dirname(fileURLToPath(new URL(import.meta.url)));
   const packageRoot = path.resolve(here, '..'); // dist/
   const runtimePath = getRuntimeOptionsPath(packageRoot);
-  writeRuntimeOptions({ ...config, stories: baseStories }, runtimePath);
+  // Ensure snapshotRelPath is set for backward compatibility
+  const storiesWithPaths = baseStories.map((s) => ({
+    ...s,
+    snapshotRelPath:
+      s.snapshotRelPath ||
+      (s.snapshotId ? indexManager.getSnapshotPath(s.snapshotId, config.snapshotPath, s.id) : ''),
+  }));
+  writeRuntimeOptions({ ...config, stories: storiesWithPaths }, runtimePath);
   logger.debug(`Runtime options written to: ${runtimePath}`);
 
   // Run tests directly in parallel using Promise.all like the example
@@ -189,8 +309,46 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     runtimePath,
     debug: config.debug,
     callbacks,
+    indexManager,
+    resultsIndexManager,
   });
 
-  logger.info(`Test execution completed with exit code: ${exitCode}`);
+  // Flush index updates
+  indexManager.flush();
+  resultsIndexManager.flush();
+
+  // Clean up results directory to match index.json (always, not just in update mode)
+  try {
+    // Clean up orphaned entries (entries without files, including passed tests)
+    resultsIndexManager.cleanupOrphanedEntries(config.resolvePath(config.resultsPath));
+
+    // Clean up orphaned result files (files without entries in index.json)
+    const orphanedFilesCleanup = resultsIndexManager.cleanupOrphanedFiles(
+      config.resolvePath(config.resultsPath),
+    );
+    if (orphanedFilesCleanup.deletedFiles > 0 || orphanedFilesCleanup.deletedDirectories > 0) {
+      logger.info(
+        `Cleaned up ${orphanedFilesCleanup.deletedFiles} orphaned result file(s) and ${orphanedFilesCleanup.deletedDirectories} empty director${orphanedFilesCleanup.deletedDirectories === 1 ? 'y' : 'ies'}`,
+      );
+    }
+
+    // Clean up empty directories
+    cleanEmptyDirectories(config.resolvePath(config.resultsPath));
+  } catch (e) {
+    // Best-effort only, don't fail the run if cleanup has issues
+    logger.debug(`Failed to clean results directory: ${(e as Error).message}`);
+  }
+
+  // Clean up empty directories after updates
+  if (config.update) {
+    try {
+      cleanEmptyDirectories(config.resolvePath(config.snapshotPath));
+      cleanEmptyDirectories(config.resolvePath(config.resultsPath));
+    } catch (e) {
+      logger.debug(`Failed to clean empty directories: ${(e as Error).message}`);
+    }
+  }
+
+  logger.debug(`Test execution completed with exit code: ${exitCode}`);
   return exitCode;
 };

@@ -12,7 +12,8 @@ export const writeRuntimeOptions = (
       title: string;
       name: string;
       url: string;
-      snapshotRelPath: string;
+      snapshotRelPath?: string;
+      snapshotId?: string;
     }>;
   },
   outputPath: string,
