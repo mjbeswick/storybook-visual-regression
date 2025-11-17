@@ -301,6 +301,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .description('List test results (shows failed by default)')
         .option('--config <path>', 'Config file path')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
+        .option('--output-file <path>', 'Output file path (paths will be relative to this file)')
         .option('--all', 'Show all results (not just failed)')
         .option('--status <status>', 'Filter by status: passed|failed|new|missing')
         .option('--include <patterns>', 'Comma-separated include filters')
@@ -324,6 +325,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
             include: config.includeStories,
             exclude: config.excludeStories,
             grep: config.grep,
+            outputPath: opts.outputFile,
           });
           commandExitCode = 0;
         }),
@@ -444,17 +446,17 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         message: 'What would you like to do?',
         choices: [
           {
-            title: 'Run visual regression tests',
+            title: 'Test',
             value: 'test',
             description: 'Execute visual regression tests',
           },
           {
-            title: 'Update snapshot baselines',
+            title: 'Update',
             value: 'update',
             description: 'Update or create snapshot baselines',
           },
-          { title: 'List snapshots', value: 'snapshots', description: 'Show all stored snapshots' },
-          { title: 'List test results', value: 'results', description: 'Show test results' },
+          { title: 'Snapshots', value: 'snapshots', description: 'Show stored snapshots' },
+          { title: 'Results', value: 'results', description: 'Show test results' },
         ],
       });
 

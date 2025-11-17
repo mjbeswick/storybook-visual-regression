@@ -380,7 +380,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
       .replace(/[/\s]+/g, '-') // Replace slashes and spaces with hyphens
       .replace(/--+/g, '-') // Replace double dashes with single dash
       .replace(/-+/g, '-'); // Collapse multiple hyphens
-    
+
     if (config.grep) {
       try {
         const re = new RegExp(config.grep);
@@ -403,7 +403,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
           .replace(/--+/g, '-') // Replace double dashes with single dash
           .replace(/-+/g, '-') // Collapse multiple hyphens
           .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
-        
+
         // If pattern contains *, treat as wildcard pattern
         if (normalizedPattern.includes('*')) {
           const regexPattern = normalizedPattern

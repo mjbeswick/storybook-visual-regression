@@ -53,6 +53,7 @@ export function listResults(
     include?: string[];
     exclude?: string[];
     grep?: string;
+    outputPath?: string;
   },
 ): void {
   const resultsDir = config.resolvePath(config.resultsPath);
@@ -286,6 +287,9 @@ export function listResults(
 
       // Show clickable file paths for failed tests
       if (entry.status === 'failed') {
+        const basePath = options?.outputPath
+          ? path.resolve(path.dirname(options.outputPath))
+          : process.cwd();
         const snapshotsDir = config.resolvePath(config.snapshotPath);
         const snapshotIndexManager = new SnapshotIndexManager(snapshotsDir);
         const snapshotPath = snapshotIndexManager.getSnapshotPath(
@@ -296,7 +300,7 @@ export function listResults(
 
         // Show snapshot (expected/baseline) path
         if (fs.existsSync(snapshotPath)) {
-          const relativeSnapshot = path.relative(snapshotsDir, snapshotPath);
+          const relativeSnapshot = path.relative(basePath, snapshotPath);
           const snapshotUrl = filePathToUrl(snapshotPath);
           const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
           console.log(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
@@ -310,26 +314,29 @@ export function listResults(
         const diffPath = resultsIndexManager.getResultPath(entry.snapshotId, resultsDir, 'diff');
 
         if (fs.existsSync(actualPath)) {
-          const relativeActual = path.relative(resultsDir, actualPath);
+          const relativeActual = path.relative(basePath, actualPath);
           const actualUrl = filePathToUrl(actualPath);
           const clickableActual = createHyperlink(relativeActual, actualUrl);
           console.log(`    Actual: ${chalk.cyan(clickableActual)}`);
         }
 
         if (fs.existsSync(diffPath)) {
-          const relativeDiff = path.relative(resultsDir, diffPath);
+          const relativeDiff = path.relative(basePath, diffPath);
           const diffUrl = filePathToUrl(diffPath);
           const clickableDiff = createHyperlink(relativeDiff, diffUrl);
           console.log(`    Diff: ${chalk.cyan(clickableDiff)}`);
         }
       } else if (entry.status === 'new') {
         // For new snapshots, show the snapshot path
+        const basePath = options?.outputPath
+          ? path.resolve(path.dirname(options.outputPath))
+          : process.cwd();
         const snapshotsDir = config.resolvePath(config.snapshotPath);
         const snapshotIndexManager = new SnapshotIndexManager(snapshotsDir);
         const snapshotPath = snapshotIndexManager.getSnapshotPath(entry.snapshotId, snapshotsDir);
 
         if (fs.existsSync(snapshotPath)) {
-          const relativeSnapshot = path.relative(snapshotsDir, snapshotPath);
+          const relativeSnapshot = path.relative(basePath, snapshotPath);
           const snapshotUrl = filePathToUrl(snapshotPath);
           const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
           console.log(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
