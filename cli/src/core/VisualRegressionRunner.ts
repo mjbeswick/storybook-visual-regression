@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import chalk from 'chalk';
 import { type RuntimeConfig } from '../config.js';
 import { discoverStories } from './StorybookDiscovery.js';
 import { detectViewports } from './StorybookConfigDetector.js';
@@ -296,7 +297,6 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
   // Run tests directly in parallel using Promise.all like the example
   const originalCwd = process.cwd();
 
-  logger.info(`Starting test execution for ${baseStories.length} stories`);
   logger.debug(`Working directory: ${originalCwd}`);
   logger.debug(`Runtime path: ${runtimePath}`);
 

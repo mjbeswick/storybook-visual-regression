@@ -434,7 +434,7 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
   }));
 
   logger.info(
-    `Discovered ${mapped.length} stories (${stories.length} total, ${stories.length - mapped.length} excluded)`,
+    `Discovered ${chalk.yellow(String(mapped.length))} stories ${chalk.dim(`(${stories.length} total, ${stories.length - mapped.length} excluded)`)}`,
   );
   logger.debug(`Story filtering: total=${stories.length}, after filters=${mapped.length}`);
 

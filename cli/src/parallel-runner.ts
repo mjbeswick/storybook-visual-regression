@@ -230,15 +230,15 @@ export function generateSummaryMessage({
       }
       breakdown.push(`storiesPerMinute: ${testsPerMinute}`);
     } else {
-      breakdown.push(`Passed: ${passed}`);
-      breakdown.push(`Failed: ${failed}`);
+      breakdown.push(chalk.green(`Passed: ${passed}`));
+      breakdown.push(chalk.red(`Failed: ${failed}`));
       if (cancelled > 0) {
-        breakdown.push(`Cancelled: ${cancelled}`);
+        breakdown.push(chalk.rgb(255, 165, 0)(`Cancelled: ${cancelled}`));
       }
       if (skipped > 0) {
         breakdown.push(`Skipped: ${skipped}`);
       }
-      breakdown.push(`Stories/m: ${testsPerMinute}`);
+      breakdown.push(chalk.magenta(`Stories/m: ${testsPerMinute}`));
     }
     breakdown.push(`Total: ${total}`);
     if (duration) {
@@ -247,7 +247,7 @@ export function generateSummaryMessage({
       const seconds = Math.floor(durationSeconds % 60);
       const durationStr =
         minutes > 0 ? `${minutes}m ${seconds}s` : `${durationSeconds.toFixed(1)}s`;
-      breakdown.push(`Time: ${durationStr}`);
+      breakdown.push(chalk.cyan(`Time: ${durationStr}`));
     }
     lines.push(breakdown.join(chalk.dim(' • ')));
     lines.push(chalk.cyan(`Success Rate: ${successPercent.toFixed(1)}%`));
@@ -281,6 +281,7 @@ class WorkerPool {
   private callbacks?: RunCallbacks;
   private log: ReturnType<typeof createLogger>;
   private maxFailuresReached = false;
+  private maxFailuresMessagePrinted = false;
   private cancelled = false;
   private initialBatchStarted = false;
   private storyViewports = new Map<string, { width: number; height: number } | undefined>();
@@ -531,8 +532,13 @@ class WorkerPool {
       }
     }
 
-    // Print error details for failed tests
-    if (result === 'failed' && errorDetails) {
+    // Print error details for failed tests (skip visual regression failures)
+    // Skip if reason is 'Visual differences detected' or if the error message contains 'Visual regression failed'
+    const isVisualRegressionFailure =
+      errorDetails?.reason === 'Visual differences detected' ||
+      errorDetails?.reason?.includes('Visual regression failed');
+
+    if (result === 'failed' && errorDetails && !isVisualRegressionFailure) {
       // Color the error reason based on type
       let coloredReason: string;
       const reason = errorDetails.reason;
@@ -542,8 +548,6 @@ class WorkerPool {
         coloredReason = chalk.yellow(reason);
       } else if (reason === 'Failed to capture screenshot') {
         coloredReason = chalk.magenta(reason);
-      } else if (reason === 'Visual differences detected') {
-        coloredReason = chalk.blue('Visual regression failed');
       } else if (reason === 'No baseline snapshot found') {
         coloredReason = chalk.cyan(reason);
       } else {
@@ -1068,15 +1072,6 @@ class WorkerPool {
           if (this.config.maxFailures && failedCount >= this.config.maxFailures) {
             this.maxFailuresReached = true;
             shouldStop = true;
-            const maxFailuresMessage = `Max failures (${this.config.maxFailures}) reached. Stopping test execution.`;
-            this.log.warn(
-              `Story ${story.id}: ${maxFailuresMessage} (failed: ${failedCount}/${this.config.maxFailures})`,
-            );
-            if (this.printUnderSpinner) {
-              this.printUnderSpinner(maxFailuresMessage);
-            } else {
-              this.log.warn(maxFailuresMessage);
-            }
             // Cancel all remaining tests IMMEDIATELY
             this.cancel();
           }
@@ -1249,7 +1244,18 @@ class WorkerPool {
             displayViewportName,
           );
 
-          // If maxFailures was reached, stop processing immediately after printing the error
+          // If maxFailures was reached, print message once and stop processing immediately after printing the error
+          if (shouldStop && !this.maxFailuresMessagePrinted) {
+            this.maxFailuresMessagePrinted = true;
+            const maxFailuresMessage = chalk.red.bold(
+              `Max failures (${this.config.maxFailures}) reached. Stopping test execution.`,
+            );
+            if (this.printUnderSpinner) {
+              this.printUnderSpinner(maxFailuresMessage);
+            } else {
+              this.log.warn(maxFailuresMessage);
+            }
+          }
           if (shouldStop) {
             return;
           }
@@ -2162,13 +2168,12 @@ export async function runParallelTests(options: {
   if (config.fixDate) {
     const fixedDate = parseFixDate(config.fixDate);
     log.info(
-      `Date fixing enabled - config value: ${JSON.stringify(config.fixDate)}, fixed date: ${fixedDate.toISOString()}`,
+      `Date fixing enabled - config value: ${chalk.yellow(JSON.stringify(config.fixDate))}, fixed date: ${chalk.yellow(fixedDate.toISOString())}`,
     );
   }
 
-  const storyCount = filteredStories.length;
   const workerDisplay = numWorkers === 0 ? '1 (scaling dynamically)' : String(numWorkers);
-  const initialMessage = `Checking ${chalk.yellow(String(storyCount))} stories using ${chalk.yellow(workerDisplay)} concurrent workers...`;
+  const initialMessage = `Checking stories using ${chalk.yellow(workerDisplay)} concurrent workers...`;
   if (!config.quiet) {
     log.info('');
     log.info(chalk.bold(initialMessage));
@@ -2282,6 +2287,10 @@ export async function runParallelTests(options: {
   // Function to update spinner display
   const updateSpinner = (completed: number, total: number) => {
     if (!spinner) return;
+
+    // Don't update spinner text if it's stopped (e.g., when showing error messages)
+    // This prevents the status line from appearing on the same line as error messages
+    if (!spinner.isSpinning) return;
 
     const percent = Math.round((completed / total) * 100);
     const elapsed = Date.now() - startTime;
