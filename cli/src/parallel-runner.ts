@@ -565,39 +565,14 @@ class WorkerPool {
       } else if (reason === 'Failed to capture screenshot') {
         coloredReason = chalk.magenta(reason);
       } else if (reason === 'Visual differences detected') {
-        // Make the most common error more actionable by inlining the diff path
-        coloredReason = errorDetails.diffPath
-          ? `${chalk.blue('Visual regression failed')}: ${chalk.gray(`diff → ${errorDetails.diffPath}`)}`
-          : chalk.blue(reason);
+        coloredReason = chalk.blue('Visual regression failed');
       } else if (reason === 'No baseline snapshot found') {
         coloredReason = chalk.cyan(reason);
       } else {
         coloredReason = chalk.red(reason); // Default to red for unknown errors
       }
 
-      const detailLines = [`  ${coloredReason}`, `  ${chalk.gray(`URL: ${errorDetails.url}`)}`];
-
-      if (errorDetails.expectedPath) {
-        // Show the baseline snapshot path
-        detailLines.push(`  ${chalk.gray(`Baseline: ${errorDetails.expectedPath}`)}`);
-      }
-
-      // Only add diff path to detail lines if it wasn't already included in the reason
-      // (for "Visual differences detected", the diff path is already in coloredReason)
-      if (errorDetails.diffPath && reason !== 'Visual differences detected') {
-        // Keep a separate diff line as well for easy parsing/copying
-        detailLines.push(`  ${chalk.gray(`Diff: ${errorDetails.diffPath}`)}`);
-      } else if (!errorDetails.diffPath) {
-        // Provide more context about why diff wasn't generated
-        const reason = errorDetails.reason || '';
-        if (/target crashed|page crashed|browser crashed/i.test(reason)) {
-          detailLines.push(
-            `  ${chalk.gray('Diff: not generated (browser crashed before screenshot could be captured)')}`,
-          );
-        } else {
-          detailLines.push(`  ${chalk.gray('Diff: not generated')}`);
-        }
-      }
+      const detailLines = [`  ${coloredReason}`];
 
       for (const detailLine of detailLines) {
         if (this.printUnderSpinner) {

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import fs from 'node:fs';
 import { resolveConfig, saveEffectiveConfig, type CliFlags } from '../config.js';
 import { Command } from '@commander-js/extra-typings';
 import { run } from '../core/VisualRegressionRunner.js';
@@ -191,6 +192,11 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           '--fix-date [date]',
           'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
         )
+        .option('--results', 'Show results report after tests complete')
+        .option(
+          '--results-file <path>',
+          'Write results report to file (defaults to results directory if no filename)',
+        )
         .action(async (opts) => {
           try {
             const flags = optsToFlags(opts);
@@ -198,6 +204,36 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
             setGlobalLogger(config.logLevel);
             const code = await run(config);
             commandExitCode = code;
+
+            // Show report if requested
+            if (opts.results || opts.resultsFile) {
+              // Determine output file path
+              let outputFile: string | undefined;
+              if (opts.resultsFile) {
+                const outputPath = String(opts.resultsFile);
+                // If it's a directory or no extension, treat as directory and add default filename
+                if (
+                  !path.extname(outputPath) ||
+                  (fs.existsSync(outputPath) && fs.statSync(outputPath).isDirectory())
+                ) {
+                  outputFile = path.join(outputPath, 'report.txt');
+                } else {
+                  outputFile = outputPath;
+                }
+              } else if (opts.results) {
+                // --results without --results-file: use default location in results directory
+                const resultsDir = config.resolvePath(config.resultsPath);
+                outputFile = path.join(resultsDir, 'report.txt');
+              }
+
+              listResults(config, {
+                status: undefined, // Show all by default when using --results
+                include: config.includeStories,
+                exclude: config.excludeStories,
+                grep: config.grep,
+                outputFile,
+              });
+            }
             // Don't throw - let the main function handle the exit code
           } catch (err) {
             logger.error(
@@ -302,6 +338,10 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--config <path>', 'Config file path')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
         .option('--output-file <path>', 'Output file path (paths will be relative to this file)')
+        .option(
+          '--results-file <path>',
+          'Write results report to file (defaults to results directory if no filename)',
+        )
         .option('--all', 'Show all results (not just failed)')
         .option('--status <status>', 'Filter by status: passed|failed|new|missing')
         .option('--include <patterns>', 'Comma-separated include filters')
@@ -320,12 +360,28 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           // if --status is specified, use it; otherwise default to 'failed'
           const status = showAll ? undefined : opts.status || 'failed';
 
+          // Determine output file path
+          let outputFile: string | undefined;
+          if (opts.resultsFile) {
+            const outputPath = String(opts.resultsFile);
+            // If it's a directory or no extension, treat as directory and add default filename
+            if (
+              !path.extname(outputPath) ||
+              (fs.existsSync(outputPath) && fs.statSync(outputPath).isDirectory())
+            ) {
+              outputFile = path.join(outputPath, 'report.txt');
+            } else {
+              outputFile = outputPath;
+            }
+          }
+
           listResults(config, {
             status: status as any,
             include: config.includeStories,
             exclude: config.excludeStories,
             grep: config.grep,
             outputPath: opts.outputFile,
+            outputFile,
           });
           commandExitCode = 0;
         }),

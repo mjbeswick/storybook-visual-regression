@@ -46,6 +46,13 @@ function colorize(text: string, color: string): string {
   return `${color}${text}${RESET}`;
 }
 
+/**
+ * Strip ANSI color codes from a string
+ */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 export function listResults(
   config: RuntimeConfig,
   options?: {
@@ -54,12 +61,26 @@ export function listResults(
     exclude?: string[];
     grep?: string;
     outputPath?: string;
+    outputFile?: string;
   },
 ): void {
   const resultsDir = config.resolvePath(config.resultsPath);
 
+  // Collect output lines for file writing
+  const outputLines: string[] = [];
+  const writeLine = (line: string) => {
+    outputLines.push(line);
+    if (!options?.outputFile) {
+      console.log(line);
+    }
+  };
+
   if (!fs.existsSync(resultsDir)) {
-    console.log('No results directory found.');
+    const message = 'No results directory found.';
+    writeLine(message);
+    if (options?.outputFile) {
+      writeOutputFile(options.outputFile, outputLines);
+    }
     return;
   }
 
@@ -170,8 +191,8 @@ export function listResults(
     ? entries.filter((e) => e.status === options.status)
     : entries;
 
-  console.log(`\n📊 Test Results\n`);
-  console.log('═'.repeat(80));
+  writeLine(`\n📊 Test Results\n`);
+  writeLine('═'.repeat(80));
 
   // Show summary of all results
   const totalAll = entries.length;
@@ -180,20 +201,23 @@ export function listResults(
   const newSnapshotsAll = allByStatus.new.length;
   const missingAll = allByStatus.missing.length;
 
-  console.log(`\nSummary:`);
-  console.log(`  ${colorize(`✓ Passed: ${passedAll}`, STATUS_COLORS.passed)}`);
-  console.log(`  ${colorize(`✗ Failed: ${failedAll}`, STATUS_COLORS.failed)}`);
-  console.log(`  ${colorize(`🆕 New: ${newSnapshotsAll}`, STATUS_COLORS.new)}`);
-  console.log(`  ${colorize(`⚠ Missing: ${missingAll}`, STATUS_COLORS.missing)}`);
-  console.log(`  Total: ${totalAll}`);
+  writeLine(`\nSummary:`);
+  writeLine(`  ${colorize(`✓ Passed: ${passedAll}`, STATUS_COLORS.passed)}`);
+  writeLine(`  ${colorize(`✗ Failed: ${failedAll}`, STATUS_COLORS.failed)}`);
+  writeLine(`  ${colorize(`🆕 New: ${newSnapshotsAll}`, STATUS_COLORS.new)}`);
+  writeLine(`  ${colorize(`⚠ Missing: ${missingAll}`, STATUS_COLORS.missing)}`);
+  writeLine(`  Total: ${totalAll}`);
 
   if (filteredEntries.length === 0) {
     const statusText = options?.status ? `${options.status} ` : '';
-    console.log(`\nNo ${statusText}results to display.`.trim());
+    writeLine(`\nNo ${statusText}results to display.`.trim());
     if (options?.status === 'failed' && totalAll > 0) {
-      console.log(`\nUse --all to see all results, or --status passed to see passed tests.`);
+      writeLine(`\nUse --all to see all results, or --status passed to see passed tests.`);
     }
-    console.log('');
+    writeLine('');
+    if (options?.outputFile) {
+      writeOutputFile(options.outputFile, outputLines);
+    }
     return;
   }
 
@@ -224,10 +248,10 @@ export function listResults(
 
   if (filteredEntries.length > 0) {
     const filteredTotal = filteredEntries.length;
-    console.log(
+    writeLine(
       `\nDetails (${filteredTotal} ${options?.status || 'filtered'} result${filteredTotal === 1 ? '' : 's'}):`,
     );
-    console.log('');
+    writeLine('');
   }
 
   for (const [pathKey, items] of sorted) {
@@ -240,8 +264,8 @@ export function listResults(
     );
     const readablePath = segments.join(chalk.dim(' / '));
 
-    console.log(`\n${readablePath}`);
-    console.log('─'.repeat(Math.min(80, readablePath.length + 20)));
+    writeLine(`\n${readablePath}`);
+    writeLine('─'.repeat(Math.min(80, readablePath.length + 20)));
 
     for (const entry of items) {
       const icon = STATUS_ICONS[entry.status];
@@ -283,7 +307,7 @@ export function listResults(
           ? colorize(icon, statusColor)
           : colorize(`${icon} ${entry.status.toUpperCase()}`, statusColor);
 
-      console.log(`  ${statusText} ${readableStoryName}${metadataStr}${details}`);
+      writeLine(`  ${statusText} ${readableStoryName}${metadataStr}${details}`);
 
       // Show clickable file paths for failed tests
       if (entry.status === 'failed') {
@@ -301,9 +325,13 @@ export function listResults(
         // Show snapshot (expected/baseline) path
         if (fs.existsSync(snapshotPath)) {
           const relativeSnapshot = path.relative(basePath, snapshotPath);
-          const snapshotUrl = filePathToUrl(snapshotPath);
-          const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
-          console.log(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
+          if (options?.outputFile) {
+            writeLine(`    Snapshot: ${relativeSnapshot}`);
+          } else {
+            const snapshotUrl = filePathToUrl(snapshotPath);
+            const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
+            writeLine(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
+          }
         }
 
         const actualPath = resultsIndexManager.getResultPath(
@@ -315,16 +343,24 @@ export function listResults(
 
         if (fs.existsSync(actualPath)) {
           const relativeActual = path.relative(basePath, actualPath);
-          const actualUrl = filePathToUrl(actualPath);
-          const clickableActual = createHyperlink(relativeActual, actualUrl);
-          console.log(`    Actual: ${chalk.cyan(clickableActual)}`);
+          if (options?.outputFile) {
+            writeLine(`    Actual: ${relativeActual}`);
+          } else {
+            const actualUrl = filePathToUrl(actualPath);
+            const clickableActual = createHyperlink(relativeActual, actualUrl);
+            writeLine(`    Actual: ${chalk.cyan(clickableActual)}`);
+          }
         }
 
         if (fs.existsSync(diffPath)) {
           const relativeDiff = path.relative(basePath, diffPath);
-          const diffUrl = filePathToUrl(diffPath);
-          const clickableDiff = createHyperlink(relativeDiff, diffUrl);
-          console.log(`    Diff: ${chalk.cyan(clickableDiff)}`);
+          if (options?.outputFile) {
+            writeLine(`    Diff: ${relativeDiff}`);
+          } else {
+            const diffUrl = filePathToUrl(diffPath);
+            const clickableDiff = createHyperlink(relativeDiff, diffUrl);
+            writeLine(`    Diff: ${chalk.cyan(clickableDiff)}`);
+          }
         }
       } else if (entry.status === 'new') {
         // For new snapshots, show the snapshot path
@@ -337,15 +373,33 @@ export function listResults(
 
         if (fs.existsSync(snapshotPath)) {
           const relativeSnapshot = path.relative(basePath, snapshotPath);
-          const snapshotUrl = filePathToUrl(snapshotPath);
-          const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
-          console.log(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
+          if (options?.outputFile) {
+            writeLine(`    Snapshot: ${relativeSnapshot}`);
+          } else {
+            const snapshotUrl = filePathToUrl(snapshotPath);
+            const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
+            writeLine(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
+          }
         }
       }
     }
   }
 
-  console.log('\n' + '═'.repeat(80));
+  writeLine('\n' + '═'.repeat(80));
   const filteredTotal = filteredEntries.length;
-  console.log(`\nTotal: ${filteredTotal} result(s) across ${sorted.length} story path(s)\n`);
+  writeLine(`\nTotal: ${filteredTotal} result(s) across ${sorted.length} story path(s)\n`);
+
+  // Write to file if specified
+  if (options?.outputFile) {
+    writeOutputFile(options.outputFile, outputLines);
+  }
+}
+
+/**
+ * Write output lines to a file, stripping ANSI codes
+ */
+function writeOutputFile(filePath: string, lines: string[]): void {
+  const content = lines.map((line) => stripAnsi(line)).join('\n');
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, 'utf8');
 }
