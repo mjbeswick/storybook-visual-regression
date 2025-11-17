@@ -17,6 +17,7 @@ import type { RunCallbacks } from './core/VisualRegressionRunner.js';
 import { SnapshotIndexManager } from './core/SnapshotIndex.js';
 import { ResultsIndexManager } from './core/ResultsIndex.js';
 import { createLogger, setGlobalLogger } from './logger.js';
+import { getCommandName } from './utils/commandName.js';
 
 // Helper to parse fixDate config value into a Date object
 function parseFixDate(value: boolean | string | number | undefined): Date {
@@ -1702,8 +1703,8 @@ class WorkerPool {
         }
       }
 
-      await page.waitForSelector('body.sb-show-main');
-      await page.waitForSelector('#storybook-root');
+      await page.waitForSelector('body.sb-show-main', { timeout: pageTimeout });
+      await page.waitForSelector('#storybook-root', { timeout: pageTimeout });
 
       // Wait for the storybook root to have content (not be empty)
       await page.waitForFunction(
@@ -1737,9 +1738,32 @@ class WorkerPool {
         if (!page.isClosed()) {
           // Read viewport name from Storybook's addon channel
           const channelData = await page.evaluate(() => {
-            if (typeof (window as any).__STORYBOOK_ADDONS_CHANNEL__ !== 'undefined') {
-              const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
-              const data = channel.data || {};
+            type StorybookChannel = {
+              data?: {
+                globalsUpdated?: Array<{
+                  globals?: {
+                    viewport?: {
+                      value?: string;
+                    };
+                  };
+                }>;
+                setGlobals?: Array<{
+                  globals?: {
+                    viewport?: {
+                      value?: string;
+                    };
+                  };
+                }>;
+              };
+            };
+
+            const windowWithChannel = window as typeof window & {
+              __STORYBOOK_ADDONS_CHANNEL__?: StorybookChannel;
+            };
+
+            if (typeof windowWithChannel.__STORYBOOK_ADDONS_CHANNEL__ !== 'undefined') {
+              const channel = windowWithChannel.__STORYBOOK_ADDONS_CHANNEL__;
+              const data = channel?.data || {};
 
               // Try to get from globalsUpdated (most recent)
               const globalsUpdated = data.globalsUpdated;
@@ -1815,60 +1839,62 @@ class WorkerPool {
         actualViewport = viewport;
       }
 
-      // // Wait for DOM to stabilize: configurable quiet period after last mutation, with max wait timeout
-      // const quietPeriodMs: number = Number(this.config.domStabilityQuietPeriod ?? 300); // Default: 300ms after last mutation
-      // const maxWaitMs: number = Number(this.config.domStabilityMaxWait ?? 2000); // Default: 2000ms total wait
+      if (this.config.domStabilityQuietPeriod) {
+        // Wait for DOM to stabilize: configurable quiet period after last mutation, with max wait timeout
+        const quietPeriodMs: number = Number(this.config.domStabilityQuietPeriod);
+        const maxWaitMs: number = Number(this.config.domStabilityMaxWait);
 
-      // const isStable = await page.evaluate(
-      //   ({ quietPeriodMs, maxWaitMs }) => {
-      //     return new Promise<boolean>((resolve) => {
-      //       // Use performance.now() for timing to avoid issues with mocked Date.now()
-      //       const start = performance.now();
-      //       let lastMutation = performance.now();
+        const isStable = await page.evaluate(
+          ({ quietPeriodMs, maxWaitMs }) => {
+            return new Promise<boolean>((resolve) => {
+              // Use performance.now() for timing to avoid issues with mocked Date.now()
+              const start = performance.now();
+              let lastMutation = performance.now();
 
-      //       const obs = new MutationObserver(() => {
-      //         lastMutation = performance.now();
-      //       });
+              const obs = new MutationObserver(() => {
+                lastMutation = performance.now();
+              });
 
-      //       obs.observe(document.body, {
-      //         childList: true,
-      //         subtree: true,
-      //         attributes: true,
-      //         characterData: true,
-      //       });
+              obs.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                characterData: true,
+              });
 
-      //       const checkStability = () => {
-      //         const now = performance.now();
-      //         const timeSinceLastMutation = now - lastMutation;
-      //         const totalTime = now - start;
+              const checkStability = () => {
+                const now = performance.now();
+                const timeSinceLastMutation = now - lastMutation;
+                const totalTime = now - start;
 
-      //         if (timeSinceLastMutation >= quietPeriodMs) {
-      //           // DOM has been stable for quietPeriodMs
-      //           obs.disconnect();
-      //           resolve(true);
-      //         } else if (totalTime >= maxWaitMs) {
-      //           // We've waited long enough, proceed anyway
-      //           obs.disconnect();
-      //           resolve(false);
-      //         } else {
-      //           // Keep checking
-      //           setTimeout(checkStability, 10);
-      //         }
-      //       };
+                if (timeSinceLastMutation >= quietPeriodMs) {
+                  // DOM has been stable for quietPeriodMs
+                  obs.disconnect();
+                  resolve(true);
+                } else if (totalTime >= maxWaitMs) {
+                  // We've waited long enough, proceed anyway
+                  obs.disconnect();
+                  resolve(false);
+                } else {
+                  // Keep checking
+                  setTimeout(checkStability, 10);
+                }
+              };
 
-      //       checkStability();
-      //     });
-      //   },
-      //   { quietPeriodMs, maxWaitMs },
-      // );
+              checkStability();
+            });
+          },
+          { quietPeriodMs, maxWaitMs },
+        );
 
-      // if (!isStable) {
-      //   this.log.debug(
-      //     `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
-      //   );
-      // } else {
-      //   this.log.debug(`Story ${story.id}: DOM is stable`);
-      // }
+        if (!isStable) {
+          this.log.debug(
+            `Story ${story.id}: DOM still mutating after ${maxWaitMs}ms, taking screenshot anyway`,
+          );
+        } else {
+          this.log.debug(`Story ${story.id}: DOM is stable`);
+        }
+      }
 
       // Check for cancellation before screenshot
       if (this.cancelled || this.maxFailuresReached) {
@@ -1880,15 +1906,26 @@ class WorkerPool {
       // Optimized screenshot capture - capture to buffer in memory
       // Get snapshot ID with viewport name if available (creates separate entries for each viewport)
       const browserName = this.config.browser || 'chromium';
+      const snapshotBasePath = this.config.snapshotPath;
       let snapshotId = story.snapshotId;
       if (viewportName) {
         // Get or create snapshot ID for this specific viewport
-        snapshotId = this.indexManager.getSnapshotId(story.id, browserName, viewportName);
+        snapshotId = this.indexManager.getSnapshotId(
+          story.id,
+          browserName,
+          viewportName,
+          snapshotBasePath,
+        );
         // Update story's snapshotId for this viewport
         story.snapshotId = snapshotId;
       } else if (!snapshotId) {
         // Fallback: get snapshot ID without viewport name
-        snapshotId = this.indexManager.getSnapshotId(story.id, browserName);
+        snapshotId = this.indexManager.getSnapshotId(
+          story.id,
+          browserName,
+          undefined,
+          snapshotBasePath,
+        );
         story.snapshotId = snapshotId;
       }
 
@@ -2058,8 +2095,9 @@ class WorkerPool {
           const errMsg = error?.message || String(error);
           if (errMsg.includes('ENOENT') || errMsg.includes('no such file')) {
             if (!fs.existsSync(expected)) {
+              const cmdName = getCommandName();
               this.log.error(
-                `Story ${story.id}: Baseline file does not exist: ${expected}. Consider running with --update to create baseline.`,
+                `Story ${story.id}: Baseline file does not exist: ${expected}. Run '${cmdName} update' to create baseline.`,
               );
               this.log.debug(`Story ${story.id}: Actual screenshot saved to: ${actual}`);
               throw new Error(`Missing baseline: ${expected}`);
@@ -2169,8 +2207,9 @@ export async function runParallelTests(options: {
 
     const skippedCount = stories.length - filteredStories.length;
     if (skippedCount > 0) {
+      const cmdName = getCommandName();
       log.info(
-        `Skipped ${skippedCount} stories with no baseline snapshots (use --update to create them)`,
+        `Skipped ${skippedCount} stories with no baseline snapshots (run '${cmdName} update' to create them)`,
       );
     }
   }

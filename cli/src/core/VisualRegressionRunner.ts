@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { logger } from '../logger.js';
 import { SnapshotIndexManager } from './SnapshotIndex.js';
 import { ResultsIndexManager } from './ResultsIndex.js';
+import { getCommandName } from '../utils/commandName.js';
 
 export const ensureDirs = (config: RuntimeConfig): void => {
   logger.debug(
@@ -152,8 +153,9 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
 
   // Assign snapshot IDs to stories using index manager
   const browser = config.browser || 'chromium';
+  const snapshotBasePath = config.resolvePath(config.snapshotPath);
   for (const story of baseStories) {
-    const snapshotId = indexManager.getSnapshotId(story.id, browser);
+    const snapshotId = indexManager.getSnapshotId(story.id, browser, undefined, snapshotBasePath);
     story.snapshotId = snapshotId;
     // Keep snapshotRelPath for backward compatibility during migration
     if (!story.snapshotRelPath) {
@@ -256,9 +258,10 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
       if (!fs.existsSync(expected)) missing += 1;
     }
     if (missing > 0 && !config.update && !config.missingOnly) {
+      const cmdName = getCommandName();
       logger.warn(
         `${missing} stor${missing === 1 ? 'y has' : 'ies have'} no baseline snapshot. ` +
-          `Run with --update --missing-only to create missing baselines.`,
+          `Run '${cmdName} update --missing-only' to create missing baselines.`,
       );
     } else if (missing === 0) {
       logger.debug('All stories have baseline snapshots');

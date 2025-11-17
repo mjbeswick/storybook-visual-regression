@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 
 export type ResultEntry = {
   storyId: string;
@@ -34,7 +33,6 @@ export class ResultsIndexManager {
   private writeTimer: NodeJS.Timeout | null = null;
   private readonly WRITE_DEBOUNCE_MS = 5000; // Batch writes for 5 seconds
   private readonly MAX_PENDING_BEFORE_WRITE = 50; // Force write after 50 pending updates
-  private readonly DIRECTORY_COUNT = 256; // Used only for fallback when entry not found
 
   constructor(resultsDir: string) {
     // Store index.json in the results directory (migrate from old results.json if needed)
@@ -210,8 +208,10 @@ export class ResultsIndexManager {
       browser: options?.browser,
       viewportName: options?.viewportName,
       status,
-      diffPixels: options?.diffPixels,
-      diffPercent: options?.diffPercent,
+      ...(options?.diffPixels !== undefined &&
+        options.diffPixels !== 0 && { diffPixels: options.diffPixels }),
+      ...(options?.diffPercent !== undefined &&
+        options.diffPercent !== 0 && { diffPercent: options.diffPercent }),
       duration: options?.duration,
       createdAt: existingEntry?.createdAt ?? now,
       updatedAt: now,

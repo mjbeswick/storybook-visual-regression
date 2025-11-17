@@ -31,7 +31,6 @@ export class SnapshotIndexManager {
   private writeTimer: NodeJS.Timeout | null = null;
   private readonly WRITE_DEBOUNCE_MS = 500; // Batch writes for 500ms
   private readonly MAX_PENDING_BEFORE_WRITE = 50; // Force write after 50 pending updates
-  private readonly DIRECTORY_COUNT = 256; // Used only for fallback when entry not found
 
   constructor(snapshotsDir: string) {
     // Store index.json in the snapshots directory
@@ -63,22 +62,22 @@ export class SnapshotIndexManager {
       try {
         const content = fs.readFileSync(this.indexPath, 'utf8');
         const parsed = JSON.parse(content);
-        
+
         // Migrate old format (object with keys) to new format (array)
         if (parsed.entries && !Array.isArray(parsed.entries)) {
           // Old format: { entries: { "storyId": { storyId, snapshotId, ... } } }
           const oldEntries = parsed.entries as Record<string, SnapshotEntry>;
           parsed.entries = Object.values(oldEntries);
         }
-        
+
         if (!parsed.version) {
           parsed.version = 1;
         }
-        
+
         if (!Array.isArray(parsed.entries)) {
           parsed.entries = [];
         }
-        
+
         return parsed as SnapshotIndex;
       } catch (error) {
         // If index is corrupted, start fresh
@@ -92,14 +91,33 @@ export class SnapshotIndexManager {
    * Get snapshot ID for a story, creating one if it doesn't exist
    * storyId is the primary key - only one entry per storyId
    */
-  getSnapshotId(storyId: string, browser?: string, viewportName?: string): string {
+  getSnapshotId(
+    storyId: string,
+    browser?: string,
+    viewportName?: string,
+    snapshotBasePath?: string,
+  ): string {
     // Default browser to 'chromium' if not provided
     const normalizedBrowser = browser || 'chromium';
-    
+
     // Check if an entry already exists for this storyId (primary key)
-    const existingEntry = this.index.entries.find(e => e.storyId === storyId);
-    
-    if (existingEntry) {
+    // If there are multiple entries (duplicates), prefer one that has a corresponding file
+    const existingEntries = this.index.entries.filter((e) => e.storyId === storyId);
+
+    if (existingEntries.length > 0) {
+      let existingEntry = existingEntries[0];
+
+      // If there are multiple entries and we have a base path, prefer one with an existing file
+      if (existingEntries.length > 1 && snapshotBasePath) {
+        const entryWithFile = existingEntries.find((entry) => {
+          const snapshotPath = this.getSnapshotPath(entry.snapshotId, snapshotBasePath, storyId);
+          return fs.existsSync(snapshotPath);
+        });
+        if (entryWithFile) {
+          existingEntry = entryWithFile;
+        }
+      }
+
       // Update existing entry with browser and viewport name if provided
       let updated = false;
       if (normalizedBrowser && existingEntry.browser !== normalizedBrowser) {
@@ -110,7 +128,7 @@ export class SnapshotIndexManager {
         existingEntry.viewportName = viewportName;
         updated = true;
       }
-      
+
       if (updated) {
         existingEntry.updatedAt = new Date().toISOString();
         // Rebuild entries map with updated key
@@ -119,7 +137,7 @@ export class SnapshotIndexManager {
         this.pendingUpdates.set(key, existingEntry);
         this.scheduleWrite();
       }
-      
+
       return existingEntry.snapshotId;
     }
 
@@ -168,10 +186,13 @@ export class SnapshotIndexManager {
     // Extract path part from storyId (before "--")
     // e.g., "screens-basket-attended--empty" -> "screens-basket-attended"
     const pathPart = storyId.split('--')[0];
-    
+
     // Split by hyphens and sanitize each segment
-    const dirSegments = pathPart.split('-').filter(Boolean).map(seg => this.sanitizePathSegment(seg));
-    
+    const dirSegments = pathPart
+      .split('-')
+      .filter(Boolean)
+      .map((seg) => this.sanitizePathSegment(seg));
+
     // Join segments with path separator to create nested directory structure
     // If no segments, return empty string (snapshots go in root)
     return dirSegments.length > 0 ? path.join(...dirSegments) : '';
@@ -189,7 +210,7 @@ export class SnapshotIndexManager {
       }
     }
     // Fallback: check index.entries (for entries loaded from disk)
-    const entry = this.index.entries.find(e => e.snapshotId === snapshotId);
+    const entry = this.index.entries.find((e) => e.snapshotId === snapshotId);
     if (entry) {
       return this.getDirectoryPath(entry.storyId);
     }
@@ -207,11 +228,13 @@ export class SnapshotIndexManager {
    * @param storyId - Optional storyId to avoid lookup (should be provided when available)
    */
   getSnapshotPath(snapshotId: string, basePath: string, storyId?: string): string {
-    const dir = storyId 
+    const dir = storyId
       ? this.getDirectoryPath(storyId)
       : this.getDirectoryPathFromSnapshotId(snapshotId);
     // If dir is empty, put file directly in basePath
-    return dir ? path.join(basePath, dir, `${snapshotId}.png`) : path.join(basePath, `${snapshotId}.png`);
+    return dir
+      ? path.join(basePath, dir, `${snapshotId}.png`)
+      : path.join(basePath, `${snapshotId}.png`);
   }
 
   /**
@@ -241,10 +264,15 @@ export class SnapshotIndexManager {
   /**
    * Update entry timestamp
    */
-  updateEntry(storyId: string, browser?: string, viewportName?: string, viewport?: { width: number; height: number }): void {
+  updateEntry(
+    storyId: string,
+    browser?: string,
+    viewportName?: string,
+    viewport?: { width: number; height: number },
+  ): void {
     const key = this.buildKey(storyId, browser, viewportName);
     const entry = this.entriesMap.get(key);
-    
+
     if (entry) {
       entry.updatedAt = new Date().toISOString();
       // Ensure browser is set if provided
@@ -265,9 +293,14 @@ export class SnapshotIndexManager {
   /**
    * Update entry by snapshotId (useful when viewport name is discovered later)
    */
-  updateEntryBySnapshotId(snapshotId: string, browser?: string, viewportName?: string, viewport?: { width: number; height: number }): void {
-    const entry = this.index.entries.find(e => e.snapshotId === snapshotId);
-    
+  updateEntryBySnapshotId(
+    snapshotId: string,
+    browser?: string,
+    viewportName?: string,
+    viewport?: { width: number; height: number },
+  ): void {
+    const entry = this.index.entries.find((e) => e.snapshotId === snapshotId);
+
     if (entry) {
       entry.updatedAt = new Date().toISOString();
       // Ensure browser is set if provided
@@ -282,7 +315,11 @@ export class SnapshotIndexManager {
       }
       // Update the entries map with the new key if viewportName changed
       const oldKey = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
-      const newKey = this.buildKey(entry.storyId, browser || entry.browser, viewportName || entry.viewportName);
+      const newKey = this.buildKey(
+        entry.storyId,
+        browser || entry.browser,
+        viewportName || entry.viewportName,
+      );
       if (oldKey !== newKey) {
         this.entriesMap.delete(oldKey);
         this.entriesMap.set(newKey, entry);
@@ -415,16 +452,14 @@ export class SnapshotIndexManager {
 
     if (orphanedEntries.length > 0) {
       // Remove from array
-      this.index.entries = this.index.entries.filter(
-        (entry) => !orphanedEntries.includes(entry),
-      );
-      
+      this.index.entries = this.index.entries.filter((entry) => !orphanedEntries.includes(entry));
+
       // Remove from map
       for (const entry of orphanedEntries) {
         const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
         this.entriesMap.delete(key);
       }
-      
+
       this.scheduleWrite();
     }
   }
@@ -433,7 +468,10 @@ export class SnapshotIndexManager {
    * Clean up snapshots and entries for stories that no longer exist
    * This removes snapshot files and index entries for storyIds that are not in the discovered set
    */
-  cleanupStaleStories(discoveredStoryIds: Set<string>, snapshotBasePath: string): {
+  cleanupStaleStories(
+    discoveredStoryIds: Set<string>,
+    snapshotBasePath: string,
+  ): {
     deletedSnapshots: number;
     deletedEntries: number;
   } {
@@ -468,9 +506,7 @@ export class SnapshotIndexManager {
 
     // Remove from array
     if (entriesToDelete.length > 0) {
-      this.index.entries = this.index.entries.filter(
-        (entry) => !entriesToDelete.includes(entry),
-      );
+      this.index.entries = this.index.entries.filter((entry) => !entriesToDelete.includes(entry));
       this.scheduleWrite();
     }
 
@@ -511,9 +547,7 @@ export class SnapshotIndexManager {
 
     if (duplicates.length > 0) {
       // Remove duplicates from array
-      this.index.entries = this.index.entries.filter(
-        (entry) => !duplicates.includes(entry),
-      );
+      this.index.entries = this.index.entries.filter((entry) => !duplicates.includes(entry));
 
       // Remove from map (using all possible keys)
       for (const entry of duplicates) {
@@ -535,7 +569,7 @@ export class SnapshotIndexManager {
   } {
     let deletedFiles = 0;
     const deletedDirs = new Set<string>();
-    
+
     // Build a set of valid snapshot IDs from the index
     const validSnapshotIds = new Set<string>();
     for (const entry of this.index.entries) {
@@ -573,7 +607,7 @@ export class SnapshotIndexManager {
                 // Ignore errors
               }
             }
-            
+
             // Check if this is a hash-based directory (two-character hex) - remove it
             if (isHashDirectory(name)) {
               try {
@@ -588,7 +622,7 @@ export class SnapshotIndexManager {
 
             // Recursively clean subdirectories
             walkAndClean(fullPath, path.join(relativePath, name));
-            
+
             // Check again after cleaning subdirectory
             if (fs.existsSync(fullPath) && fs.readdirSync(fullPath).length === 0) {
               try {
@@ -603,7 +637,7 @@ export class SnapshotIndexManager {
           } else if (name.endsWith('.png')) {
             // Extract snapshotId from filename (remove .png extension)
             const snapshotId = name.replace(/\.png$/, '');
-            
+
             // Check if this file belongs to a valid entry
             if (!validSnapshotIds.has(snapshotId)) {
               try {
@@ -650,4 +684,3 @@ export class SnapshotIndexManager {
     return { deletedFiles, deletedDirectories: deletedDirs.size };
   }
 }
-

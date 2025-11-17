@@ -8,6 +8,7 @@ import { setGlobalLogger, logger } from '../logger.js';
 import { listSnapshots } from '../core/ListSnapshots.js';
 import { listResults } from '../core/ListResults.js';
 import prompts from 'prompts';
+import { getCommandName } from '../utils/commandName.js';
 
 /**
  * Calculate Levenshtein distance between two strings
@@ -123,15 +124,16 @@ const optsToFlags = (opts: Record<string, unknown>): CliFlags => {
 };
 
 const mainWithArgv = async (argv: string[]): Promise<number> => {
-
   // Use Commander.js for all argument parsing
   const program = new Command();
-  
+
   // Store exit code for commands that execute
   let commandExitCode: number | null = null;
-  
+
+  const cmdName = getCommandName();
+
   program
-    .name('svr')
+    .name(cmdName)
     .description('Storybook Visual Regression CLI')
     .addCommand(
       new Command('test')
@@ -152,9 +154,17 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--full-page', 'Full page screenshots')
         .option('--mutation-wait <ms>', 'Quiet window wait (default 200)', Number)
         .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)', Number)
-        .option('--dom-stability-quiet-period <ms>', 'DOM stability quiet period (default 300)', Number)
+        .option(
+          '--dom-stability-quiet-period <ms>',
+          'DOM stability quiet period (default 300)',
+          Number,
+        )
         .option('--dom-stability-max-wait <ms>', 'DOM stability max wait (default 2000)', Number)
-        .option('--story-load-delay <ms>', 'Delay after storybook root found (default 1000)', Number)
+        .option(
+          '--story-load-delay <ms>',
+          'Delay after storybook root found (default 1000)',
+          Number,
+        )
         .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
         .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
         .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
@@ -190,10 +200,12 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
             commandExitCode = code;
             // Don't throw - let the main function handle the exit code
           } catch (err) {
-            logger.error(`Error in test command: ${err instanceof Error ? err.message : String(err)}`);
+            logger.error(
+              `Error in test command: ${err instanceof Error ? err.message : String(err)}`,
+            );
             commandExitCode = 1;
           }
-        })
+        }),
     )
     .addCommand(
       new Command('update')
@@ -212,9 +224,17 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--full-page', 'Full page screenshots')
         .option('--mutation-wait <ms>', 'Quiet window wait (default 200)', Number)
         .option('--mutation-timeout <ms>', 'Quiet wait cap (default 1000)', Number)
-        .option('--dom-stability-quiet-period <ms>', 'DOM stability quiet period (default 300)', Number)
+        .option(
+          '--dom-stability-quiet-period <ms>',
+          'DOM stability quiet period (default 300)',
+          Number,
+        )
         .option('--dom-stability-max-wait <ms>', 'DOM stability max wait (default 2000)', Number)
-        .option('--story-load-delay <ms>', 'Delay after storybook root found (default 1000)', Number)
+        .option(
+          '--story-load-delay <ms>',
+          'Delay after storybook root found (default 1000)',
+          Number,
+        )
         .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
         .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
         .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
@@ -249,10 +269,12 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
             commandExitCode = code;
             // Don't throw - let the main function handle the exit code
           } catch (err) {
-            logger.error(`Error in update command: ${err instanceof Error ? err.message : String(err)}`);
+            logger.error(
+              `Error in update command: ${err instanceof Error ? err.message : String(err)}`,
+            );
             commandExitCode = 1;
           }
-        })
+        }),
     )
     .addCommand(
       new Command('snapshots')
@@ -265,7 +287,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           setGlobalLogger(config.logLevel);
           listSnapshots(config);
           commandExitCode = 0;
-        })
+        }),
     )
     .addCommand(
       new Command('results')
@@ -279,10 +301,10 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           const config = resolveConfig(flags);
           setGlobalLogger(config.logLevel);
           // If --all is specified, don't filter; if --status is specified, use it; otherwise default to 'failed'
-          const status = opts.all ? undefined : (opts.status || 'failed');
+          const status = opts.all ? undefined : opts.status || 'failed';
           listResults(config, { status: status as any });
           commandExitCode = 0;
-        })
+        }),
     )
     // Default action: if no subcommand provided, show help
     .action(async () => {
@@ -299,17 +321,17 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     .helpOption('-h, --help', 'Show help');
 
   program.exitOverride();
-  
+
   let parsedOpts: Record<string, unknown>;
   try {
     await program.parseAsync(['node', 'svr', ...argv]);
     parsedOpts = program.opts();
-    
+
     // If a command set an exit code, return it
     if (commandExitCode !== null) {
       return commandExitCode;
     }
-    
+
     // Check if a subcommand was executed by checking if argv[0] matches a known command
     const subcommands = ['test', 'update', 'snapshots', 'results'];
     const executedCommand = argv[0];
@@ -323,29 +345,30 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     if (err?.code === 'commander.helpDisplayed' || err?.code === 'commander.help') {
       return 0;
     }
-    
+
     // Handle unknown commands with suggestions
     if (err?.code === 'commander.unknownCommand') {
       const unknownCmd = err.args?.[0] || argv[0];
       const availableCommands = ['test', 'update', 'snapshots', 'results'];
-      
+
       // Find similar commands
-      const suggestions = availableCommands.filter(cmd => {
+      const suggestions = availableCommands.filter((cmd) => {
         const distance = levenshteinDistance(unknownCmd.toLowerCase(), cmd.toLowerCase());
         return distance <= 2 && distance < cmd.length;
       });
-      
+
       console.error(`\nUnknown command: ${unknownCmd}`);
       if (suggestions.length > 0) {
         console.error(`\nDid you mean one of these?`);
-        suggestions.forEach(cmd => console.error(`  ${cmd}`));
+        suggestions.forEach((cmd) => console.error(`  ${cmd}`));
       } else {
         console.error(`\nAvailable commands: ${availableCommands.join(', ')}`);
       }
-      console.error(`\nRun 'svr --help' for more information.\n`);
+      const cmdName = getCommandName();
+      console.error(`\nRun '${cmdName} --help' for more information.\n`);
       return 1;
     }
-    
+
     if (err?.code === 'commander.unknownOption') {
       console.error('');
       if (err.message?.includes('--mock-date')) {
@@ -358,7 +381,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       console.error('Run with --help to see all available options.');
       return 1;
     }
-    
+
     // Re-throw other errors
     throw err;
   }
@@ -366,24 +389,24 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
   // Check if a subcommand was executed - if so, don't run fallback code
   const subcommands = ['test', 'update', 'snapshots', 'results'];
   const executedCommand = argv[0];
-  
+
   // If a command was provided but it's not a valid subcommand, return error
   if (executedCommand && !subcommands.includes(executedCommand)) {
     console.error(`\nUnknown command: ${executedCommand}`);
-    const suggestions = subcommands.filter(cmd => {
+    const suggestions = subcommands.filter((cmd) => {
       const distance = levenshteinDistance(executedCommand.toLowerCase(), cmd.toLowerCase());
       return distance <= 2 && distance < cmd.length;
     });
     if (suggestions.length > 0) {
       console.error(`\nDid you mean one of these?`);
-      suggestions.forEach(cmd => console.error(`  ${cmd}`));
+      suggestions.forEach((cmd) => console.error(`  ${cmd}`));
     } else {
       console.error(`\nAvailable commands: ${subcommands.join(', ')}`);
     }
     console.error(`\nRun 'svr --help' for more information.\n`);
     return 1;
   }
-  
+
   if (executedCommand && subcommands.includes(executedCommand)) {
     // A subcommand was executed - it should have handled everything and exited
     // If we reach here, return gracefully
@@ -398,8 +421,16 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         name: 'command',
         message: 'What would you like to do?',
         choices: [
-          { title: 'Run visual regression tests', value: 'test', description: 'Execute visual regression tests' },
-          { title: 'Update snapshot baselines', value: 'update', description: 'Update or create snapshot baselines' },
+          {
+            title: 'Run visual regression tests',
+            value: 'test',
+            description: 'Execute visual regression tests',
+          },
+          {
+            title: 'Update snapshot baselines',
+            value: 'update',
+            description: 'Update or create snapshot baselines',
+          },
           { title: 'List snapshots', value: 'snapshots', description: 'Show all stored snapshots' },
           { title: 'List test results', value: 'results', description: 'Show test results' },
         ],
