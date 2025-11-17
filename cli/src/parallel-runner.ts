@@ -115,14 +115,24 @@ function compareImagesInMemory(
       };
     }
 
+    // Check if buffers are identical (fast path)
+    if (actualBuffer.equals(expectedBuffer)) {
+      return {
+        match: true,
+        diffPixels: 0,
+        diffPercent: 0,
+      };
+    }
+
     // Create diff image buffer
     const diffImg = new PNG({ width: actualImg.width, height: actualImg.height });
 
     // Compare images using pixelmatch
-    // pixelmatch threshold is 0-1, where 0.1 = 10% difference per pixel (color difference)
-    // Our threshold is also 0-1, representing the percentage of pixels that can differ
-    // We use pixelmatch's threshold for per-pixel color difference, then check total diff percentage
-    const pixelmatchThreshold = 0.1; // Per-pixel color difference threshold
+    // pixelmatch threshold is 0-1, where smaller values make comparison more sensitive
+    // 0.1 = 10% difference per pixel (color difference) - this is quite lenient
+    // We use a lower threshold (0.05 = 5%) to catch subtle differences
+    // Our overall threshold (0-1) represents the percentage of pixels that can differ
+    const pixelmatchThreshold = 0.05; // Per-pixel color difference threshold (5% - more sensitive)
     const diffPixels = pixelmatch(
       actualImg.data,
       expectedImg.data,
@@ -142,9 +152,12 @@ function compareImagesInMemory(
     const diffPercent = totalPixels > 0 ? (diffPixels / totalPixels) * 100 : 0;
 
     // Determine if images match based on threshold
-    // threshold is 0-1, representing the percentage of pixels that can differ
-    // e.g., threshold=0.2 means 20% of pixels can differ
-    const match = diffPixels === 0 || diffPercent <= threshold * 100;
+    // threshold is interpreted as a percentage directly (not a fraction)
+    // e.g., threshold=0.2 means 0.2% of pixels can differ
+    // e.g., threshold=20 means 20% of pixels can differ
+    // threshold=0 means no differences allowed (strict comparison)
+    // diffPercent is already a percentage (0-100), so we compare directly
+    const match = diffPixels === 0 || diffPercent <= threshold;
 
     // Encode diff image to buffer if there are differences
     let diffImageBuffer: Buffer | undefined;
@@ -2041,6 +2054,11 @@ class WorkerPool {
             `Story ${story.id}: Comparing images in memory (threshold: ${this.config.threshold})`,
           );
 
+          // Log buffer sizes for debugging
+          this.log.debug(
+            `Story ${story.id}: Image buffers - actual: ${actualBuffer.length} bytes, expected: ${expectedBuffer.length} bytes`,
+          );
+
           const comparisonResultData = compareImagesInMemory(
             actualBuffer,
             expectedBuffer,
@@ -2049,8 +2067,15 @@ class WorkerPool {
           comparisonResult = comparisonResultData;
 
           this.log.debug(
-            `Story ${story.id}: Comparison completed in ${Date.now() - compareStart}ms, match: ${comparisonResultData.match}`,
+            `Story ${story.id}: Comparison completed in ${Date.now() - compareStart}ms, match: ${comparisonResultData.match}, diffPixels: ${comparisonResultData.diffPixels}, diffPercent: ${comparisonResultData.diffPercent.toFixed(2)}%, threshold: ${this.config.threshold}%`,
           );
+
+          // If images match but there are differences, log a warning
+          if (comparisonResultData.match && comparisonResultData.diffPixels > 0) {
+            this.log.debug(
+              `Story ${story.id}: Images match within threshold but have ${comparisonResultData.diffPixels} differing pixels (${comparisonResultData.diffPercent.toFixed(2)}%)`,
+            );
+          }
 
           if (comparisonResultData.match) {
             // Images are identical within threshold - test passed

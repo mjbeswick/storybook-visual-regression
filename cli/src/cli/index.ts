@@ -281,11 +281,18 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .description('List all snapshots')
         .option('--config <path>', 'Config file path')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
+        .option('--include <patterns>', 'Comma-separated include filters')
+        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option('--grep <regex>', 'Filter by storyId')
         .action(async (opts) => {
           const flags = optsToFlags(opts);
           const config = resolveConfig(flags);
           setGlobalLogger(config.logLevel);
-          listSnapshots(config);
+          listSnapshots(config, {
+            include: config.includeStories,
+            exclude: config.excludeStories,
+            grep: config.grep,
+          });
           commandExitCode = 0;
         }),
     )
@@ -296,13 +303,28 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
         .option('--all', 'Show all results (not just failed)')
         .option('--status <status>', 'Filter by status: passed|failed|new|missing')
+        .option('--include <patterns>', 'Comma-separated include filters')
+        .option('--exclude <patterns>', 'Comma-separated exclude filters')
+        .option('--grep <regex>', 'Filter by storyId')
         .action(async (opts) => {
           const flags = optsToFlags(opts);
           const config = resolveConfig(flags);
           setGlobalLogger(config.logLevel);
-          // If --all is specified, don't filter; if --status is specified, use it; otherwise default to 'failed'
-          const status = opts.all ? undefined : opts.status || 'failed';
-          listResults(config, { status: status as any });
+
+          // If --grep, --include, or --exclude is used, implicitly show all results
+          const hasFiltering = !!(opts.grep || opts.include || opts.exclude);
+          const showAll = opts.all || hasFiltering;
+
+          // If --all is specified or filtering is used, don't filter by status;
+          // if --status is specified, use it; otherwise default to 'failed'
+          const status = showAll ? undefined : opts.status || 'failed';
+
+          listResults(config, {
+            status: status as any,
+            include: config.includeStories,
+            exclude: config.excludeStories,
+            grep: config.grep,
+          });
           commandExitCode = 0;
         }),
     )

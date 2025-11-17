@@ -12,7 +12,7 @@ export type VisualRegressionConfig = {
   workers?: number;
   retries: number;
   maxFailures?: number;
-  threshold: number; // 0..1
+  threshold: number; // Percentage of pixels that can differ (e.g., 0.2 = 0.2%, 20 = 20%)
   maxDiffPixels: number;
   fullPage: boolean;
   viewportSizes: ViewportSize[];

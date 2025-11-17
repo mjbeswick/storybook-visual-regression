@@ -74,12 +74,18 @@ npx storybook-visual-regression test --command "npm run storybook"
 After making intentional visual changes:
 
 ```bash
-npx storybook-visual-regression test --update
+npx storybook-visual-regression update
 ```
 
 ## Usage
 
 ### Basic Commands
+
+If you run the CLI without a command, you'll see an interactive menu to choose what to do:
+
+```bash
+npx storybook-visual-regression
+```
 
 #### Run Tests
 
@@ -90,7 +96,25 @@ npx storybook-visual-regression test
 #### Update Baselines
 
 ```bash
-npx storybook-visual-regression test --update
+npx storybook-visual-regression update
+```
+
+#### List Snapshots
+
+```bash
+npx storybook-visual-regression snapshots
+```
+
+#### List Test Results
+
+```bash
+npx storybook-visual-regression results
+```
+
+By default, `results` shows only failed tests. Use `--all` to show all results:
+
+```bash
+npx storybook-visual-regression results --all
 ```
 
 #### Initialize Config
@@ -183,7 +207,7 @@ npx storybook-visual-regression test --grep "Button|Modal"
 #### Update Baselines for Failed Tests Only
 
 ```bash
-npx storybook-visual-regression test --update --failed-only
+npx storybook-visual-regression update --failed-only
 ```
 
 #### CI/CD Pipeline
@@ -312,13 +336,17 @@ After running tests, you'll find:
 ```
 visual-regression/
 ├── snapshots/              # Baseline screenshots (committed to git)
-│   └── ComponentName/
-│       └── StoryName.png
+│   ├── index.json          # Snapshot metadata index
+│   └── path/to/story/      # Path-based directory structure
+│       └── <snapshot-id>.png
 └── results/                # Test results (gitignored)
-    └── storybook-Visual-Regression-<hash>/
-        ├── screenshot.png  # Actual screenshot
-        └── diff.png       # Diff image (if test failed)
+    ├── index.json          # Results metadata index
+    └── path/to/story/      # Path-based directory structure (only for failures)
+        ├── <snapshot-id>.png      # Actual screenshot
+        └── <snapshot-id>.diff.png # Diff image (if test failed)
 ```
+
+The directory structure mirrors your Storybook story paths, making it easy to find snapshots and results for specific components.
 
 ## CI/CD Integration
 

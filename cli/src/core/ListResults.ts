@@ -48,7 +48,12 @@ function colorize(text: string, color: string): string {
 
 export function listResults(
   config: RuntimeConfig,
-  options?: { status?: 'passed' | 'failed' | 'new' | 'missing' },
+  options?: {
+    status?: 'passed' | 'failed' | 'new' | 'missing';
+    include?: string[];
+    exclude?: string[];
+    grep?: string;
+  },
 ): void {
   const resultsDir = config.resolvePath(config.resultsPath);
 
@@ -58,20 +63,140 @@ export function listResults(
   }
 
   const resultsIndexManager = new ResultsIndexManager(resultsDir);
-  const entries = resultsIndexManager.getAllEntries();
+  let entries = resultsIndexManager.getAllEntries();
+
+  // Filter by include/exclude/grep patterns
+  if (options?.include || options?.exclude || options?.grep) {
+    entries = entries.filter((entry) => {
+      // Normalize haystack: handle double dashes (--) which separate path from story name
+      const hay = entry.storyId
+        .toLowerCase()
+        .replace(/--+/g, '-') // Replace double dashes with single dash
+        .replace(/-+/g, '-'); // Collapse multiple hyphens
+
+      // Check grep pattern (regex match on storyId)
+      if (options.grep) {
+        try {
+          const re = new RegExp(options.grep);
+          if (!re.test(entry.storyId)) return false;
+        } catch {
+          // Invalid regex -> ignore
+        }
+      }
+
+      // Check include patterns (support * wildcard and normalize spaces/slashes)
+      if (options.include && options.include.length > 0) {
+        const matchesInclude = options.include.some((pattern) => {
+          // Normalize pattern: convert spaces/slashes to hyphens, lowercase
+          // Also handle double dashes (--) which separate path from story name
+          const normalizedPattern = pattern
+            .toLowerCase()
+            .replace(/[/\s]+/g, '-') // Replace slashes and spaces with hyphens
+            .replace(/--+/g, '-') // Replace double dashes with single dash
+            .replace(/-+/g, '-') // Collapse multiple hyphens
+            .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+
+          // If pattern contains *, treat as wildcard pattern
+          if (normalizedPattern.includes('*')) {
+            const regexPattern = normalizedPattern
+              .split('*')
+              .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('.*');
+            try {
+              const re = new RegExp(regexPattern, 'i');
+              return re.test(entry.storyId);
+            } catch {
+              // Invalid regex -> fall back to substring match
+              return hay.includes(normalizedPattern.replace(/\*/g, ''));
+            }
+          }
+          // Otherwise, simple substring match
+          return hay.includes(normalizedPattern);
+        });
+        if (!matchesInclude) return false;
+      }
+
+      // Check exclude patterns (support * wildcard and normalize spaces/slashes)
+      if (options.exclude && options.exclude.length > 0) {
+        const matchesExclude = options.exclude.some((pattern) => {
+          // Normalize pattern: convert spaces/slashes to hyphens, lowercase
+          // Also handle double dashes (--) which separate path from story name
+          const normalizedPattern = pattern
+            .toLowerCase()
+            .replace(/[/\s]+/g, '-') // Replace slashes and spaces with hyphens
+            .replace(/--+/g, '-') // Replace double dashes with single dash
+            .replace(/-+/g, '-') // Collapse multiple hyphens
+            .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+
+          // If pattern contains *, treat as wildcard pattern
+          if (normalizedPattern.includes('*')) {
+            const regexPattern = normalizedPattern
+              .split('*')
+              .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('.*');
+            try {
+              const re = new RegExp(regexPattern, 'i');
+              return re.test(entry.storyId);
+            } catch {
+              // Invalid regex -> fall back to substring match
+              return hay.includes(normalizedPattern.replace(/\*/g, ''));
+            }
+          }
+          // Otherwise, simple substring match
+          return hay.includes(normalizedPattern);
+        });
+        if (matchesExclude) return false;
+      }
+
+      return true;
+    });
+  }
+
+  // Group all entries by status for summary
+  const allByStatus = {
+    passed: [] as typeof entries,
+    failed: [] as typeof entries,
+    new: [] as typeof entries,
+    missing: [] as typeof entries,
+  };
+
+  for (const entry of entries) {
+    allByStatus[entry.status].push(entry);
+  }
 
   // Filter by status if specified
   const filteredEntries = options?.status
     ? entries.filter((e) => e.status === options.status)
     : entries;
 
+  console.log(`\n📊 Test Results\n`);
+  console.log('═'.repeat(80));
+
+  // Show summary of all results
+  const totalAll = entries.length;
+  const passedAll = allByStatus.passed.length;
+  const failedAll = allByStatus.failed.length;
+  const newSnapshotsAll = allByStatus.new.length;
+  const missingAll = allByStatus.missing.length;
+
+  console.log(`\nSummary:`);
+  console.log(`  ${colorize(`✓ Passed: ${passedAll}`, STATUS_COLORS.passed)}`);
+  console.log(`  ${colorize(`✗ Failed: ${failedAll}`, STATUS_COLORS.failed)}`);
+  console.log(`  ${colorize(`🆕 New: ${newSnapshotsAll}`, STATUS_COLORS.new)}`);
+  console.log(`  ${colorize(`⚠ Missing: ${missingAll}`, STATUS_COLORS.missing)}`);
+  console.log(`  Total: ${totalAll}`);
+
   if (filteredEntries.length === 0) {
     const statusText = options?.status ? `${options.status} ` : '';
-    console.log(`No ${statusText}results found.`.trim());
+    console.log(`\nNo ${statusText}results to display.`.trim());
+    if (options?.status === 'failed' && totalAll > 0) {
+      console.log(`\nUse --all to see all results, or --status passed to see passed tests.`);
+    }
+    console.log('');
     return;
   }
 
-  // Group by status
+  // Group filtered entries by status for details
   const byStatus = {
     passed: [] as typeof entries,
     failed: [] as typeof entries,
@@ -82,23 +207,6 @@ export function listResults(
   for (const entry of filteredEntries) {
     byStatus[entry.status].push(entry);
   }
-
-  console.log(`\n📊 Test Results\n`);
-  console.log('═'.repeat(80));
-
-  // Show summary
-  const total = filteredEntries.length;
-  const passed = byStatus.passed.length;
-  const failed = byStatus.failed.length;
-  const newSnapshots = byStatus.new.length;
-  const missing = byStatus.missing.length;
-
-  console.log(`\nSummary:`);
-  console.log(`  ${colorize(`✓ Passed: ${passed}`, STATUS_COLORS.passed)}`);
-  console.log(`  ${colorize(`✗ Failed: ${failed}`, STATUS_COLORS.failed)}`);
-  console.log(`  ${colorize(`🆕 New: ${newSnapshots}`, STATUS_COLORS.new)}`);
-  console.log(`  ${colorize(`⚠ Missing: ${missing}`, STATUS_COLORS.missing)}`);
-  console.log(`  Total: ${total}`);
 
   // Show details grouped by story path
   const grouped = new Map<string, Array<(typeof entries)[0]>>();
@@ -113,7 +221,13 @@ export function listResults(
 
   const sorted = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
-  console.log('');
+  if (filteredEntries.length > 0) {
+    const filteredTotal = filteredEntries.length;
+    console.log(
+      `\nDetails (${filteredTotal} ${options?.status || 'filtered'} result${filteredTotal === 1 ? '' : 's'}):`,
+    );
+    console.log('');
+  }
 
   for (const [pathKey, items] of sorted) {
     // Format path key to be more readable
@@ -172,6 +286,22 @@ export function listResults(
 
       // Show clickable file paths for failed tests
       if (entry.status === 'failed') {
+        const snapshotsDir = config.resolvePath(config.snapshotPath);
+        const snapshotIndexManager = new SnapshotIndexManager(snapshotsDir);
+        const snapshotPath = snapshotIndexManager.getSnapshotPath(
+          entry.snapshotId,
+          snapshotsDir,
+          entry.storyId,
+        );
+
+        // Show snapshot (expected/baseline) path
+        if (fs.existsSync(snapshotPath)) {
+          const relativeSnapshot = path.relative(snapshotsDir, snapshotPath);
+          const snapshotUrl = filePathToUrl(snapshotPath);
+          const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
+          console.log(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
+        }
+
         const actualPath = resultsIndexManager.getResultPath(
           entry.snapshotId,
           resultsDir,
@@ -209,5 +339,6 @@ export function listResults(
   }
 
   console.log('\n' + '═'.repeat(80));
-  console.log(`\nTotal: ${total} result(s) across ${sorted.length} story path(s)\n`);
+  const filteredTotal = filteredEntries.length;
+  console.log(`\nTotal: ${filteredTotal} result(s) across ${sorted.length} story path(s)\n`);
 }

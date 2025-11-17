@@ -374,7 +374,13 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
   logger.debug(`Parsed ${stories.length} valid story entries`);
 
   const filtered = stories.filter((s) => {
-    const hay = `${s.id} ${s.title} ${s.name}`.toLowerCase();
+    // Normalize haystack: convert spaces/slashes to hyphens, handle double dashes
+    const hay = `${s.id} ${s.title} ${s.name}`
+      .toLowerCase()
+      .replace(/[/\s]+/g, '-') // Replace slashes and spaces with hyphens
+      .replace(/--+/g, '-') // Replace double dashes with single dash
+      .replace(/-+/g, '-'); // Collapse multiple hyphens
+    
     if (config.grep) {
       try {
         const re = new RegExp(config.grep);
@@ -385,8 +391,37 @@ export const discoverStories = async (config: RuntimeConfig): Promise<Discovered
     }
     const includes = config.includeStories;
     const excludes = config.excludeStories;
-    const match = (patterns?: string[]): boolean =>
-      !patterns || patterns.some((p) => hay.includes(p.toLowerCase()));
+    const match = (patterns?: string[]): boolean => {
+      if (!patterns) return true;
+      return patterns.some((p) => {
+        // Normalize pattern: convert spaces/slashes to hyphens, lowercase
+        // "Screens / Colleague / Void" -> "screens-colleague-void"
+        // Also handle double dashes (--) which separate path from story name
+        const normalizedPattern = p
+          .toLowerCase()
+          .replace(/[/\s]+/g, '-') // Replace slashes and spaces with hyphens
+          .replace(/--+/g, '-') // Replace double dashes with single dash
+          .replace(/-+/g, '-') // Collapse multiple hyphens
+          .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+        
+        // If pattern contains *, treat as wildcard pattern
+        if (normalizedPattern.includes('*')) {
+          const regexPattern = normalizedPattern
+            .split('*')
+            .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('.*');
+          try {
+            const re = new RegExp(regexPattern, 'i');
+            return re.test(hay);
+          } catch {
+            // Invalid regex -> fall back to substring match
+            return hay.includes(normalizedPattern.replace(/\*/g, ''));
+          }
+        }
+        // Otherwise, simple substring match
+        return hay.includes(normalizedPattern);
+      });
+    };
     if (includes && !match(includes)) return false;
     if (excludes && match(excludes)) return false;
     return true;

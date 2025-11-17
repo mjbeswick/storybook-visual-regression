@@ -34,7 +34,14 @@ function filePathToUrl(filePath: string): string {
   return `file://${normalizedPath}`;
 }
 
-export function listSnapshots(config: RuntimeConfig): void {
+export function listSnapshots(
+  config: RuntimeConfig,
+  options?: {
+    include?: string[];
+    exclude?: string[];
+    grep?: string;
+  },
+): void {
   const snapshotsDir = config.resolvePath(config.snapshotPath);
   
   if (!fs.existsSync(snapshotsDir)) {
@@ -43,7 +50,94 @@ export function listSnapshots(config: RuntimeConfig): void {
   }
 
   const indexManager = new SnapshotIndexManager(snapshotsDir);
-  const entries = indexManager.getAllEntries();
+  let entries = indexManager.getAllEntries();
+
+  // Filter by include/exclude/grep patterns
+  if (options?.include || options?.exclude || options?.grep) {
+    entries = entries.filter((entry) => {
+      // Normalize haystack: handle double dashes (--) which separate path from story name
+      const hay = entry.storyId
+        .toLowerCase()
+        .replace(/--+/g, '-') // Replace double dashes with single dash
+        .replace(/-+/g, '-'); // Collapse multiple hyphens
+      
+      // Check grep pattern (regex match on storyId)
+      if (options.grep) {
+        try {
+          const re = new RegExp(options.grep);
+          if (!re.test(entry.storyId)) return false;
+        } catch {
+          // Invalid regex -> ignore
+        }
+      }
+      
+      // Check include patterns (support * wildcard and normalize spaces/slashes)
+      if (options.include && options.include.length > 0) {
+        const matchesInclude = options.include.some((pattern) => {
+          // Normalize pattern: convert spaces/slashes to hyphens, lowercase
+          // Also handle double dashes (--) which separate path from story name
+          const normalizedPattern = pattern
+            .toLowerCase()
+            .replace(/[/\s]+/g, '-') // Replace slashes and spaces with hyphens
+            .replace(/--+/g, '-') // Replace double dashes with single dash
+            .replace(/-+/g, '-') // Collapse multiple hyphens
+            .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+          
+          // If pattern contains *, treat as wildcard pattern
+          if (normalizedPattern.includes('*')) {
+            const regexPattern = normalizedPattern
+              .split('*')
+              .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('.*');
+            try {
+              const re = new RegExp(regexPattern, 'i');
+              return re.test(entry.storyId);
+            } catch {
+              // Invalid regex -> fall back to substring match
+              return hay.includes(normalizedPattern.replace(/\*/g, ''));
+            }
+          }
+          // Otherwise, simple substring match
+          return hay.includes(normalizedPattern);
+        });
+        if (!matchesInclude) return false;
+      }
+      
+      // Check exclude patterns (support * wildcard and normalize spaces/slashes)
+      if (options.exclude && options.exclude.length > 0) {
+        const matchesExclude = options.exclude.some((pattern) => {
+          // Normalize pattern: convert spaces/slashes to hyphens, lowercase
+          // Also handle double dashes (--) which separate path from story name
+          const normalizedPattern = pattern
+            .toLowerCase()
+            .replace(/[/\s]+/g, '-') // Replace slashes and spaces with hyphens
+            .replace(/--+/g, '-') // Replace double dashes with single dash
+            .replace(/-+/g, '-') // Collapse multiple hyphens
+            .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+          
+          // If pattern contains *, treat as wildcard pattern
+          if (normalizedPattern.includes('*')) {
+            const regexPattern = normalizedPattern
+              .split('*')
+              .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('.*');
+            try {
+              const re = new RegExp(regexPattern, 'i');
+              return re.test(entry.storyId);
+            } catch {
+              // Invalid regex -> fall back to substring match
+              return hay.includes(normalizedPattern.replace(/\*/g, ''));
+            }
+          }
+          // Otherwise, simple substring match
+          return hay.includes(normalizedPattern);
+        });
+        if (matchesExclude) return false;
+      }
+      
+      return true;
+    });
+  }
 
   if (entries.length === 0) {
     console.log('No snapshots found.');
