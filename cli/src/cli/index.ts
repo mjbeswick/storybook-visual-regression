@@ -8,7 +8,8 @@ import { JsonRpcServer, CLI_METHODS, CLI_EVENTS } from '../jsonrpc.js';
 import { setGlobalLogger, logger } from '../logger.js';
 import { listSnapshots } from '../core/ListSnapshots.js';
 import { listResults } from '../core/ListResults.js';
-import prompts from 'prompts';
+import { SnapshotIndexManager } from '../core/SnapshotIndex.js';
+import { ResultsIndexManager } from '../core/ResultsIndex.js';
 import { getCommandName } from '../utils/commandName.js';
 import { EXIT_CODES } from '../parallel-runner.js';
 
@@ -137,10 +138,12 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     .name(cmdName)
     .description('Storybook Visual Regression CLI')
     .allowExcessArguments(false)
+    .configureHelp({ sortOptions: true })
     .addCommand(
       new Command('test')
         .description('Run visual regression tests')
         .allowExcessArguments(false)
+        .configureHelp({ sortOptions: true })
         .option('--config <path>', 'Config file path')
         .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
@@ -201,8 +204,8 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         )
         .option('--results', 'Show results report after tests complete')
         .option(
-          '--results-file <path>',
-          'Write results report to file (defaults to results directory if no filename)',
+          '--results-file [path]',
+          'Write results report to file (defaults to results directory/report.txt if no path provided)',
         )
         .option('--all', 'Show all results (not just failed)')
         .option('--status <status>', 'Filter by status: passed|failed|new|missing')
@@ -215,23 +218,36 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
             commandExitCode = code;
 
             // Show report if requested
-            if (opts.results || opts.resultsFile) {
+            if (opts.results || opts.resultsFile !== undefined) {
               // Default to showing only failed results unless --all is explicitly passed
               // Note: --include/--exclude/--grep filter which stories are tested, not which results are shown
               const status = opts.all ? undefined : opts.status || 'failed';
 
-              // Determine output file path (only set if --results-file is explicitly provided)
+              // Determine output file path
               let outputFile: string | undefined;
-              if (opts.resultsFile) {
-                const outputPath = String(opts.resultsFile);
-                // If it's a directory or no extension, treat as directory and add default filename
-                if (
-                  !path.extname(outputPath) ||
-                  (fs.existsSync(outputPath) && fs.statSync(outputPath).isDirectory())
-                ) {
-                  outputFile = path.join(outputPath, 'report.txt');
+              if (opts.resultsFile !== undefined) {
+                // If --results-file is used without a value, use default path
+                if (opts.resultsFile === true || opts.resultsFile === '') {
+                  outputFile = path.join(config.resolvePath(config.resultsPath), 'report.txt');
                 } else {
-                  outputFile = outputPath;
+                  const outputPath = String(opts.resultsFile);
+                  // Resolve relative paths to absolute paths
+                  const resolvedPath = path.isAbsolute(outputPath)
+                    ? outputPath
+                    : path.resolve(process.cwd(), outputPath);
+                  // If it's a directory or no extension, treat as directory and add default filename
+                  if (
+                    !path.extname(resolvedPath) ||
+                    (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory())
+                  ) {
+                    outputFile = path.join(resolvedPath, 'report.txt');
+                  } else {
+                    outputFile = resolvedPath;
+                  }
+                }
+                // Ensure the output file path is absolute
+                if (outputFile && !path.isAbsolute(outputFile)) {
+                  outputFile = path.resolve(process.cwd(), outputFile);
                 }
               }
               // If only --results is used (without --results-file), outputFile remains undefined
@@ -258,6 +274,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       new Command('update')
         .description('Update or create snapshot baselines')
         .allowExcessArguments(false)
+        .configureHelp({ sortOptions: true })
         .option('--config <path>', 'Config file path')
         .option('-u, --url <url>', 'Storybook URL (default http://localhost:6006)')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
@@ -333,6 +350,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       new Command('snapshots')
         .description('List all snapshots')
         .allowExcessArguments(false)
+        .configureHelp({ sortOptions: true })
         .option('--config <path>', 'Config file path')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
         .option(
@@ -360,6 +378,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
       new Command('results')
         .description('List test results (shows failed by default)')
         .allowExcessArguments(false)
+        .configureHelp({ sortOptions: true })
         .option('--config <path>', 'Config file path')
         .option('-o, --output <dir>', 'Output root (default visual-regression)')
         .option(
@@ -367,8 +386,8 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           'Base path for relative file paths in output (paths will be relative to this file)',
         )
         .option(
-          '--results-file <path>',
-          'Write results report to file (defaults to results directory if path is a directory)',
+          '--results-file [path]',
+          'Write results report to file (defaults to results directory/report.txt if no path provided)',
         )
         .option('--all', 'Show all results (not just failed)')
         .option('--status <status>', 'Filter by status: passed|failed|new|missing')
@@ -396,16 +415,29 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
 
           // Determine output file path
           let outputFile: string | undefined;
-          if (opts.resultsFile) {
-            const outputPath = String(opts.resultsFile);
-            // If it's a directory or no extension, treat as directory and add default filename
-            if (
-              !path.extname(outputPath) ||
-              (fs.existsSync(outputPath) && fs.statSync(outputPath).isDirectory())
-            ) {
-              outputFile = path.join(outputPath, 'report.txt');
+          if (opts.resultsFile !== undefined) {
+            // If --results-file is used without a value, use default path
+            if (opts.resultsFile === true || opts.resultsFile === '') {
+              outputFile = path.join(config.resolvePath(config.resultsPath), 'report.txt');
             } else {
-              outputFile = outputPath;
+              const outputPath = String(opts.resultsFile);
+              // Resolve relative paths to absolute paths
+              const resolvedPath = path.isAbsolute(outputPath)
+                ? outputPath
+                : path.resolve(process.cwd(), outputPath);
+              // If it's a directory or no extension, treat as directory and add default filename
+              if (
+                !path.extname(resolvedPath) ||
+                (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory())
+              ) {
+                outputFile = path.join(resolvedPath, 'report.txt');
+              } else {
+                outputFile = resolvedPath;
+              }
+            }
+            // Ensure the output file path is absolute
+            if (outputFile && !path.isAbsolute(outputFile)) {
+              outputFile = path.resolve(process.cwd(), outputFile);
             }
           }
 
@@ -417,6 +449,83 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
             outputPath: opts.outputFile,
             outputFile,
           });
+          commandExitCode = 0;
+        }),
+    )
+    .addCommand(
+      new Command('cleanup')
+        .description('Clean up orphaned files and directories in snapshots and results')
+        .allowExcessArguments(false)
+        .configureHelp({ sortOptions: true })
+        .option('--config <path>', 'Config file path')
+        .option('-o, --output <dir>', 'Output root (default visual-regression)')
+        .option('--snapshots-only', 'Only clean up snapshots directory')
+        .option('--results-only', 'Only clean up results directory')
+        .action(async (opts) => {
+          const flags = optsToFlags(opts);
+          const config = resolveConfig(flags);
+          setGlobalLogger(config.logLevel);
+
+          const snapshotsDir = config.resolvePath(config.snapshotPath);
+          const resultsDir = config.resolvePath(config.resultsPath);
+
+          let cleanedSnapshots = false;
+          let cleanedResults = false;
+
+          // Clean up snapshots
+          if (!opts.resultsOnly) {
+            if (fs.existsSync(snapshotsDir)) {
+              const indexManager = new SnapshotIndexManager(snapshotsDir);
+              
+              // Clean up orphaned entries (entries without files)
+              indexManager.cleanupOrphanedEntries(snapshotsDir);
+              
+              // Clean up orphaned files (files without entries)
+              const fileCleanup = indexManager.cleanupOrphanedFiles(snapshotsDir);
+              
+              if (fileCleanup.deletedFiles > 0 || fileCleanup.deletedDirectories > 0) {
+                console.log(
+                  `Cleaned up ${fileCleanup.deletedFiles} orphaned snapshot file(s) and ${fileCleanup.deletedDirectories} empty director${fileCleanup.deletedDirectories === 1 ? 'y' : 'ies'}`,
+                );
+                cleanedSnapshots = true;
+              }
+              
+              // Flush index updates
+              indexManager.flush();
+            } else {
+              console.log('Snapshots directory does not exist, skipping cleanup.');
+            }
+          }
+
+          // Clean up results
+          if (!opts.snapshotsOnly) {
+            if (fs.existsSync(resultsDir)) {
+              const resultsIndexManager = new ResultsIndexManager(resultsDir);
+              
+              // Clean up orphaned entries (entries without files)
+              resultsIndexManager.cleanupOrphanedEntries(resultsDir);
+              
+              // Clean up orphaned files (files without entries)
+              const fileCleanup = resultsIndexManager.cleanupOrphanedFiles(resultsDir);
+              
+              if (fileCleanup.deletedFiles > 0 || fileCleanup.deletedDirectories > 0) {
+                console.log(
+                  `Cleaned up ${fileCleanup.deletedFiles} orphaned result file(s) and ${fileCleanup.deletedDirectories} empty director${fileCleanup.deletedDirectories === 1 ? 'y' : 'ies'}`,
+                );
+                cleanedResults = true;
+              }
+              
+              // Flush index updates
+              resultsIndexManager.flush();
+            } else {
+              console.log('Results directory does not exist, skipping cleanup.');
+            }
+          }
+
+          if (!cleanedSnapshots && !cleanedResults) {
+            console.log('No orphaned files or directories found.');
+          }
+
           commandExitCode = 0;
         }),
     )
@@ -447,7 +556,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     }
 
     // Check if a subcommand was executed by checking if argv[0] matches a known command
-    const subcommands = ['test', 'update', 'snapshots', 'results'];
+    const subcommands = ['test', 'update', 'snapshots', 'results', 'cleanup'];
     const executedCommand = argv[0];
     if (executedCommand && subcommands.includes(executedCommand)) {
       // A subcommand was executed - it should have set commandExitCode
@@ -463,7 +572,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     // Handle unknown commands with suggestions
     if (err?.code === 'commander.unknownCommand') {
       const unknownCmd = err.args?.[0] || argv[0];
-      const availableCommands = ['test', 'update', 'snapshots', 'results'];
+      const availableCommands = ['test', 'update', 'snapshots', 'results', 'cleanup'];
 
       // Find similar commands
       const suggestions = availableCommands.filter((cmd) => {
@@ -537,44 +646,9 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     return 0;
   }
 
-  // No command provided - show interactive prompt
+  // No command provided - the default action already showed help, so just return
   if (!executedCommand) {
-    try {
-      const response = await prompts({
-        type: 'select',
-        name: 'command',
-        message: 'What would you like to do?',
-        choices: [
-          {
-            title: 'Test',
-            value: 'test',
-            description: 'Execute visual regression tests',
-          },
-          {
-            title: 'Update',
-            value: 'update',
-            description: 'Update or create snapshot baselines',
-          },
-          { title: 'Snapshots', value: 'snapshots', description: 'Show stored snapshots' },
-          { title: 'Results', value: 'results', description: 'Show test results' },
-        ],
-      });
-
-      if (!response.command) {
-        // User cancelled (Ctrl+C)
-        return 0;
-      }
-
-      // Re-parse with the selected command
-      const newArgv = [response.command, ...argv.slice(1)];
-      return await mainWithArgv(newArgv);
-    } catch (err) {
-      // Handle cancellation gracefully
-      if ((err as any)?.name === 'ExitPrompt') {
-        return 0;
-      }
-      throw err;
-    }
+    return 0;
   }
 
   // Convert Commander.js opts to CliFlags format

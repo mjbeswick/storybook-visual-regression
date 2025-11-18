@@ -143,6 +143,47 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
   const indexManager = new SnapshotIndexManager(snapshotsDir);
   const resultsIndexManager = new ResultsIndexManager(resultsDir);
 
+  // Set up signal handlers to flush index files on termination
+  // These handlers run before the parallel runner's handlers to ensure indexes are saved
+  const setupSignalHandlers = () => {
+    let flushed = false;
+    const flushIndexes = () => {
+      if (flushed) return; // Only flush once
+      flushed = true;
+      logger.debug('Flushing index files before exit...');
+      try {
+        indexManager.flush();
+        resultsIndexManager.flush();
+      } catch (error) {
+        logger.error(`Error flushing index files: ${error}`);
+      }
+    };
+
+    // Handle SIGINT (Ctrl+C) and SIGTERM
+    // Use 'on' instead of 'once' to ensure we catch the signal
+    // Don't exit here - let the parallel runner handle that
+    const sigintHandler = () => flushIndexes();
+    const sigtermHandler = () => flushIndexes();
+
+    process.on('SIGINT', sigintHandler);
+    process.on('SIGTERM', sigtermHandler);
+
+    // Also handle process exit as a fallback
+    process.on('exit', () => {
+      if (!flushed) {
+        flushIndexes();
+      }
+    });
+
+    // Return cleanup function to remove handlers if needed
+    return () => {
+      process.removeListener('SIGINT', sigintHandler);
+      process.removeListener('SIGTERM', sigtermHandler);
+    };
+  };
+
+  const removeSignalHandlers = setupSignalHandlers();
+
   // Discover stories
   logger.debug('Discovering stories from Storybook');
   const baseStories = await discoverStories(config);
@@ -315,6 +356,9 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     indexManager,
     resultsIndexManager,
   });
+
+  // Remove signal handlers
+  removeSignalHandlers();
 
   // Flush index updates
   indexManager.flush();

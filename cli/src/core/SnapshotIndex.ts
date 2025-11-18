@@ -33,8 +33,8 @@ export class SnapshotIndexManager {
   private readonly MAX_PENDING_BEFORE_WRITE = 50; // Force write after 50 pending updates
 
   constructor(snapshotsDir: string) {
-    // Store index.json in the snapshots directory
-    this.indexPath = path.join(snapshotsDir, 'index.json');
+    // Store index.jsonl in the snapshots directory
+    this.indexPath = path.join(snapshotsDir, 'index.jsonl');
     this.index = this.loadIndex();
     this.buildEntriesMap();
   }
@@ -57,31 +57,38 @@ export class SnapshotIndexManager {
     return parts.join('::');
   }
 
+  /**
+   * Sort entries by unique key for consistent git diffs
+   */
+  private sortEntries(entries: SnapshotEntry[]): SnapshotEntry[] {
+    return [...entries].sort((a, b) => {
+      const keyA = this.buildKey(a.storyId, a.browser, a.viewportName);
+      const keyB = this.buildKey(b.storyId, b.browser, b.viewportName);
+      return keyA.localeCompare(keyB);
+    });
+  }
+
   private loadIndex(): SnapshotIndex {
     if (fs.existsSync(this.indexPath)) {
       try {
         const content = fs.readFileSync(this.indexPath, 'utf8');
-        const parsed = JSON.parse(content);
+        const lines = content.split('\n').filter((line) => line.trim().length > 0);
+        const entries: SnapshotEntry[] = [];
 
-        // Migrate old format (object with keys) to new format (array)
-        if (parsed.entries && !Array.isArray(parsed.entries)) {
-          // Old format: { entries: { "storyId": { storyId, snapshotId, ... } } }
-          const oldEntries = parsed.entries as Record<string, SnapshotEntry>;
-          parsed.entries = Object.values(oldEntries);
+        for (const line of lines) {
+          try {
+            const entry = JSON.parse(line) as SnapshotEntry;
+            entries.push(entry);
+          } catch (error) {
+            // Skip invalid lines
+            console.warn(`Skipping invalid line in index.jsonl: ${line.substring(0, 50)}...`);
+          }
         }
 
-        if (!parsed.version) {
-          parsed.version = 1;
-        }
-
-        if (!Array.isArray(parsed.entries)) {
-          parsed.entries = [];
-        }
-
-        return parsed as SnapshotIndex;
+        return { version: 1, entries };
       } catch (error) {
         // If index is corrupted, start fresh
-        console.warn(`Failed to load index.json: ${error}, starting fresh`);
+        console.warn(`Failed to load index.jsonl: ${error}, starting fresh`);
       }
     }
     return { version: 1, entries: [] };
@@ -89,7 +96,7 @@ export class SnapshotIndexManager {
 
   /**
    * Get snapshot ID for a story, creating one if it doesn't exist
-   * storyId is the primary key - only one entry per storyId
+   * Unique key is storyId + browser + viewport
    */
   getSnapshotId(
     storyId: string,
@@ -100,25 +107,52 @@ export class SnapshotIndexManager {
     // Default browser to 'chromium' if not provided
     const normalizedBrowser = browser || 'chromium';
 
-    // Check if an entry already exists for this storyId (primary key)
-    // If there are multiple entries (duplicates), prefer one that has a corresponding file
-    const existingEntries = this.index.entries.filter((e) => e.storyId === storyId);
+    // Check if an entry already exists for this unique combination (storyId + browser + viewport)
+    const key = this.buildKey(storyId, normalizedBrowser, viewportName);
+    let existingEntry = this.entriesMap.get(key);
 
-    if (existingEntries.length > 0) {
-      let existingEntry = existingEntries[0];
-
-      // If there are multiple entries and we have a base path, prefer one with an existing file
-      if (existingEntries.length > 1 && snapshotBasePath) {
-        const entryWithFile = existingEntries.find((entry) => {
-          const snapshotPath = this.getSnapshotPath(entry.snapshotId, snapshotBasePath, storyId);
-          return fs.existsSync(snapshotPath);
-        });
-        if (entryWithFile) {
-          existingEntry = entryWithFile;
+    // If not found in map, check if there are any entries with same storyId (for migration/cleanup)
+    if (!existingEntry) {
+      const existingEntries = this.index.entries.filter((e) => e.storyId === storyId);
+      if (existingEntries.length > 0) {
+        // If there are multiple entries and we have a base path, prefer one with an existing file
+        if (existingEntries.length > 1 && snapshotBasePath) {
+          const entryWithFile = existingEntries.find((entry) => {
+            const snapshotPath = this.getSnapshotPath(entry.snapshotId, snapshotBasePath, storyId);
+            return fs.existsSync(snapshotPath);
+          });
+          if (entryWithFile) {
+            existingEntry = entryWithFile;
+          } else {
+            existingEntry = existingEntries[0];
+          }
+        } else {
+          existingEntry = existingEntries[0];
         }
-      }
 
-      // Update existing entry with browser and viewport name if provided
+        // Update the entry to match the requested browser/viewport
+        // This handles migration from old entries that didn't have browser/viewport
+        if (existingEntry.browser !== normalizedBrowser || existingEntry.viewportName !== viewportName) {
+          // Build old key before updating
+          const oldKey = this.buildKey(existingEntry.storyId, existingEntry.browser, existingEntry.viewportName);
+          // Update the entry
+          existingEntry.browser = normalizedBrowser;
+          existingEntry.viewportName = viewportName;
+          existingEntry.updatedAt = new Date().toISOString();
+          // Update the map: remove old key, add new key
+          this.entriesMap.delete(oldKey);
+          this.entriesMap.set(key, existingEntry);
+          this.pendingUpdates.set(key, existingEntry);
+          this.scheduleWrite();
+        } else {
+          // Entry matches, just update the map
+          this.entriesMap.set(key, existingEntry);
+        }
+
+        return existingEntry.snapshotId;
+      }
+    } else {
+      // Entry found in map - update browser/viewport if needed
       let updated = false;
       if (normalizedBrowser && existingEntry.browser !== normalizedBrowser) {
         existingEntry.browser = normalizedBrowser;
@@ -133,8 +167,8 @@ export class SnapshotIndexManager {
         existingEntry.updatedAt = new Date().toISOString();
         // Rebuild entries map with updated key
         this.buildEntriesMap();
-        const key = this.buildKey(storyId, existingEntry.browser, existingEntry.viewportName);
-        this.pendingUpdates.set(key, existingEntry);
+        const newKey = this.buildKey(storyId, existingEntry.browser, existingEntry.viewportName);
+        this.pendingUpdates.set(newKey, existingEntry);
         this.scheduleWrite();
       }
 
@@ -153,7 +187,7 @@ export class SnapshotIndexManager {
       updatedAt: now,
     };
 
-    const key = this.buildKey(storyId, normalizedBrowser, viewportName);
+    // Use the key that was already built at the start of the function
     this.entriesMap.set(key, newEntry);
     this.index.entries.push(newEntry);
     this.pendingUpdates.set(key, newEntry);
@@ -363,6 +397,7 @@ export class SnapshotIndexManager {
 
   /**
    * Flush pending writes to disk
+   * Writes as JSONL (one compact JSON object per line) sorted by key for git-friendly diffs
    */
   private flushWrites(): void {
     if (this.pendingUpdates.size === 0) {
@@ -389,14 +424,22 @@ export class SnapshotIndexManager {
         this.entriesMap.set(key, entry);
       }
 
+      // Sort entries by key for consistent git diffs
+      const sorted = this.sortEntries(this.index.entries);
+
+      // Write as compact JSONL (one JSON object per line, no pretty-printing)
+      // This is more efficient and git-friendly than pretty-printed JSON
+      const lines = sorted.map((entry) => JSON.stringify(entry));
+      const content = lines.join('\n') + '\n';
+
       // Write to disk atomically
       const tempPath = `${this.indexPath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(this.index, null, 2), 'utf8');
+      fs.writeFileSync(tempPath, content, 'utf8');
       fs.renameSync(tempPath, this.indexPath);
 
       this.pendingUpdates.clear();
     } catch (error) {
-      console.error(`Failed to write index.json: ${error}`);
+      console.error(`Failed to write index.jsonl: ${error}`);
     } finally {
       this.isWriting = false;
 
@@ -409,6 +452,7 @@ export class SnapshotIndexManager {
 
   /**
    * Force flush all pending writes (call before exit)
+   * Ensures all updates are written to disk synchronously
    */
   flush(): void {
     // Clear any pending timer and write immediately
@@ -417,16 +461,30 @@ export class SnapshotIndexManager {
       this.writeTimer = null;
     }
 
-    while (this.pendingUpdates.size > 0 || this.isWriting) {
+    // Keep flushing until all updates are written
+    // Use a small synchronous delay between attempts to avoid busy-waiting
+    let attempts = 0;
+    const maxAttempts = 100; // Safety limit to prevent infinite loops
+
+    while ((this.pendingUpdates.size > 0 || this.isWriting) && attempts < maxAttempts) {
       this.flushWrites();
-      // Small delay to allow async operations to complete
+      attempts++;
+
+      // If there are still pending updates after a write, give it a tiny delay
+      // This handles the case where updates came in during the write
       if (this.pendingUpdates.size > 0) {
-        // Synchronous wait for pending writes
+        // Use a small synchronous delay (10ms) instead of busy-wait
         const start = Date.now();
-        while (Date.now() - start < 100 && this.pendingUpdates.size > 0) {
-          // Busy wait
+        while (Date.now() - start < 10) {
+          // Small delay
         }
       }
+    }
+
+    if (attempts >= maxAttempts && (this.pendingUpdates.size > 0 || this.isWriting)) {
+      console.warn(
+        `Warning: Could not flush all pending updates after ${maxAttempts} attempts. Some updates may be lost.`,
+      );
     }
   }
 
@@ -514,8 +572,8 @@ export class SnapshotIndexManager {
   }
 
   /**
-   * Clean up duplicate entries - storyId is the primary key
-   * Keeps the most recent entry per storyId and removes older duplicates
+   * Clean up duplicate entries - unique key is storyId + browser + viewport
+   * Keeps the most recent entry per unique combination and removes older duplicates
    */
   cleanupDuplicateEntries(): {
     deletedEntries: number;
@@ -524,8 +582,8 @@ export class SnapshotIndexManager {
     const duplicates: SnapshotEntry[] = [];
 
     for (const entry of this.index.entries) {
-      const storyId = entry.storyId;
-      const existing = seen.get(storyId);
+      const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
+      const existing = seen.get(key);
 
       if (existing) {
         // Compare timestamps to keep the most recent one
@@ -535,13 +593,13 @@ export class SnapshotIndexManager {
         if (currentTime > existingTime) {
           // Current entry is newer, mark existing as duplicate
           duplicates.push(existing);
-          seen.set(storyId, entry);
+          seen.set(key, entry);
         } else {
           // Existing entry is newer or same, mark current as duplicate
           duplicates.push(entry);
         }
       } else {
-        seen.set(storyId, entry);
+        seen.set(key, entry);
       }
     }
 
@@ -649,8 +707,8 @@ export class SnapshotIndexManager {
             } else {
               dirIsEmpty = false;
             }
-          } else if (name === 'index.json') {
-            // Keep index.json
+          } else if (name === 'index.jsonl' || name === 'index.json') {
+            // Keep index files
             dirIsEmpty = false;
           } else {
             // Delete any other files that shouldn't be here

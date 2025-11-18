@@ -34,22 +34,8 @@ export class ResultsIndexManager {
   private readonly MAX_PENDING_BEFORE_WRITE = 50; // Force write after 50 pending updates
 
   constructor(resultsDir: string) {
-    // Store index.json in the results directory (migrate from old results.json if needed)
-    const indexJsonPath = path.join(resultsDir, 'index.json');
-    const resultsJsonPath = path.join(resultsDir, 'results.json');
-
-    // Migrate from old results.json to new index.json if needed
-    if (fs.existsSync(resultsJsonPath) && !fs.existsSync(indexJsonPath)) {
-      try {
-        fs.copyFileSync(resultsJsonPath, indexJsonPath);
-        // Optionally remove old file after successful migration
-        // fs.unlinkSync(resultsJsonPath);
-      } catch (error) {
-        console.warn(`Failed to migrate results.json to index.json: ${error}`);
-      }
-    }
-
-    this.indexPath = indexJsonPath;
+    // Store index.jsonl in the results directory
+    this.indexPath = path.join(resultsDir, 'index.jsonl');
     this.index = this.loadIndex();
     this.buildEntriesMap();
   }
@@ -72,30 +58,38 @@ export class ResultsIndexManager {
     return parts.join('::');
   }
 
+  /**
+   * Sort entries by unique key for consistent git diffs
+   */
+  private sortEntries(entries: ResultEntry[]): ResultEntry[] {
+    return [...entries].sort((a, b) => {
+      const keyA = this.buildKey(a.storyId, a.browser, a.viewportName);
+      const keyB = this.buildKey(b.storyId, b.browser, b.viewportName);
+      return keyA.localeCompare(keyB);
+    });
+  }
+
   private loadIndex(): ResultsIndex {
     if (fs.existsSync(this.indexPath)) {
       try {
         const content = fs.readFileSync(this.indexPath, 'utf8');
-        const parsed = JSON.parse(content);
+        const lines = content.split('\n').filter((line) => line.trim().length > 0);
+        const entries: ResultEntry[] = [];
 
-        // Migrate old format (object with keys) to new format (array)
-        if (parsed.entries && !Array.isArray(parsed.entries)) {
-          const oldEntries = parsed.entries as Record<string, ResultEntry>;
-          parsed.entries = Object.values(oldEntries);
+        for (const line of lines) {
+          try {
+            const entry = JSON.parse(line) as ResultEntry;
+            entries.push(entry);
+          } catch (error) {
+            // Skip invalid lines
+            console.warn(`Skipping invalid line in index.jsonl: ${line.substring(0, 50)}...`);
+          }
         }
 
-        if (!parsed.version) {
-          parsed.version = 1;
-        }
-
-        if (!Array.isArray(parsed.entries)) {
-          parsed.entries = [];
-        }
-
-        return parsed as ResultsIndex;
+        return { version: 1, entries };
       } catch (error) {
         // If index is corrupted, start fresh
-        console.warn(`Failed to load index.json: ${error}, starting fresh`);
+        console.warn(`Failed to load index.jsonl: ${error}, starting fresh`);
       }
     }
     return { version: 1, entries: [] };
@@ -287,6 +281,7 @@ export class ResultsIndexManager {
 
   /**
    * Flush pending writes to disk
+   * Writes as JSONL (one compact JSON object per line) sorted by key for git-friendly diffs
    */
   private flushWrites(): void {
     if (this.pendingUpdates.size === 0) {
@@ -298,16 +293,22 @@ export class ResultsIndexManager {
 
     try {
       // Updates are already applied to index.entries and entriesMap in setResult()
-      // Just need to write to disk
+      // Sort entries by key for consistent git diffs
+      const sorted = this.sortEntries(this.index.entries);
+
+      // Write as compact JSONL (one JSON object per line, no pretty-printing)
+      // This is more efficient and git-friendly than pretty-printed JSON
+      const lines = sorted.map((entry) => JSON.stringify(entry));
+      const content = lines.join('\n') + '\n';
 
       // Write to disk atomically
       const tempPath = `${this.indexPath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(this.index, null, 2), 'utf8');
+      fs.writeFileSync(tempPath, content, 'utf8');
       fs.renameSync(tempPath, this.indexPath);
 
       this.pendingUpdates.clear();
     } catch (error) {
-      console.error(`Failed to write index.json: ${error}`);
+      console.error(`Failed to write index.jsonl: ${error}`);
     } finally {
       this.isWriting = false;
 
@@ -320,6 +321,7 @@ export class ResultsIndexManager {
 
   /**
    * Force flush all pending writes (call before exit)
+   * Ensures all updates are written to disk synchronously
    */
   flush(): void {
     // Clear any pending timer and write immediately
@@ -328,15 +330,30 @@ export class ResultsIndexManager {
       this.writeTimer = null;
     }
 
-    while (this.pendingUpdates.size > 0 || this.isWriting) {
+    // Keep flushing until all updates are written
+    // Use a small synchronous delay between attempts to avoid busy-waiting
+    let attempts = 0;
+    const maxAttempts = 100; // Safety limit to prevent infinite loops
+
+    while ((this.pendingUpdates.size > 0 || this.isWriting) && attempts < maxAttempts) {
       this.flushWrites();
-      // Small delay to allow async operations to complete
+      attempts++;
+
+      // If there are still pending updates after a write, give it a tiny delay
+      // This handles the case where updates came in during the write
       if (this.pendingUpdates.size > 0) {
+        // Use a small synchronous delay (10ms) instead of busy-wait
         const start = Date.now();
-        while (Date.now() - start < 100 && this.pendingUpdates.size > 0) {
-          // Busy wait
+        while (Date.now() - start < 10) {
+          // Small delay
         }
       }
+    }
+
+    if (attempts >= maxAttempts && (this.pendingUpdates.size > 0 || this.isWriting)) {
+      console.warn(
+        `Warning: Could not flush all pending updates after ${maxAttempts} attempts. Some updates may be lost.`,
+      );
     }
   }
 
@@ -437,9 +454,17 @@ export class ResultsIndexManager {
             } else {
               dirIsEmpty = false;
             }
-          } else {
-            // Keep other files (like index.json, etc.)
+          } else if (name === 'index.jsonl' || name === 'index.json') {
+            // Keep index files
             dirIsEmpty = false;
+          } else {
+            // Delete any other files that shouldn't be here
+            try {
+              fs.unlinkSync(fullPath);
+              deletedFiles++;
+            } catch (error) {
+              // Ignore errors
+            }
           }
         }
 
@@ -465,8 +490,8 @@ export class ResultsIndexManager {
   }
 
   /**
-   * Clean up duplicate entries - storyId is the primary key
-   * Keeps the most recent entry per storyId and removes older duplicates
+   * Clean up duplicate entries - unique key is storyId + browser + viewport
+   * Keeps the most recent entry per unique combination and removes older duplicates
    */
   cleanupDuplicateEntries(): {
     deletedEntries: number;
@@ -475,8 +500,8 @@ export class ResultsIndexManager {
     const duplicates: ResultEntry[] = [];
 
     for (const entry of this.index.entries) {
-      const storyId = entry.storyId;
-      const existing = seen.get(storyId);
+      const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
+      const existing = seen.get(key);
 
       if (existing) {
         // Compare timestamps to keep the most recent one
@@ -486,13 +511,13 @@ export class ResultsIndexManager {
         if (currentTime > existingTime) {
           // Current entry is newer, mark existing as duplicate
           duplicates.push(existing);
-          seen.set(storyId, entry);
+          seen.set(key, entry);
         } else {
           // Existing entry is newer or same, mark current as duplicate
           duplicates.push(entry);
         }
       } else {
-        seen.set(storyId, entry);
+        seen.set(key, entry);
       }
     }
 

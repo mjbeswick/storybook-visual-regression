@@ -50,6 +50,7 @@ function colorize(text: string, color: string): string {
  * Strip ANSI color codes from a string
  */
 function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
   return str.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
@@ -70,9 +71,8 @@ export function listResults(
   const outputLines: string[] = [];
   const writeLine = (line: string) => {
     outputLines.push(line);
-    if (!options?.outputFile) {
-      console.log(line);
-    }
+    // Always print to console, but also collect for file if outputFile is specified
+    console.log(line);
   };
 
   if (!fs.existsSync(resultsDir)) {
@@ -192,6 +192,13 @@ export function listResults(
     : entries;
 
   // Determine if we should show a concise format (only failed results, no summary)
+  // If showing failed results and there are none, and no output file is specified,
+  // don't show anything (--results with no failures should be silent)
+  // However, if outputFile is specified, we should still write the file even if there are no results
+  if (filteredEntries.length === 0 && options?.status === 'failed' && !options?.outputFile) {
+    return;
+  }
+
   const isConciseFormat = options?.status === 'failed' && filteredEntries.length > 0;
 
   if (!isConciseFormat) {
@@ -205,12 +212,18 @@ export function listResults(
     const newSnapshotsAll = allByStatus.new.length;
     const missingAll = allByStatus.missing.length;
 
-    writeLine(`\nSummary:`);
-    writeLine(`  ${colorize(`✓ Passed: ${passedAll}`, STATUS_COLORS.passed)}`);
-    writeLine(`  ${colorize(`✗ Failed: ${failedAll}`, STATUS_COLORS.failed)}`);
-    writeLine(`  ${colorize(`+ New: ${newSnapshotsAll}`, STATUS_COLORS.new)}`);
-    writeLine(`  ${colorize(`⚠ Missing: ${missingAll}`, STATUS_COLORS.missing)}`);
-    writeLine(`  Total: ${totalAll}`);
+    // Format summary like status line: Passed: X • Failed: Y • New: Z • Missing: W • Total: N
+    const breakdown: string[] = [];
+    breakdown.push(chalk.green(`Passed: ${passedAll}`));
+    breakdown.push(chalk.red(`Failed: ${failedAll}`));
+    if (newSnapshotsAll > 0) {
+      breakdown.push(colorize(`New: ${newSnapshotsAll}`, STATUS_COLORS.new));
+    }
+    if (missingAll > 0) {
+      breakdown.push(colorize(`Missing: ${missingAll}`, STATUS_COLORS.missing));
+    }
+    breakdown.push(`Total: ${totalAll}`);
+    writeLine(`\n${breakdown.join(chalk.dim(' • '))}`);
   } else {
     // Concise format: just the header with separator
     writeLine('\n' + chalk.bold('Test Results'));
@@ -394,7 +407,6 @@ export function listResults(
   }
 
   if (!isConciseFormat) {
-    writeLine('\n' + '═'.repeat(80));
     const filteredTotal = filteredEntries.length;
     writeLine(`\nTotal: ${filteredTotal} result(s) across ${sorted.length} story path(s)\n`);
   } else {
@@ -412,7 +424,15 @@ export function listResults(
  * Write output lines to a file, stripping ANSI codes
  */
 function writeOutputFile(filePath: string, lines: string[]): void {
-  const content = lines.map((line) => stripAnsi(line)).join('\n');
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, 'utf8');
+  try {
+    const content = lines.map((line) => stripAnsi(line)).join('\n');
+    const dir = path.dirname(filePath);
+    if (dir && dir !== '.') {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, content, 'utf8');
+  } catch (error) {
+    console.error(`Failed to write results file to ${filePath}: ${error}`);
+    throw error;
+  }
 }
