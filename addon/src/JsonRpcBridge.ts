@@ -128,8 +128,10 @@ export class JsonRpcBridge {
         }
       }
 
-      // Spawn CLI with --json-rpc flag
+      // Spawn CLI with --json-rpc flag and custom output directory
+      const tempOutputDir = `/tmp/storybook-visual-regression-${Date.now()}`;
       console.log(`[VR Addon] Spawning CLI from project root: ${projectRoot}`);
+      console.log(`[VR Addon] Using temporary output directory: ${tempOutputDir}`);
       console.log(`[VR Addon] CLI command: ${command} ${args.join(' ')}`);
       console.log(`[VR Addon] Working directory: ${projectRoot}`);
       console.log(`[VR Addon] Current process.cwd(): ${process.cwd()}`);

@@ -188,6 +188,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
           params: {
             url: window.location.origin, // Storybook URL
             grep: '', // Empty grep to run all tests
+            outputDir: `/tmp/storybook-visual-regression-${Date.now()}`, // Use temp directory
           },
         }),
       })
