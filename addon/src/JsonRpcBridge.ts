@@ -153,6 +153,12 @@ export class JsonRpcBridge {
           // Prevent any WebSocket or network communication that might trigger HMR
           DISABLE_WEB_SOCKETS: 'true',
           NO_HMR: '1',
+          // Playwright-specific settings to prevent HMR triggers
+          PLAYWRIGHT_SKIP_HMR: 'true',
+          BROWSER_HMR_DISABLED: 'true',
+          // Network isolation
+          NETWORK_ISOLATION: 'true',
+          DISABLE_NETWORK_HMR: 'true',
         },
         shell: useShell,
       });
