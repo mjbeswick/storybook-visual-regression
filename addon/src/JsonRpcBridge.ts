@@ -147,6 +147,12 @@ export class JsonRpcBridge {
           VITE_SKIP_WATCH: 'true',
           DISABLE_HMR: 'true',
           SKIP_PREFLIGHT_CHECK: 'true',
+          // Storybook-specific environment variables
+          STORYBOOK_DISABLE_HMR: 'true',
+          STORYBOOK_SKIP_HMR: 'true',
+          // Prevent any WebSocket or network communication that might trigger HMR
+          DISABLE_WEB_SOCKETS: 'true',
+          NO_HMR: '1',
         },
         shell: useShell,
       });
