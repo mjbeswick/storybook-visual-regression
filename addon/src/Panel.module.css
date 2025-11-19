@@ -28,18 +28,6 @@
   margin-right: 8px;
 }
 
-.log {
-  height: 100%;
-  width: 100%;
-  overflow: hidden; /* xterm.js handles its own scrolling */
-  padding: 0; /* xterm.js handles its own padding */
-}
-
-.log :global(.xterm) {
-  padding: 8px;
-  height: 100%;
-  box-sizing: border-box;
-}
 
 .failuresList {
   margin: 0;
@@ -50,13 +38,27 @@
 
 .failureItem {
   display: list-item;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+}
+
+.failureItemCurrent {
+  background-color: #fef3c7;
+  border-left: 3px solid #f59e0b;
+  padding-left: 4px;
+  margin-left: -7px;
+  border-radius: 4px;
+}
+
+.failureContent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .linkButton {
   background: transparent;
   border: none;
-  padding: 0;
+  padding: 2px 0;
   margin: 0;
   color: #2563eb;
   text-decoration: underline;
@@ -65,70 +67,57 @@
   font-weight: 500;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+.linkButton:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.linkButton:active {
+  color: #1e40af;
+}
+
+.linkButtonCurrent {
+  font-weight: 600;
+  color: #92400e;
+}
+
+.failureName {
+  flex-shrink: 0;
+}
+
+.failureDetails {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.diffInfo {
+  color: #dc2626;
+  font-weight: 500;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.failureReason {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 400;
+  font-style: italic;
 }
 
 .errorIndicator {
   font-size: 12px;
   color: #dc2626;
+  flex-shrink: 0;
 }
 
-.logContainer {
-  position: relative;
-  height: 100%;
-}
-
-.cancelButton {
-  position: absolute;
-  top: 16px;
-  right: 32px;
-  min-width: 85px;
-  z-index: 10;
-  background: #dc2626;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  padding: 6px 12px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  transition: background-color 0.2s ease;
-}
-
-.cancelButton:hover {
-  background: #b91c1c;
-}
-
-.cancelButton:active {
-  background: #991b1b;
-}
-
-.closeButton {
-  position: absolute;
-  top: 16px;
-  right: 32px;
-  min-width: 85px;
-  z-index: 10;
-  background: #16a34a;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  padding: 6px 12px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  transition: background-color 0.2s ease;
-}
-
-.closeButton:hover {
-  background: #15803d;
-}
-
-.closeButton:active {
-  background: #166534;
-}
 
 .noResults {
   padding: 24px 0;
@@ -157,7 +146,134 @@
   font-weight: 500;
 }
 
-/* xterm.js handles ANSI colors and styles natively */
+/* Running state styles */
+.runningContainer {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.progressBar {
+  width: 100%;
+  height: 4px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: #2563eb;
+  transition: width 0.3s ease-out;
+}
+
+.runningContent {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.runningText {
+  flex: 1;
+  min-width: 0;
+}
+
+.runningText strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #111827;
+  font-size: 14px;
+}
+
+.progressStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.progressStat {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.cpuLow {
+  color: #16a34a;
+}
+
+.cpuMedium {
+  color: #eab308;
+}
+
+.cpuHigh {
+  color: #dc2626;
+}
+
+.logPreview {
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  color: #6b7280;
+  background: #f9fafb;
+  padding: 8px;
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.logLine {
+  margin-bottom: 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cancelButtonInline {
+  flex-shrink: 0;
+}
+
+.resultsSection {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.resultsSection h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.failuresSection {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.failuresSection h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+}
 
 /* Configuration section styles */
 .configSection {

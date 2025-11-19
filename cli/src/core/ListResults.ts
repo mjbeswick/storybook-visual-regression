@@ -425,12 +425,12 @@ export function listResults(
  */
 function writeOutputFile(filePath: string, lines: string[]): void {
   try {
-    const content = lines.map((line) => stripAnsi(line)).join('\n');
+  const content = lines.map((line) => stripAnsi(line)).join('\n');
     const dir = path.dirname(filePath);
     if (dir && dir !== '.') {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(filePath, content, 'utf8');
+  fs.writeFileSync(filePath, content, 'utf8');
   } catch (error) {
     console.error(`Failed to write results file to ${filePath}: ${error}`);
     throw error;

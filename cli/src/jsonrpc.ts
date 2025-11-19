@@ -68,6 +68,8 @@ export interface StoryResult {
   expectedPath?: string;
   errorPath?: string;
   errorType?: 'screenshot_mismatch' | 'loading_failure' | 'network_error' | 'other_error';
+  diffPixels?: number;
+  diffPercent?: number;
 }
 
 export interface ProgressInfo {
@@ -428,22 +430,73 @@ export class JsonRpcServer {
   start(): void {
     let buffer = '';
 
-    this.stdin.on('data', (data) => {
-      buffer += data.toString();
+    console.error('[CLI] Starting JSON-RPC server, setting up stdin listeners...');
+    console.error(`[CLI] stdin readable: ${this.stdin.readable}, isTTY: ${this.stdin.isTTY}`);
+
+    // Ensure stdin is readable and not paused
+    this.stdin.resume();
+    this.stdin.setEncoding('utf8');
+
+    // Shared function to process incoming data
+    const processData = (dataStr: string) => {
+      console.error(
+        `[CLI] Processing data (${dataStr.length} bytes): ${dataStr.substring(0, 200)}`,
+      );
+      buffer += dataStr;
 
       // Process complete messages
       const messages = this.parseJsonRpcMessages(buffer);
+      console.error(`[CLI] Parsed ${messages.length} message(s) from buffer`);
       if (messages.length > 0) {
-        buffer = messages.pop()?.remaining || '';
-        for (const message of messages) {
-          this.handleMessage(message);
+        // Get the remaining buffer from the last message (if any incomplete message remains)
+        const lastMessage = messages[messages.length - 1];
+        buffer = lastMessage.remaining;
+
+        // Process all complete messages (handleMessage is async, but we don't await to avoid blocking)
+        for (const msg of messages) {
+          console.error(
+            `[CLI] Processing message: ${JSON.stringify(msg.message).substring(0, 200)}`,
+          );
+          // Fire and forget - handleMessage will send responses asynchronously
+          this.handleMessage(msg.message).catch((error) => {
+            console.error('[CLI] Error handling message:', error);
+          });
         }
+      }
+    };
+
+    // Listen for 'data' events (works for TTY)
+    // Note: For pipes, 'readable' is more reliable, so we'll primarily use that
+    // But keep 'data' as a fallback
+    let usingReadable = false;
+    this.stdin.on('data', (data) => {
+      if (!usingReadable) {
+        console.error(`[CLI] Received 'data' event`);
+        processData(data.toString());
       }
     });
 
     this.stdin.on('end', () => {
+      console.error('[CLI] stdin ended');
       process.exit(0);
     });
+
+    this.stdin.on('error', (error) => {
+      console.error('[CLI] stdin error:', error);
+    });
+
+    // Also handle 'readable' event and read manually (for pipes, this is more reliable)
+    this.stdin.on('readable', () => {
+      usingReadable = true; // Mark that we're using readable mode
+      console.error('[CLI] stdin is readable, reading...');
+      let chunk: Buffer | string | null;
+      while ((chunk = this.stdin.read()) !== null) {
+        console.error(`[CLI] Read chunk from stdin (${chunk.length} bytes)`);
+        processData(chunk.toString());
+      }
+    });
+
+    console.error('[CLI] JSON-RPC server started, waiting for messages...');
   }
 
   /**
@@ -506,17 +559,22 @@ export class JsonRpcServer {
 
     if ('method' in message && 'id' in message) {
       // This is a request - handle it and send response
+      console.error(`[CLI] Received request: ${message.method} (ID: ${message.id})`);
       const handlers = this.listeners.get(message.method);
       if (handlers) {
         try {
+          console.error(`[CLI] Found ${handlers.size} handler(s) for ${message.method}`);
           const result = await Promise.race([
             ...Array.from(handlers).map((handler) => handler(message.params)),
           ]);
+          console.error(`[CLI] Handler completed, sending response for ID ${message.id}`);
           this.respond(message.id, result);
         } catch (error) {
+          console.error(`[CLI] Handler error for ${message.method}:`, error);
           this.error(message.id, -32000, error instanceof Error ? error.message : 'Unknown error');
         }
       } else {
+        console.error(`[CLI] No handler found for method: ${message.method}`);
         this.error(message.id, -32601, `Method not found: ${message.method}`);
       }
     }
@@ -525,7 +583,13 @@ export class JsonRpcServer {
 
   private sendMessage(message: JsonRpcResponse | JsonRpcNotification): void {
     const json = JSON.stringify(message) + '\n';
+    console.error(`[CLI] Sending message: ${json.substring(0, 100)}...`);
     this.stdout.write(json);
+    // Ensure stdout is flushed
+    if (this.stdout.isTTY === false) {
+      // For non-TTY streams, we might need to ensure it's flushed
+      // But write() should handle this automatically
+    }
   }
 
   private parseJsonRpcMessages(buffer: string): Array<{ message: any; remaining: string }> {

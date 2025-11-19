@@ -2357,6 +2357,45 @@ export async function runParallelTests(options: {
     }
     // Update spinner display
     updateSpinner(completed, total);
+    
+    // Also notify external callback with rich progress info
+    if (callbacks?.onProgress) {
+      const elapsed = Date.now() - startTime;
+      const elapsedMinutes = Math.max(elapsed / 60000, 0.001);
+      const storiesPerMinute = completed > 0 ? Math.round(completed / elapsedMinutes) : 0;
+      const percent = Math.round((completed / total) * 100);
+      const timeStr = formatTimeRemaining(smoothedTimeRemaining);
+      const cpuUsagePercent = pool.getCurrentCpuUsage();
+      
+      // Get results to calculate passed/failed/skipped
+      const results = pool.getResults();
+      let passed = 0;
+      let failed = 0;
+      let skipped = 0;
+      for (const result of Object.values(results)) {
+        if (result.success) {
+          passed++;
+        } else {
+          failed++;
+        }
+        // Note: skipped is not tracked in StoryResult, would need to be added if needed
+      }
+      
+      callbacks.onProgress({
+        completed,
+        total,
+        passed,
+        failed,
+        skipped,
+        percent,
+        storiesPerMinute,
+        timeRemaining: smoothedTimeRemaining,
+        timeRemainingFormatted: timeStr,
+        workers: currentWorkers,
+        cpuUsage: cpuUsagePercent > 0 ? cpuUsagePercent : undefined,
+        elapsed: Math.round(elapsed / 1000),
+      });
+    }
   };
 
   // Set up interval to decrement time and update display every second
@@ -2371,6 +2410,8 @@ export async function runParallelTests(options: {
       if (currentCompleted > 0 || lastCompletedCount > 0) {
         lastCompletedCount = currentCompleted;
         updateSpinner(currentCompleted, filteredStories.length);
+        // Also trigger progress callback for real-time updates
+        onProgress(currentCompleted, filteredStories.length);
       }
     }, 1000);
   }

@@ -312,6 +312,56 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     logger.warn(`Failed to check for missing baselines: ${(e as Error).message}`);
   }
 
+  // Filter to failed stories only if requested
+  let storiesToTest = baseStories;
+  if (config.failedOnly) {
+    logger.debug('Filtering to failed stories only');
+    const failedStoryIds = new Set<string>();
+    const allResults = resultsIndexManager.getAllEntries();
+    
+    // Collect all story IDs that have failed results
+    for (const result of allResults) {
+      if (result.status === 'failed') {
+        // Add the story ID (may have viewport suffix, so we'll match base IDs)
+        failedStoryIds.add(result.storyId);
+        // Also add base story ID without viewport suffix for matching
+        const baseStoryId = result.storyId.replace(
+          /--(unattended|attended|customer|mobile|tablet|desktop)$/,
+          '',
+        );
+        if (baseStoryId !== result.storyId) {
+          failedStoryIds.add(baseStoryId);
+        }
+      }
+    }
+
+    if (failedStoryIds.size === 0) {
+      logger.warn('No failed stories found in results index');
+      storiesToTest = [];
+    } else {
+      // Filter stories to only include those with failed results
+      storiesToTest = baseStories.filter((story) => {
+        // Check if story ID matches any failed story ID (exact or base match)
+        const matches = failedStoryIds.has(story.id);
+        if (matches) return true;
+        
+        // Also check base story ID (without viewport suffix)
+        const baseStoryId = story.id.replace(
+          /--(unattended|attended|customer|mobile|tablet|desktop)$/,
+          '',
+        );
+        return failedStoryIds.has(baseStoryId);
+      });
+
+      const filteredCount = baseStories.length - storiesToTest.length;
+      if (filteredCount > 0) {
+        logger.info(
+          `Filtered to ${storiesToTest.length} failed stor${storiesToTest.length === 1 ? 'y' : 'ies'} (removed ${filteredCount} passed/skipped)`,
+        );
+      }
+    }
+  }
+
   // Discover viewports if enabled
   logger.debug('Detecting viewport configurations');
   const detected = await detectViewports(config);
@@ -326,7 +376,7 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
   const packageRoot = path.resolve(here, '..'); // dist/
   const runtimePath = getRuntimeOptionsPath(packageRoot);
   // Ensure snapshotRelPath is set for backward compatibility
-  const storiesWithPaths = baseStories.map((s) => ({
+  const storiesWithPaths = storiesToTest.map((s) => ({
     ...s,
     snapshotRelPath:
       s.snapshotRelPath ||
@@ -344,7 +394,7 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
   // Import and run the parallel test runner
   const { runParallelTests } = await import('../parallel-runner.js');
   const exitCode = await runParallelTests({
-    stories: baseStories,
+    stories: storiesToTest,
     config: {
       ...config,
       snapshotPath: path.resolve(originalCwd, config.snapshotPath),

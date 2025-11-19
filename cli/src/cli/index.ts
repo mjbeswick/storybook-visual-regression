@@ -139,6 +139,7 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     .description('Storybook Visual Regression CLI')
     .allowExcessArguments(false)
     .configureHelp({ sortOptions: true })
+    .option('--json-rpc', 'Enable JSON-RPC mode')
     .addCommand(
       new Command('test')
         .description('Run visual regression tests')
@@ -197,7 +198,6 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--install-deps', 'Install browser dependencies')
         .option('--not-found-check', 'Check for not found errors')
         .option('--not-found-retry-delay <ms>', 'Retry delay for not found errors', Number)
-        .option('--json-rpc', 'Enable JSON-RPC mode')
         .option(
           '--fix-date [date]',
           'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
@@ -476,20 +476,20 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           if (!opts.resultsOnly) {
             if (fs.existsSync(snapshotsDir)) {
               const indexManager = new SnapshotIndexManager(snapshotsDir);
-              
+
               // Clean up orphaned entries (entries without files)
               indexManager.cleanupOrphanedEntries(snapshotsDir);
-              
+
               // Clean up orphaned files (files without entries)
               const fileCleanup = indexManager.cleanupOrphanedFiles(snapshotsDir);
-              
+
               if (fileCleanup.deletedFiles > 0 || fileCleanup.deletedDirectories > 0) {
                 console.log(
                   `Cleaned up ${fileCleanup.deletedFiles} orphaned snapshot file(s) and ${fileCleanup.deletedDirectories} empty director${fileCleanup.deletedDirectories === 1 ? 'y' : 'ies'}`,
                 );
                 cleanedSnapshots = true;
               }
-              
+
               // Flush index updates
               indexManager.flush();
             } else {
@@ -501,20 +501,20 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
           if (!opts.snapshotsOnly) {
             if (fs.existsSync(resultsDir)) {
               const resultsIndexManager = new ResultsIndexManager(resultsDir);
-              
+
               // Clean up orphaned entries (entries without files)
               resultsIndexManager.cleanupOrphanedEntries(resultsDir);
-              
+
               // Clean up orphaned files (files without entries)
               const fileCleanup = resultsIndexManager.cleanupOrphanedFiles(resultsDir);
-              
+
               if (fileCleanup.deletedFiles > 0 || fileCleanup.deletedDirectories > 0) {
                 console.log(
                   `Cleaned up ${fileCleanup.deletedFiles} orphaned result file(s) and ${fileCleanup.deletedDirectories} empty director${fileCleanup.deletedDirectories === 1 ? 'y' : 'ies'}`,
                 );
                 cleanedResults = true;
               }
-              
+
               // Flush index updates
               resultsIndexManager.flush();
             } else {
@@ -544,6 +544,52 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
     .helpOption('-h, --help', 'Show help');
 
   program.exitOverride();
+
+  // Check for JSON-RPC mode early (before parsing, so it works with any command or no command)
+  if (argv.includes('--json-rpc')) {
+    // Remove --json-rpc from argv and parse remaining args to get other options
+    const jsonRpcIndex = argv.indexOf('--json-rpc');
+    const argvWithoutJsonRpc = [...argv];
+    argvWithoutJsonRpc.splice(jsonRpcIndex, 1);
+
+    // If there are no other args, skip parsing to avoid showing help
+    // Otherwise, parse to get config options
+    let parsedOpts: Record<string, unknown> = {};
+    if (argvWithoutJsonRpc.length > 0) {
+      try {
+        // Suppress stdout temporarily to prevent help from being printed
+        const originalWrite = process.stdout.write.bind(process.stdout);
+        let helpOutput = '';
+        process.stdout.write = ((chunk: any, ...args: any[]) => {
+          const str = chunk.toString();
+          // Capture help output but don't print it
+          if (str.includes('Usage:') || str.includes('Options:') || str.includes('Commands:')) {
+            helpOutput += str;
+            return true;
+          }
+          return originalWrite(chunk, ...args);
+        }) as any;
+
+        try {
+          await program.parseAsync(['node', 'svr', ...argvWithoutJsonRpc]);
+          parsedOpts = program.opts();
+        } finally {
+          // Restore stdout
+          process.stdout.write = originalWrite;
+        }
+      } catch (err: any) {
+        // Ignore parsing errors - we'll use default flags
+        if (err?.code !== 'commander.help' && err?.code !== 'commander.helpDisplayed') {
+          // Only log non-help errors
+          console.error('Warning: Error parsing options for JSON-RPC mode:', err.message);
+        }
+      }
+    }
+
+    const flags = optsToFlags(parsedOpts);
+    flags.jsonRpc = true;
+    return await runJsonRpcMode(flags);
+  }
 
   let parsedOpts: Record<string, unknown>;
   try {
@@ -799,9 +845,99 @@ const runJsonRpcMode = async (flags: CliFlags): Promise<number> => {
   });
 
   server.on(CLI_METHODS.GET_RESULTS, async () => {
-    // This would need to be implemented to return current results
-    // For now, return empty array
-    return [];
+    // Read failed results from the results index
+    try {
+      const resultsDir = config.resolvePath(config.resultsPath);
+      const resultsIndexManager = new ResultsIndexManager(resultsDir);
+      const allEntries = resultsIndexManager.getAllEntries();
+
+      // Filter to only failed results and convert to StoryResult format
+      const failedResults = allEntries
+        .filter((entry) => entry.status === 'failed')
+        .map((entry) => {
+          // Build paths for diff/actual images using getResultPath
+          const diffPath = resultsIndexManager.getResultPath(
+            entry.snapshotId,
+            resultsDir,
+            'diff',
+            entry.storyId,
+          );
+          const actualPath = resultsIndexManager.getResultPath(
+            entry.snapshotId,
+            resultsDir,
+            'actual',
+            entry.storyId,
+          );
+
+          const diffExists = fs.existsSync(diffPath);
+          const actualExists = fs.existsSync(actualPath);
+
+          // Determine the actual failure reason based on available data
+          let errorType:
+            | 'screenshot_mismatch'
+            | 'loading_failure'
+            | 'network_error'
+            | 'other_error'
+            | undefined;
+          let errorMessage: string | undefined;
+
+          if (entry.status === 'failed') {
+            // Check if we have diff comparison data (indicates screenshot was captured and compared)
+            const hasComparisonData =
+              entry.diffPixels !== undefined || entry.diffPercent !== undefined;
+
+            if (hasComparisonData) {
+              // Screenshot was captured and compared - this is a screenshot mismatch
+              errorType = 'screenshot_mismatch';
+              if (!diffExists) {
+                // Diff file is missing even though comparison happened
+                errorMessage = `Screenshot mismatch (${entry.diffPixels || 0} pixels, ${(entry.diffPercent || 0).toFixed(2)}%) - diff image missing`;
+              } else {
+                errorMessage = `Screenshot mismatch (${entry.diffPixels || 0} pixels, ${(entry.diffPercent || 0).toFixed(2)}%)`;
+              }
+            } else if (actualExists) {
+              // Actual image exists but no comparison data - might be a comparison failure
+              errorType = 'screenshot_mismatch';
+              errorMessage = 'Screenshot mismatch (comparison data unavailable)';
+            } else if (!entry.snapshotId) {
+              // No snapshot ID means no baseline exists
+              errorType = 'other_error';
+              errorMessage = 'Missing baseline snapshot';
+            } else {
+              // No actual image and has snapshot ID - likely a loading failure
+              errorType = 'loading_failure';
+              errorMessage = 'Failed to capture screenshot';
+            }
+
+            // Log if diff is missing for debugging
+            if (!diffExists && hasComparisonData) {
+              logger.debug(
+                `Missing diff image for ${entry.storyId}: expected at ${diffPath}, actual exists: ${actualExists}`,
+              );
+            }
+          }
+
+          return {
+            storyId: entry.storyId,
+            storyName: entry.storyId, // We don't have storyName in the index, use storyId
+            status: entry.status as 'passed' | 'failed' | 'skipped' | 'timedOut',
+            duration: entry.duration,
+            diffPath: diffExists ? diffPath : undefined,
+            actualPath: actualExists ? actualPath : undefined,
+            expectedPath: undefined, // Expected path would be in snapshots, not results
+            errorPath: entry.status === 'failed' && actualExists ? actualPath : undefined,
+            errorType,
+            error: errorMessage,
+            diffPixels: entry.diffPixels,
+            diffPercent: entry.diffPercent,
+          };
+        });
+
+      return failedResults;
+    } catch (error) {
+      logger.error(`Failed to load results: ${error}`);
+      return [];
+    }
   });
 
   // Start the server

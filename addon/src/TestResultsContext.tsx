@@ -1,13 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useStorybookApi } from '@storybook/manager-api';
 import { EVENTS } from './constants';
-import type { TestResult } from './types';
+import type { TestResult, ProgressInfo } from './types';
 
 type TestResultsContextType = {
   results: TestResult[];
   failedStories: string[];
   isRunning: boolean;
+  isUpdating: boolean;
   logs: string[];
+  progress: ProgressInfo | null;
   cancelTest: () => void;
   clearLogs: () => void;
 };
@@ -16,7 +18,9 @@ const TestResultsContext = createContext<TestResultsContextType>({
   results: [],
   failedStories: [],
   isRunning: false,
+  isUpdating: false,
   logs: [],
+  progress: null,
   cancelTest: () => {},
   clearLogs: () => {},
 });
@@ -27,7 +31,9 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     results: [] as TestResult[],
     failedStories: [] as string[],
     isRunning: false,
+    isUpdating: false,
     logs: [] as string[],
+    progress: null as ProgressInfo | null,
   });
 
   // Listen for test events
@@ -42,11 +48,18 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
 
     const handleTestStarted = () => {
-      setState((prev) => ({ ...prev, isRunning: true, results: [] }));
+      console.log('[VR Addon TestResultsContext] TEST_STARTED received, setting isRunning: true');
+      // Don't clear results - we want to keep previous results and just add/update new ones
+      setState((prev) => ({ ...prev, isRunning: true, isUpdating: false, progress: null }));
+    };
+
+    const handleUpdateStarted = () => {
+      console.log('[VR Addon TestResultsContext] UPDATE_STARTED received, setting isUpdating: true');
+      setState((prev) => ({ ...prev, isRunning: false, isUpdating: true, results: [] }));
     };
 
     const handleTestComplete = () => {
-      setState((prev) => ({ ...prev, isRunning: false }));
+      setState((prev) => ({ ...prev, isRunning: false, isUpdating: false }));
     };
 
     const handleTestResult = (result: TestResult) => {
@@ -74,71 +87,78 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setState((prev) => ({ ...prev, logs: [...prev.logs, line] }));
     };
 
+    const handleProgress = (progress: ProgressInfo) => {
+      setState((prev) => ({ ...prev, progress }));
+    };
+
     const handleHighlightFailedStories = (storyIds: string[]) => {
       setState((prev) => ({ ...prev, failedStories: storyIds }));
     };
 
     const handleCancelTest = () => {
       console.log('[VR Addon] Cancel test event received');
-      // Call the server to stop all running tests
-      fetch('http://localhost:6007/stop', { method: 'POST' })
-        .then(async (response) => {
-          if (response.ok) {
-            const result = await response.json();
-            console.log('[VR Addon] Stop response:', result);
-            // Set running to false to update UI
-            setState((prev) => ({ ...prev, isRunning: false }));
-          } else {
-            console.log('[VR Addon] Stop request failed:', response.status);
-            // Still set running to false even if request fails
-            setState((prev) => ({ ...prev, isRunning: false }));
-          }
-        })
-        .catch((error) => {
-          console.log('[VR Addon] Stop request error:', error);
-          // Still set running to false even if request fails
-          setState((prev) => ({ ...prev, isRunning: false }));
-        });
+      // Emit cancel event - preview will handle it
+      channel.emit(EVENTS.CANCEL_TEST);
+      // Set running to false immediately for UI responsiveness
+      setState((prev) => ({ ...prev, isRunning: false, isUpdating: false }));
     };
 
     channel.on(EVENTS.TEST_STARTED, handleTestStarted);
+    channel.on(EVENTS.UPDATE_STARTED, handleUpdateStarted);
     channel.on(EVENTS.TEST_COMPLETE, handleTestComplete);
     channel.on(EVENTS.TEST_RESULT, handleTestResult);
     channel.on(EVENTS.HIGHLIGHT_FAILED_STORIES, handleHighlightFailedStories);
     channel.on(EVENTS.LOG_OUTPUT, handleLogOutput);
     channel.on(EVENTS.CANCEL_TEST, handleCancelTest);
+    channel.on(EVENTS.PROGRESS, handleProgress);
+
+    // Also set up EventSource to receive events from preview (via preset)
+    // This ensures we receive UPDATE_STARTED and TEST_STARTED even if channel doesn't bridge
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('http://localhost:6007/events');
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const { type } = data;
+          if (type === EVENTS.UPDATE_STARTED) {
+            console.log('[VR Addon TestResultsContext] Received UPDATE_STARTED via EventSource');
+            handleUpdateStarted();
+          } else if (type === EVENTS.TEST_STARTED) {
+            console.log('[VR Addon TestResultsContext] Received TEST_STARTED via EventSource');
+            handleTestStarted();
+          }
+        } catch (error) {
+          // Ignore parse errors
+        }
+      };
+    } catch (error) {
+      console.error('[VR Addon TestResultsContext] Failed to set up EventSource:', error);
+    }
 
     return () => {
       channel.off(EVENTS.TEST_STARTED, handleTestStarted);
+      channel.off(EVENTS.UPDATE_STARTED, handleUpdateStarted);
       channel.off(EVENTS.TEST_COMPLETE, handleTestComplete);
       channel.off(EVENTS.TEST_RESULT, handleTestResult);
       channel.off(EVENTS.HIGHLIGHT_FAILED_STORIES, handleHighlightFailedStories);
       channel.off(EVENTS.LOG_OUTPUT, handleLogOutput);
       channel.off(EVENTS.CANCEL_TEST, handleCancelTest);
+      channel.off(EVENTS.PROGRESS, handleProgress);
+      if (eventSource) {
+        eventSource.close();
+      }
     };
   }, [api]);
 
   const cancelTest = () => {
     console.log('[VR Addon] Cancel test requested');
-    // Call the server to stop all running tests
-    fetch('http://localhost:6007/stop', { method: 'POST' })
-      .then(async (response) => {
-        if (response.ok) {
-          const result = await response.json();
-          console.log('[VR Addon] Stop response:', result);
-          // Immediately set running to false to update UI
-          setState((prev) => ({ ...prev, isRunning: false }));
-        } else {
-          console.log('[VR Addon] Stop request failed:', response.status);
-          // Still set running to false even if request fails
-          setState((prev) => ({ ...prev, isRunning: false }));
-        }
-      })
-      .catch((error) => {
-        console.log('[VR Addon] Stop request error:', error);
-        // Still set running to false even if request fails
-        setState((prev) => ({ ...prev, isRunning: false }));
-      });
+    const channel = api.getChannel();
+    if (channel) {
+      channel.emit(EVENTS.CANCEL_TEST);
+    }
+    // Immediately set running to false for UI responsiveness
+    setState((prev) => ({ ...prev, isRunning: false, isUpdating: false }));
   };
 
   const clearLogs = () => {

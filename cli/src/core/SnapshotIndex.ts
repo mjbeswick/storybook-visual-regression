@@ -113,22 +113,22 @@ export class SnapshotIndexManager {
 
     // If not found in map, check if there are any entries with same storyId (for migration/cleanup)
     if (!existingEntry) {
-      const existingEntries = this.index.entries.filter((e) => e.storyId === storyId);
-      if (existingEntries.length > 0) {
-        // If there are multiple entries and we have a base path, prefer one with an existing file
-        if (existingEntries.length > 1 && snapshotBasePath) {
-          const entryWithFile = existingEntries.find((entry) => {
-            const snapshotPath = this.getSnapshotPath(entry.snapshotId, snapshotBasePath, storyId);
-            return fs.existsSync(snapshotPath);
-          });
-          if (entryWithFile) {
-            existingEntry = entryWithFile;
+    const existingEntries = this.index.entries.filter((e) => e.storyId === storyId);
+    if (existingEntries.length > 0) {
+      // If there are multiple entries and we have a base path, prefer one with an existing file
+      if (existingEntries.length > 1 && snapshotBasePath) {
+        const entryWithFile = existingEntries.find((entry) => {
+          const snapshotPath = this.getSnapshotPath(entry.snapshotId, snapshotBasePath, storyId);
+          return fs.existsSync(snapshotPath);
+        });
+        if (entryWithFile) {
+          existingEntry = entryWithFile;
           } else {
             existingEntry = existingEntries[0];
           }
         } else {
           existingEntry = existingEntries[0];
-        }
+      }
 
         // Update the entry to match the requested browser/viewport
         // This handles migration from old entries that didn't have browser/viewport

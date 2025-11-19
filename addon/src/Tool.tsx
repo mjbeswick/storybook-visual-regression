@@ -251,12 +251,12 @@ export const Tool: React.FC = () => {
                   ? styles.diffButtonActive
                   : ''
               }`}
-              key="visual-regression-expected"
-              title="Show expected screenshot"
+              key="visual-regression-snapshot"
+              title="Show snapshot"
               onClick={() => toggleDiffInIframe(currentResult!, 'expected')}
             >
               <PhotoIcon style={{ width: 16, height: 16 }} />
-              Expected
+              Snapshot
             </IconButton>
           )}
         </>
