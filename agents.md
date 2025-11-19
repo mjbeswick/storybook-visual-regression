@@ -65,6 +65,7 @@ The project uses **npm workspaces** and requires **Node.js >= 20.0.0**.
 ### Index Files (JSONL Format)
 
 Both `snapshots/index.jsonl` and `results/index.jsonl` use **JSONL (JSON Lines)** format:
+
 - One JSON object per line
 - Git-friendly (line-based diffs)
 - Efficient for append-only operations
@@ -83,6 +84,7 @@ Events flow in multiple directions:
 5. **Preset → Preview**: Via SSE (`/events` endpoint)
 
 **Key Events:**
+
 - `RUN_TEST` - Test current story
 - `RUN_ALL_TESTS` - Test all stories
 - `UPDATE_BASELINE` - Update snapshot for current story
@@ -95,6 +97,7 @@ Events flow in multiple directions:
 ### Progress Information
 
 Progress events include:
+
 - `completed` / `total` - Story counts
 - `passed` / `failed` / `skipped` - Result counts
 - `percent` - Completion percentage
@@ -146,6 +149,7 @@ Progress events include:
 ### JSON-RPC Mode
 
 When `--json-rpc` flag is present:
+
 - CLI enters JSON-RPC mode (no help output)
 - Reads from stdin, writes to stdout
 - Uses `JsonRpcServer` for handling requests
@@ -230,20 +234,24 @@ npm run test              # Run tests in all packages
 ## File Locations Reference
 
 ### Configuration
+
 - CLI config: `cli/src/config.ts`, `cli/src/config/defaultConfig.ts`
 - Addon config: `addon/src/config.ts`
 
 ### Core Logic
+
 - Test execution: `cli/src/core/VisualRegressionRunner.ts`
 - Parallel execution: `cli/src/parallel-runner.ts`
 - Index management: `cli/src/core/ResultsIndex.ts`, `cli/src/core/SnapshotIndex.ts`
 
 ### Addon Components
+
 - Panel UI: `addon/src/Panel.tsx`
 - State management: `addon/src/TestResultsContext.tsx`
 - Communication: `addon/src/preset.ts`, `addon/src/preview.ts`, `addon/src/JsonRpcBridge.ts`
 
 ### Types
+
 - CLI types: `cli/src/jsonrpc.ts` (StoryResult, ProgressInfo, etc.)
 - Addon types: `addon/src/types.ts` (TestResult, ProgressInfo, etc.)
 
@@ -259,4 +267,3 @@ npm run test              # Run tests in all packages
 8. **Use debounced writes** for index files (already implemented)
 9. **Flush writes on exit** (signal handlers handle this)
 10. **Keep index entries unique** by full key (storyId + browser + viewportName)
-

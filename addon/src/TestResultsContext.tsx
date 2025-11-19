@@ -3,6 +3,12 @@ import { useStorybookApi } from '@storybook/manager-api';
 import { EVENTS } from './constants';
 import type { TestResult, ProgressInfo } from './types';
 
+// Helper function to get the addon server URL
+const getAddonServerUrl = () => {
+  const port = process.env.VR_ADDON_PORT || process.env.STORYBOOK_VISUAL_REGRESSION_PORT || '6007';
+  return `http://localhost:${port}`;
+};
+
 type TestResultsContextType = {
   results: TestResult[];
   failedStories: string[];
@@ -116,7 +122,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // This ensures we receive UPDATE_STARTED and TEST_STARTED even if channel doesn't bridge
     let eventSource: EventSource | null = null;
     try {
-      eventSource = new EventSource('http://localhost:6007/events');
+      eventSource = new EventSource(`${getAddonServerUrl()}/events`);
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);

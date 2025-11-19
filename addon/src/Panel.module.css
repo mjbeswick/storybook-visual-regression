@@ -29,46 +29,51 @@
 }
 
 
-.failuresList {
-  margin: 0;
-  padding: 0;
-  list-style: disc;
-  padding-left: 20px;
+.failuresTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 14px;
 }
 
-.failureItem {
-  display: list-item;
-  margin-bottom: 8px;
+.tableHeader {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  font-size: 13px;
 }
 
-.failureItemCurrent {
+.tableCell {
+  border: 1px solid #e5e7eb;
+  padding: 8px 12px;
+  vertical-align: top;
+}
+
+.failureRow {
+  background: #ffffff;
+}
+
+.failureRow:hover {
+  background: #f9fafb;
+}
+
+.failureRowCurrent {
   background-color: #fef3c7;
-  border-left: 3px solid #f59e0b;
-  padding-left: 4px;
-  margin-left: -7px;
-  border-radius: 4px;
-}
-
-.failureContent {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .linkButton {
   background: transparent;
   border: none;
-  padding: 2px 0;
+  padding: 0;
   margin: 0;
   color: #2563eb;
   text-decoration: underline;
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
   text-align: left;
 }
 
@@ -86,18 +91,6 @@
   color: #92400e;
 }
 
-.failureName {
-  flex-shrink: 0;
-}
-
-.failureDetails {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-left: 0;
-  font-size: 12px;
-  color: #6b7280;
-}
 
 .diffInfo {
   color: #dc2626;
@@ -251,8 +244,6 @@
 
 .resultsSection {
   margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid #e5e7eb;
 }
 
 .resultsSection h4 {
@@ -264,8 +255,9 @@
 
 .failuresSection {
   margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid #e5e7eb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
 }
 
 .failuresSection h4 {

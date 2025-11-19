@@ -1,4 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import { loadAddonConfig } from './config.js';
 import { EVENTS } from './constants.js';
 
@@ -99,15 +101,48 @@ export class JsonRpcBridge {
         }
       }
 
+      // Find project root (look for package.json or .git directory)
+      let projectRoot = process.cwd();
+      let currentDir = process.cwd();
+
+      // Walk up directories to find project root
+      for (let i = 0; i < 10; i++) { // Prevent infinite loop
+        try {
+          const packageJsonPath = path.join(currentDir, 'package.json');
+          const gitPath = path.join(currentDir, '.git');
+
+          if (fs.existsSync(packageJsonPath) || fs.existsSync(gitPath)) {
+            projectRoot = currentDir;
+            break;
+          }
+
+          const parentDir = path.dirname(currentDir);
+          if (parentDir === currentDir) {
+            // Reached root directory
+            break;
+          }
+          currentDir = parentDir;
+        } catch (error) {
+          // If we can't access a directory, stop trying
+          break;
+        }
+      }
+
       // Spawn CLI with --json-rpc flag
-      console.log(`[VR Addon] Spawning CLI: ${command} ${args.join(' ')}`);
+      console.log(`[VR Addon] Spawning CLI from project root: ${projectRoot}`);
+      console.log(`[VR Addon] CLI command: ${command} ${args.join(' ')}`);
+      console.log(`[VR Addon] Working directory: ${projectRoot}`);
+      console.log(`[VR Addon] Current process.cwd(): ${process.cwd()}`);
       this.process = spawn(command, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: process.cwd(),
+        cwd: projectRoot,
         env: {
           ...process.env,
           NO_COLOR: '1',
           FORCE_COLOR: '0',
+          // Prevent CLI from triggering file system events that affect Vite
+          CI: 'true',
+          NODE_ENV: 'production',
         },
         shell: useShell,
       });

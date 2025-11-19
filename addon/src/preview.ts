@@ -7,7 +7,13 @@
 import { EVENTS } from './constants.js';
 
 // RPC server URL (minimal HTTP server for browser <-> Node.js communication)
-const RPC_BASE_URL = 'http://localhost:6007';
+// Note: process.env is not available in browser, so we use a hardcoded default
+// The preset will use the same default port (6007) or the VR_ADDON_PORT env var
+const getRpcBaseUrl = () => {
+  // In browser, we can't access process.env, so use default port
+  // The preset will use the same default (6007) or VR_ADDON_PORT env var
+  return 'http://localhost:6007';
+};
 
 // Get Storybook URL from current location
 function getStorybookUrl(): string {
@@ -64,10 +70,10 @@ declare global {
  * Send JSON-RPC request to Node.js bridge
  */
 async function rpcRequest(method: string, params?: any): Promise<any> {
-  const RPC_BASE_URL = 'http://localhost:6007';
+  const rpcBaseUrl = getRpcBaseUrl();
   console.log(`[VR Addon Preview] Making RPC request: ${method}`, params);
   try {
-    const response = await fetch(`${RPC_BASE_URL}/rpc`, {
+    const response = await fetch(`${rpcBaseUrl}/rpc`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -121,6 +127,12 @@ const initializeAddon = async () => {
     return;
   }
 
+  console.log('[VR Addon Preview] Channel available:', {
+    hasOn: typeof channel.on === 'function',
+    hasEmit: typeof channel.emit === 'function',
+    hasOff: typeof channel.off === 'function',
+  });
+
   console.log('[VR Addon Preview] Channel available, setting up event listeners');
   // Mark as initialized
   if (typeof window !== 'undefined') {
@@ -171,11 +183,13 @@ const initializeAddon = async () => {
 
   // Handler for RUN_TEST event
   const handleRunTest = async (data: unknown) => {
-    console.log('[VR Addon Preview] RUN_TEST event received:', data);
+    console.log('[VR Addon Preview] ====== handleRunTest called ======');
+    console.log('[VR Addon Preview] Data:', data);
     const eventData = data as { storyId?: string };
     const storyId = eventData.storyId;
+    console.log('[VR Addon Preview] Extracted storyId:', storyId);
     if (!storyId) {
-      console.log('[VR Addon Preview] No storyId provided');
+      console.log('[VR Addon Preview] No storyId provided, emitting TEST_COMPLETE');
       channel.emit(EVENTS.TEST_COMPLETE);
       return;
     }
@@ -187,7 +201,8 @@ const initializeAddon = async () => {
 
     // Also send via HTTP to ensure manager receives it
     try {
-      await fetch('http://localhost:6007/emit-event', {
+      const rpcBaseUrl = getRpcBaseUrl();
+      await fetch(`${rpcBaseUrl}/emit-event`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event: EVENTS.TEST_STARTED, data: {} }),
@@ -238,15 +253,14 @@ const initializeAddon = async () => {
     hasOn: channel ? typeof (channel as any).on : 'null',
   });
 
-  channel.on(EVENTS.RUN_TEST, handleRunTest);
-
-  // Listen for "run all tests" requests
-  channel.on(EVENTS.RUN_ALL_TESTS, async () => {
+  // Handler for RUN_ALL_TESTS event
+  const handleRunAllTests = async () => {
     channel.emit(EVENTS.TEST_STARTED);
 
     try {
       await rpcRequest('run', {
         url: getStorybookUrl(),
+        grep: '', // Empty grep to run all tests
       });
 
       // After all tests complete, reload all results
@@ -268,10 +282,10 @@ const initializeAddon = async () => {
         await loadExistingResults();
       }, 500);
     }
-  });
+  };
 
-  // Listen for "run failed tests" requests
-  channel.on(EVENTS.RUN_FAILED_TESTS, async () => {
+  // Handler for RUN_FAILED_TESTS event
+  const handleRunFailedTests = async () => {
     channel.emit(EVENTS.TEST_STARTED);
 
     try {
@@ -299,7 +313,100 @@ const initializeAddon = async () => {
         await loadExistingResults();
       }, 500);
     }
-  });
+  };
+
+  // Handler for CREATE_MISSING_SNAPSHOTS event
+  const handleCreateMissingSnapshots = async () => {
+    channel.emit(EVENTS.UPDATE_STARTED);
+
+    try {
+      await rpcRequest('run', {
+        url: getStorybookUrl(),
+        update: true,
+        missingOnly: true,
+      });
+
+      // After update completes, reload results to reflect the updated state
+      setTimeout(async () => {
+        console.log('[VR Addon] Reloading results after creating missing snapshots...');
+        await loadExistingResults();
+      }, 500);
+
+      channel.emit(EVENTS.TEST_COMPLETE);
+    } catch (error) {
+      channel.emit(
+        EVENTS.LOG_OUTPUT,
+        `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      channel.emit(EVENTS.TEST_COMPLETE);
+
+      // Still try to reload results even if there was an error
+      setTimeout(async () => {
+        await loadExistingResults();
+      }, 500);
+    }
+  };
+
+  // Handler for CANCEL_TEST event
+  const handleCancelTest = async () => {
+    try {
+      await rpcRequest('cancel');
+      // Emit test complete after cancel
+      channel.emit(EVENTS.TEST_COMPLETE);
+    } catch (error) {
+      // Ignore cancel errors, but still emit complete
+      channel.emit(EVENTS.TEST_COMPLETE);
+    }
+  };
+
+  // Listen for RUN_TEST events via channel
+  const runTestHandler = (data: unknown) => {
+    console.log('[VR Addon Preview] ====== Channel received RUN_TEST event ======');
+    console.log('[VR Addon Preview] Data:', data);
+    console.log('[VR Addon Preview] EventSource ready state:', {
+      eventSourceReady,
+      readyState: eventSource?.readyState,
+      url: eventSource?.url,
+      hasEventSource: !!eventSource,
+    });
+    handleRunTest(data);
+  };
+
+  // Try multiple ways to listen for channel events
+  try {
+    channel.on(EVENTS.RUN_TEST, runTestHandler);
+    console.log('[VR Addon Preview] Registered channel listener for RUN_TEST:', EVENTS.RUN_TEST);
+
+    // Test if the channel is working by listening to a known Storybook event
+    channel.on('storyChanged', () => {
+      console.log('[VR Addon Preview] Channel is working - received storyChanged event');
+    });
+    console.log('[VR Addon Preview] Also registered listener for storyChanged to test channel');
+  } catch (error) {
+    console.error('[VR Addon Preview] Error registering channel listener:', error);
+  }
+
+  // Also try using addListener if available (some Storybook versions use this)
+  if ((channel as any).addListener) {
+    try {
+      (channel as any).addListener(EVENTS.RUN_TEST, runTestHandler);
+      console.log('[VR Addon Preview] Also registered via addListener');
+    } catch (error) {
+      console.error('[VR Addon Preview] Error registering via addListener:', error);
+    }
+  }
+
+  // Debug: Log all channel events to see what's happening
+  const originalEmit = channel.emit;
+  if (originalEmit) {
+    console.log('[VR Addon Preview] Channel emit function available:', typeof originalEmit);
+  }
+
+  // Listen for "run all tests" requests
+  channel.on(EVENTS.RUN_ALL_TESTS, handleRunAllTests);
+
+  // Listen for "run failed tests" requests
+  channel.on(EVENTS.RUN_FAILED_TESTS, handleRunFailedTests);
 
   // Handler for UPDATE_BASELINE event
   const handleUpdateBaseline = async (data: unknown) => {
@@ -348,66 +455,88 @@ const initializeAddon = async () => {
   channel.on(EVENTS.UPDATE_BASELINE, handleUpdateBaseline);
 
   // Listen for create missing snapshots requests
-  channel.on(EVENTS.CREATE_MISSING_SNAPSHOTS, async () => {
-    channel.emit(EVENTS.UPDATE_STARTED);
-
-    try {
-      await rpcRequest('run', {
-        url: getStorybookUrl(),
-        update: true,
-        missingOnly: true,
-      });
-
-      // After update completes, reload results to reflect the updated state
-      // Wait a bit for the index to be updated
-      setTimeout(async () => {
-        console.log('[VR Addon] Reloading results after creating missing snapshots...');
-        await loadExistingResults();
-      }, 500);
-
-      channel.emit(EVENTS.TEST_COMPLETE);
-    } catch (error) {
-      channel.emit(
-        EVENTS.LOG_OUTPUT,
-        `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-      channel.emit(EVENTS.TEST_COMPLETE);
-
-      // Still try to reload results even if there was an error
-      setTimeout(async () => {
-        await loadExistingResults();
-      }, 500);
-    }
-  });
+  channel.on(EVENTS.CREATE_MISSING_SNAPSHOTS, handleCreateMissingSnapshots);
 
   // Listen for cancel requests
-  channel.on(EVENTS.CANCEL_TEST, async () => {
-    try {
-      await rpcRequest('cancel');
-      // Emit test complete after cancel
-      channel.emit(EVENTS.TEST_COMPLETE);
-    } catch (error) {
-      // Ignore cancel errors, but still emit complete
-      channel.emit(EVENTS.TEST_COMPLETE);
-    }
+  channel.on(EVENTS.CANCEL_TEST, handleCancelTest);
+
+  // Listen for reload results requests
+  channel.on('storybook-visual-regression/reload-results', () => {
+    console.log('[VR Addon Preview] Received reload-results event, reloading...');
+    loadExistingResults();
   });
 
   // Poll for events from the bridge
   // The bridge will emit events via HTTP SSE or we can poll
   // For now, we'll set up an EventSource connection
   let eventSource: EventSource | null = null;
+  let eventSourceReady = false;
 
   const connectEventSource = () => {
+    // Close existing connection if any
+    if (eventSource) {
+      try {
+        eventSource.close();
+      } catch (e) {
+        // Ignore errors when closing
+      }
+      eventSource = null;
+    }
+
     try {
-      console.log('[VR Addon Preview] Connecting to EventSource:', `${RPC_BASE_URL}/events`);
-      eventSource = new EventSource(`${RPC_BASE_URL}/events`);
+      const rpcBaseUrl = getRpcBaseUrl();
+      const eventSourceUrl = `${rpcBaseUrl}/events`;
+      console.log('[VR Addon Preview] Connecting to EventSource:', eventSourceUrl);
+      eventSource = new EventSource(eventSourceUrl);
+      eventSourceReady = false;
 
       eventSource.onopen = () => {
-        console.log('[VR Addon Preview] EventSource connected');
+        console.log('[VR Addon Preview] EventSource connected and ready (readyState: OPEN)');
+        eventSourceReady = true;
       };
 
       eventSource.onerror = (error) => {
-        console.error('[VR Addon Preview] EventSource error:', error);
+        const readyState = eventSource?.readyState;
+        const target = error.target as EventSource;
+        const url = target?.url || eventSource?.url || 'unknown';
+
+        // Don't log errors if we're already closed and retrying - that's expected
+        if (readyState === EventSource.CLOSED) {
+          console.log('[VR Addon Preview] EventSource closed (readyState: CLOSED), will retry...');
+          eventSourceReady = false;
+
+          // Close the current connection if it exists
+          if (eventSource) {
+            try {
+              eventSource.close();
+            } catch (e) {
+              // Ignore errors when closing
+            }
+          }
+
+          // Retry connection after a delay
+          setTimeout(() => {
+            console.log('[VR Addon Preview] Retrying EventSource connection...');
+            connectEventSource();
+          }, 2000);
+        } else if (readyState === EventSource.CONNECTING) {
+          console.log('[VR Addon Preview] EventSource is connecting (readyState: CONNECTING)...');
+          eventSourceReady = false;
+        } else if (readyState === EventSource.OPEN) {
+          console.log(
+            '[VR Addon Preview] EventSource is open, error might be transient (readyState: OPEN)',
+          );
+          eventSourceReady = true;
+        } else {
+          // Unknown state - log for debugging
+          console.error('[VR Addon Preview] EventSource error:', {
+            readyState,
+            url,
+            error: error.type,
+            target: target ? { url: target.url, readyState: target.readyState } : null,
+          });
+          eventSourceReady = false;
+        }
       };
 
       eventSource.onmessage = (event) => {
@@ -416,11 +545,18 @@ const initializeAddon = async () => {
           const data = JSON.parse(event.data);
           const { type, payload } = data;
           console.log('[VR Addon Preview] Parsed EventSource data:', { type, payload });
+          console.log('[VR Addon Preview] EventSource onmessage handler is working!');
 
           switch (type) {
             case 'connected':
-              // EventSource connected, try to load results
-              tryLoadResults();
+              // EventSource connected, try to load results (delay to let connection stabilize)
+              console.log(
+                '[VR Addon Preview] EventSource connected, delaying loadExistingResults...',
+              );
+              setTimeout(() => {
+                console.log('[VR Addon Preview] Now loading existing results...');
+                tryLoadResults();
+              }, 2000);
               break;
             case 'ready':
               // Bridge is ready, load results
@@ -428,15 +564,56 @@ const initializeAddon = async () => {
               break;
             case EVENTS.RUN_TEST:
               // Forward RUN_TEST event from manager via HTTP
-              console.log('[VR Addon Preview] Received RUN_TEST via EventSource:', payload);
+              console.log('[VR Addon Preview] ====== Received RUN_TEST via EventSource ======');
+              console.log('[VR Addon Preview] Payload:', payload);
+              console.log('[VR Addon Preview] EventSource state:', {
+                readyState: eventSource?.readyState,
+                eventSourceReady,
+                url: eventSource?.url,
+                hasEventSource: !!eventSource,
+              });
               // Call the handler directly with the payload (which contains { storyId })
-              handleRunTest(payload);
+              if (payload && typeof payload === 'object' && 'storyId' in payload) {
+                console.log('[VR Addon Preview] Calling handleRunTest with payload:', payload);
+                console.log('[VR Addon Preview] About to call handleRunTest...');
+                handleRunTest(payload);
+                console.log('[VR Addon Preview] handleRunTest call completed');
+              } else {
+                console.error('[VR Addon Preview] Invalid RUN_TEST payload:', payload);
+              }
               break;
             case EVENTS.UPDATE_BASELINE:
               // Forward UPDATE_BASELINE event from manager via HTTP
               console.log('[VR Addon Preview] Received UPDATE_BASELINE via EventSource:', payload);
               // Call the handler directly
               handleUpdateBaseline(payload);
+              break;
+            case EVENTS.RUN_ALL_TESTS:
+              // Forward RUN_ALL_TESTS event from manager via HTTP
+              console.log('[VR Addon Preview] Received RUN_ALL_TESTS via EventSource:', payload);
+              // Call the handler directly
+              handleRunAllTests();
+              break;
+            case EVENTS.RUN_FAILED_TESTS:
+              // Forward RUN_FAILED_TESTS event from manager via HTTP
+              console.log('[VR Addon Preview] Received RUN_FAILED_TESTS via EventSource:', payload);
+              // Call the handler directly
+              handleRunFailedTests();
+              break;
+            case EVENTS.CREATE_MISSING_SNAPSHOTS:
+              // Forward CREATE_MISSING_SNAPSHOTS event from manager via HTTP
+              console.log(
+                '[VR Addon Preview] Received CREATE_MISSING_SNAPSHOTS via EventSource:',
+                payload,
+              );
+              // Call the handler directly
+              handleCreateMissingSnapshots();
+              break;
+            case EVENTS.CANCEL_TEST:
+              // Forward CANCEL_TEST event from manager via HTTP
+              console.log('[VR Addon Preview] Received CANCEL_TEST via EventSource:', payload);
+              // Call the handler directly
+              handleCancelTest();
               break;
             case EVENTS.UPDATE_STARTED:
               // Forward UPDATE_STARTED event from preview to manager
@@ -498,14 +675,9 @@ const initializeAddon = async () => {
           // Ignore parse errors
         }
       };
-
-      eventSource.onerror = () => {
-        eventSource?.close();
-        // Retry connection
-        setTimeout(connectEventSource, 2000);
-      };
     } catch (error) {
-      // Retry connection
+      console.error('[VR Addon Preview] Error setting up EventSource:', error);
+      // Retry connection after a delay
       setTimeout(connectEventSource, 2000);
     }
   };

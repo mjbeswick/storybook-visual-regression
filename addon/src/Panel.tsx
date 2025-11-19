@@ -7,13 +7,20 @@ import styles from './Panel.module.css';
 import { useTestResults } from './TestResultsContext';
 import type { TestResult } from './types';
 
+// Helper function to get the addon server URL
+const getAddonServerUrl = () => {
+  const port = process.env.VR_ADDON_PORT || process.env.STORYBOOK_VISUAL_REGRESSION_PORT || '6007';
+  return `http://localhost:${port}`;
+};
+
 type PanelProps = {
   active?: boolean;
 };
 
 export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const api = useStorybookApi();
-  const { results, isRunning, isUpdating, logs, progress, cancelTest, clearLogs } = useTestResults();
+  const { results, isRunning, isUpdating, logs, progress, cancelTest, clearLogs } =
+    useTestResults();
 
   // Track current story ID to highlight failures for the current story
   const [currentStoryId, setCurrentStoryId] = React.useState<string | undefined>(
@@ -57,12 +64,24 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const failedTests = results.filter((r) => r.status === 'failed').length;
   const skippedTests = results.filter((r) => r.status === 'skipped').length;
 
+  // Check if the current story has failed
+  const currentStoryFailed = React.useMemo(() => {
+    if (!currentStoryId) return false;
+    return results.some((r) => {
+      if (r.status !== 'failed') return false;
+      // Exact match
+      if (r.storyId === currentStoryId) return true;
+      // Match without viewport suffix
+      const baseResultId = r.storyId.replace(
+        /--(unattended|attended|customer|mobile|tablet|desktop)$/,
+        '',
+      );
+      return baseResultId === currentStoryId;
+    });
+  }, [results, currentStoryId]);
+
   const handleRunTest = () => {
     console.log('[VR Addon Panel] Test Current clicked', { isRunning, isUpdating, isChannelReady });
-    if (!isChannelReady || !channel) {
-      console.error('[VR Addon Panel] Channel not ready', { channel: !!channel, isChannelReady });
-      return;
-    }
     if (isRunning || isUpdating) {
       console.log('[VR Addon Panel] Test already running or updating');
       return;
@@ -70,50 +89,136 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     const currentStory = api.getCurrentStoryData();
     console.log('[VR Addon Panel] Current story:', currentStory?.id);
     if (currentStory) {
-      console.log('[VR Addon Panel] Emitting RUN_TEST event via channel', EVENTS.RUN_TEST);
-      try {
-        channel.emit(EVENTS.RUN_TEST, { storyId: currentStory.id });
-        console.log('[VR Addon Panel] Event emitted via channel');
-        // Also send via HTTP to ensure preview receives it
-        fetch('http://localhost:6007/emit-event', {
+      const eventData = { storyId: currentStory.id };
+
+      console.log('[VR Addon Panel] Starting test for story:', eventData.storyId);
+
+      // Immediately show loading state by emitting TEST_STARTED
+      if (channel) {
+        console.log('[VR Addon Panel] Emitting TEST_STARTED to show loading...');
+        channel.emit(EVENTS.TEST_STARTED);
+      }
+
+      // Send RPC request directly to the CLI via preset (delay slightly to let EventSource stabilize)
+      console.log('[VR Addon Panel] Sending RPC request to run test...');
+      setTimeout(() => {
+        fetch(`${getAddonServerUrl()}/rpc`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event: EVENTS.RUN_TEST, data: { storyId: currentStory.id } }),
-        }).catch((err) => {
-          console.error('[VR Addon Panel] Error sending event via HTTP:', err);
-        });
-      } catch (error) {
-        console.error('[VR Addon Panel] Error emitting event:', error);
-      }
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(), // Unique ID
+            method: 'run',
+            params: {
+              url: window.location.origin, // Storybook URL
+              grep: `^${eventData.storyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            },
+          }),
+        })
+          .then((response) => {
+            console.log('[VR Addon Panel] RPC response status:', response.status);
+            return response.json();
+          })
+          .then((data) => {
+            console.log('[VR Addon Panel] RPC response:', data);
+            if (data.error) {
+              console.error('[VR Addon Panel] RPC error:', data.error);
+              // Emit TEST_COMPLETE on error
+              if (channel) {
+                channel.emit(EVENTS.TEST_COMPLETE);
+              }
+            } else {
+              console.log('[VR Addon Panel] Test completed, result:', data.result);
+              // Emit TEST_COMPLETE now that we have the result
+              if (channel) {
+                channel.emit(EVENTS.TEST_COMPLETE);
+              }
+
+              // After test completes, reload all results to get the latest state
+              // Wait a bit for the index to be updated
+              setTimeout(async () => {
+                console.log('[VR Addon Panel] Reloading results after test run...');
+                // Emit a custom event to trigger result reload in preview
+                if (channel) {
+                  channel.emit('storybook-visual-regression/reload-results');
+                }
+              }, 500);
+            }
+          })
+          .catch((err) => {
+            console.error('[VR Addon Panel] Error sending RPC request:', err);
+            // Emit TEST_COMPLETE on error
+            if (channel) {
+              channel.emit(EVENTS.TEST_COMPLETE);
+            }
+          });
+      }, 1000); // Delay 1 second to let EventSource stabilize
     } else {
       console.log('[VR Addon Panel] No current story found');
     }
   };
 
   const handleRunAllTests = () => {
-    console.log('[VR Addon Panel] Run All Tests clicked', { isChannelReady });
-    if (!isChannelReady || !channel) {
-      console.error('[VR Addon Panel] Channel not ready');
-      return;
-    }
+    console.log('[VR Addon Panel] Run All Tests clicked', {
+      isRunning,
+      isUpdating,
+      isChannelReady,
+    });
     if (isRunning || isUpdating) {
       console.log('[VR Addon Panel] Test already running or updating');
       return;
     }
-    try {
-      channel.emit(EVENTS.RUN_ALL_TESTS, {});
-      console.log('[VR Addon Panel] RUN_ALL_TESTS event emitted via channel');
-      // Also send via HTTP to ensure preview receives it
-      fetch('http://localhost:6007/emit-event', {
+
+    // Immediately show loading state by emitting TEST_STARTED
+    if (channel) {
+      console.log('[VR Addon Panel] Emitting TEST_STARTED to show loading...');
+      channel.emit(EVENTS.TEST_STARTED);
+    }
+
+    // Send RPC request directly to the CLI via preset (delay slightly to let EventSource stabilize)
+    console.log('[VR Addon Panel] Sending RPC request to run all tests...');
+    setTimeout(() => {
+      fetch(`${getAddonServerUrl()}/rpc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: EVENTS.RUN_ALL_TESTS, data: {} }),
-      }).catch((err) => {
-        console.error('[VR Addon Panel] Error sending RUN_ALL_TESTS via HTTP:', err);
-      });
-    } catch (error) {
-      console.error('[VR Addon Panel] Error emitting RUN_ALL_TESTS:', error);
-    }
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(), // Unique ID
+          method: 'run',
+          params: {
+            url: window.location.origin, // Storybook URL
+            grep: '', // Empty grep to run all tests
+          },
+        }),
+      })
+        .then((response) => {
+          console.log('[VR Addon Panel] RPC response status:', response.status);
+          return response.json();
+        })
+        .then((data) => {
+          console.log('[VR Addon Panel] RPC response:', data);
+          if (data.error) {
+            console.error('[VR Addon Panel] RPC error:', data.error);
+            // Emit TEST_COMPLETE on error
+            if (channel) {
+              channel.emit(EVENTS.TEST_COMPLETE);
+            }
+          } else {
+            console.log('[VR Addon Panel] All tests completed, result:', data.result);
+            // Emit TEST_COMPLETE now that we have the result
+            if (channel) {
+              channel.emit(EVENTS.TEST_COMPLETE);
+            }
+          }
+        })
+        .catch((err) => {
+          console.error('[VR Addon Panel] Error sending RPC request:', err);
+          // Emit TEST_COMPLETE on error
+          if (channel) {
+            channel.emit(EVENTS.TEST_COMPLETE);
+          }
+        });
+    }, 1000); // Delay 1 second to let EventSource stabilize
   };
 
   const handleRunFailedTests = () => {
@@ -130,7 +235,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       channel.emit(EVENTS.RUN_FAILED_TESTS, {});
       console.log('[VR Addon Panel] RUN_FAILED_TESTS event emitted via channel');
       // Also send via HTTP to ensure preview receives it
-      fetch('http://localhost:6007/emit-event', {
+      fetch(`${getAddonServerUrl()}/emit-event`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event: EVENTS.RUN_FAILED_TESTS, data: {} }),
@@ -155,43 +260,146 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     const currentStory = api.getCurrentStoryData();
     console.log('[VR Addon Panel] Current story:', currentStory?.id);
     if (currentStory) {
-      try {
-        channel.emit(EVENTS.UPDATE_BASELINE, { storyId: currentStory.id });
-        console.log('[VR Addon Panel] UPDATE_BASELINE event emitted via channel');
-        // Also send via HTTP to ensure preview receives it
-        fetch('http://localhost:6007/emit-event', {
+      console.log('[VR Addon Panel] Starting baseline update for story:', currentStory.id);
+
+      // Immediately show loading state by emitting UPDATE_STARTED
+      channel.emit(EVENTS.UPDATE_STARTED);
+      console.log('[VR Addon Panel] Emitting UPDATE_STARTED to show loading...');
+
+      // Send RPC request directly to the CLI via preset
+      console.log('[VR Addon Panel] Sending RPC request to update baseline...');
+      setTimeout(() => {
+        fetch(`${getAddonServerUrl()}/rpc`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event: EVENTS.UPDATE_BASELINE, data: { storyId: currentStory.id } }),
-        }).catch((err) => {
-          console.error('[VR Addon Panel] Error sending UPDATE_BASELINE via HTTP:', err);
-        });
-      } catch (error) {
-        console.error('[VR Addon Panel] Error emitting UPDATE_BASELINE:', error);
-      }
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(), // Unique ID
+            method: 'run',
+            params: {
+              url: window.location.origin, // Storybook URL
+              update: true, // This tells the CLI to update/create baselines
+              grep: `^${currentStory.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            },
+          }),
+        })
+          .then((response) => {
+            console.log('[VR Addon Panel] RPC response status:', response.status);
+            return response.json();
+          })
+          .then((data) => {
+            console.log('[VR Addon Panel] RPC response:', data);
+            if (data.error) {
+              console.error('[VR Addon Panel] RPC error:', data.error);
+              // Emit TEST_COMPLETE on error (since we're done with the update)
+              if (channel) {
+                channel.emit(EVENTS.TEST_COMPLETE);
+              }
+            } else {
+              console.log('[VR Addon Panel] Baseline update completed, result:', data.result);
+              // Emit TEST_COMPLETE to hide loading (baseline updates use the same UI state)
+              if (channel) {
+                channel.emit(EVENTS.TEST_COMPLETE);
+              }
+
+              // After update completes, reload all results to get the latest state
+              // Wait a bit for the index to be updated
+              setTimeout(async () => {
+                console.log('[VR Addon Panel] Reloading results after baseline update...');
+                // Emit a custom event to trigger result reload in preview
+                if (channel) {
+                  channel.emit('storybook-visual-regression/reload-results');
+                }
+              }, 500);
+            }
+          })
+          .catch((err) => {
+            console.error('[VR Addon Panel] Error sending RPC request:', err);
+            // Emit TEST_COMPLETE on error
+            if (channel) {
+              channel.emit(EVENTS.TEST_COMPLETE);
+            }
+          });
+      }, 1000); // Delay 1 second to let EventSource stabilize
     } else {
       console.log('[VR Addon Panel] No current story found');
     }
   };
 
   const handleCreateMissingSnapshots = () => {
+    console.log('[VR Addon Panel] Create Missing Snapshots clicked', { isChannelReady });
     if (!isChannelReady || !channel) {
+      console.error('[VR Addon Panel] Channel not ready');
       return;
     }
-    try {
-      channel.emit(EVENTS.CREATE_MISSING_SNAPSHOTS, {});
-      console.log('[VR Addon Panel] CREATE_MISSING_SNAPSHOTS event emitted via channel');
-      // Also send via HTTP to ensure preview receives it
-      fetch('http://localhost:6007/emit-event', {
+    if (isRunning || isUpdating) {
+      console.log('[VR Addon Panel] Test already running or updating');
+      return;
+    }
+
+    console.log('[VR Addon Panel] Starting create missing snapshots...');
+
+    // Immediately show loading state by emitting UPDATE_STARTED
+    channel.emit(EVENTS.UPDATE_STARTED);
+    console.log('[VR Addon Panel] Emitting UPDATE_STARTED to show loading...');
+
+    // Send RPC request directly to the CLI via preset
+    console.log('[VR Addon Panel] Sending RPC request to create missing snapshots...');
+    setTimeout(() => {
+      fetch(`${getAddonServerUrl()}/rpc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: EVENTS.CREATE_MISSING_SNAPSHOTS, data: {} }),
-      }).catch((err) => {
-        console.error('[VR Addon Panel] Error sending CREATE_MISSING_SNAPSHOTS via HTTP:', err);
-      });
-    } catch (error) {
-      console.error('[VR Addon Panel] Error emitting CREATE_MISSING_SNAPSHOTS:', error);
-    }
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(), // Unique ID
+          method: 'run',
+          params: {
+            url: window.location.origin, // Storybook URL
+            missingOnly: true, // This tells the CLI to only create missing baselines
+          },
+        }),
+      })
+        .then((response) => {
+          console.log('[VR Addon Panel] RPC response status:', response.status);
+          return response.json();
+        })
+        .then((data) => {
+          console.log('[VR Addon Panel] RPC response:', data);
+          if (data.error) {
+            console.error('[VR Addon Panel] RPC error:', data.error);
+            // Emit TEST_COMPLETE on error
+            if (channel) {
+              channel.emit(EVENTS.TEST_COMPLETE);
+            }
+          } else {
+            console.log(
+              '[VR Addon Panel] Create missing snapshots completed, result:',
+              data.result,
+            );
+            // Emit TEST_COMPLETE to hide loading
+            if (channel) {
+              channel.emit(EVENTS.TEST_COMPLETE);
+            }
+
+            // After create missing completes, reload all results to get the latest state
+            // Wait a bit for the index to be updated
+            setTimeout(async () => {
+              console.log('[VR Addon Panel] Reloading results after create missing...');
+              // Emit a custom event to trigger result reload in preview
+              if (channel) {
+                channel.emit('storybook-visual-regression/reload-results');
+              }
+            }, 500);
+          }
+        })
+        .catch((err) => {
+          console.error('[VR Addon Panel] Error sending RPC request:', err);
+          // Emit TEST_COMPLETE on error
+          if (channel) {
+            channel.emit(EVENTS.TEST_COMPLETE);
+          }
+        });
+    }, 1000); // Delay 1 second to let EventSource stabilize
   };
 
   const handleCancelTest = () => {
@@ -205,7 +413,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       channel.emit(EVENTS.CANCEL_TEST);
       console.log('[VR Addon Panel] CANCEL_TEST event emitted via channel');
       // Also send via HTTP to ensure preview receives it
-      fetch('http://localhost:6007/emit-event', {
+      fetch(`${getAddonServerUrl()}/emit-event`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event: EVENTS.CANCEL_TEST, data: {} }),
@@ -292,7 +500,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     if (visualRegressionIndex !== -1) {
       relativePath = imagePath.substring(visualRegressionIndex + '/visual-regression/'.length);
     }
-    const imageUrl = `http://localhost:6007/image/${encodeURIComponent(relativePath)}`;
+    const imageUrl = `${getAddonServerUrl()}/image/${encodeURIComponent(relativePath)}`;
 
     // Determine the title and styling based on error type
     let title = `diff image for ${result.storyName || result.storyId}`;
@@ -517,7 +725,8 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                     <div className={styles.progressStats}>
                       <span className={styles.progressStat}>
                         Stories: {progress.completed}/{progress.total}
-                        {progress.storiesPerMinute !== undefined && ` ${progress.storiesPerMinute}/m`}
+                        {progress.storiesPerMinute !== undefined &&
+                          ` ${progress.storiesPerMinute}/m`}
                         {progress.percent !== undefined && ` ${progress.percent}%`}
                       </span>
                       {progress.timeRemainingFormatted && (
@@ -560,100 +769,110 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
             </div>
           )}
 
-          {/* Main content when not running */}
-          {!isRunning && !isUpdating && (
-            <ScrollArea vertical>
-              <div className={styles.section}>
-                <div className={styles.buttonsRow}>
+          {/* Main content */}
+          <ScrollArea vertical>
+            <div className={styles.section}>
+              {/* All buttons in one row */}
+              <div className={styles.buttonsRow}>
+                <Button
+                  onClick={handleRunAllTests}
+                  disabled={isRunning || isUpdating || !isChannelReady}
+                  title="Run visual regression tests for all stories"
+                >
+                  <SyncIcon className={styles.buttonIcon} />
+                  Test All
+                </Button>
+                {failedTests > 1 && (
                   <Button
-                    onClick={handleRunTest}
+                    onClick={handleNextFailedTest}
                     disabled={isRunning || isUpdating || !isChannelReady}
-                    title="Run visual regression test for the current story"
+                    title="Navigate to next failed test"
                   >
-                    <PlayIcon className={styles.buttonIcon} />
-                    Test Current
+                    <ChevronRightIcon className={styles.buttonIcon} />
+                    Next Failed
                   </Button>
+                )}
+                {failedTests > 0 && (
                   <Button
-                    onClick={handleUpdateBaseline}
+                    onClick={handleRunFailedTests}
                     disabled={isRunning || isUpdating || !isChannelReady}
-                    title="Update baseline snapshot for the current story"
-                  >
-                    <DownloadIcon className={styles.buttonIcon} />
-                    Update Snapshot
-                  </Button>
-                  <Button
-                    onClick={handleCreateMissingSnapshots}
-                    disabled={isRunning || isUpdating || !isChannelReady}
-                    title="Create baseline snapshots for stories that don't have them"
-                  >
-                    <AddIcon className={styles.buttonIcon} />
-                    Create Missing
-                  </Button>
-                  <Button
-                    onClick={handleRunAllTests}
-                    disabled={isRunning || isUpdating || !isChannelReady}
-                    title="Run visual regression tests for all stories"
+                    title="Run visual regression tests for failed stories only"
                   >
                     <SyncIcon className={styles.buttonIcon} />
-                    Test All
+                    Test Failed
                   </Button>
-                  {failedTests > 0 && (
-                    <>
-                      <Button
-                        onClick={handleRunFailedTests}
-                        disabled={isRunning || isUpdating || !isChannelReady}
-                        title="Run visual regression tests for failed stories only"
-                      >
-                        <SyncIcon className={styles.buttonIcon} />
-                        Test Failed
-                      </Button>
-                      <Button
-                        onClick={handleNextFailedTest}
-                        disabled={isRunning || isUpdating || !isChannelReady}
-                        title="Navigate to next failed test"
-                      >
-                        <ChevronRightIcon className={styles.buttonIcon} />
-                        Next Failed
-                      </Button>
-                    </>
-                  )}
+                )}
+                {!isRunning && !isUpdating && (
+                  <>
+                    <Button
+                      onClick={handleRunTest}
+                      disabled={isRunning || isUpdating || !isChannelReady}
+                      title="Run visual regression test for the current story"
+                    >
+                      <PlayIcon className={styles.buttonIcon} />
+                      Test Current
+                    </Button>
+                    <Button
+                      onClick={handleUpdateBaseline}
+                      disabled={isRunning || isUpdating || !isChannelReady || !currentStoryFailed}
+                      title="Update baseline snapshot for the current story"
+                    >
+                      <DownloadIcon className={styles.buttonIcon} />
+                      Update Snapshot
+                    </Button>
+                    <Button
+                      onClick={handleCreateMissingSnapshots}
+                      disabled={isRunning || isUpdating || !isChannelReady || skippedTests === 0}
+                      title="Create baseline snapshots for stories that don't have them"
+                    >
+                      <AddIcon className={styles.buttonIcon} />
+                      Create Missing
+                    </Button>
+                  </>
+                )}
+              </div>
+
+              {/* Results Summary */}
+              {results.length > 0 && (
+                <div className={styles.resultsSection}>
+                  <div className={styles.counts}>
+                    <span className={styles.count}>Total: {totalTests}</span>
+                    <span className={`${styles.count} ${styles.countPassed}`}>
+                      Passed: {passedTests}
+                    </span>
+                    <span className={`${styles.count} ${styles.countFailed}`}>
+                      Failed: {failedTests}
+                    </span>
+                    {skippedTests > 0 && (
+                      <span className={styles.count}>Skipped: {skippedTests}</span>
+                    )}
+                  </div>
                 </div>
+              )}
 
-                {/* Results Summary */}
-                {results.length > 0 && (
-                  <div className={styles.resultsSection}>
-                    <h4>Test Results</h4>
-                    <div className={styles.counts}>
-                      <span className={styles.count}>Total: {totalTests}</span>
-                      <span className={`${styles.count} ${styles.countPassed}`}>
-                        Passed: {passedTests}
-                      </span>
-                      <span className={`${styles.count} ${styles.countFailed}`}>
-                        Failed: {failedTests}
-                      </span>
-                      {skippedTests > 0 && (
-                        <span className={styles.count}>Skipped: {skippedTests}</span>
-                      )}
-                    </div>
-                  </div>
-                )}
+              {/* Show message when no test results */}
+              {results.length === 0 && (
+                <div className={styles.noResults}>
+                  <p>No test results yet.</p>
+                  <p>
+                    Click "Test Current" to test the current story, or "Test All" to run all visual
+                    regression tests.
+                  </p>
+                </div>
+              )}
 
-                {/* Show message when no test results */}
-                {results.length === 0 && (
-                  <div className={styles.noResults}>
-                    <p>No test results yet.</p>
-                    <p>
-                      Click "Test Current" to test the current story, or "Test All" to run all
-                      visual regression tests.
-                    </p>
-                  </div>
-                )}
-
-                {/* Failed Tests List */}
-                {results.some((r) => r.status === 'failed') && (
-                  <div className={styles.failuresSection}>
-                    <h4>Failed Tests</h4>
-                    <ul className={styles.failuresList}>
+              {/* Failed Tests Table */}
+              {results.some((r) => r.status === 'failed') && (
+                <div>
+                  <table className={styles.failuresTable}>
+                    <thead>
+                      <tr>
+                        <th className={styles.tableHeader}>Story</th>
+                        <th className={styles.tableHeader}>Difference</th>
+                        <th className={styles.tableHeader}>Failure</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {(() => {
                         return results
                           .filter((r) => r.status === 'failed')
@@ -714,21 +933,11 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
                             // Get failure reason text
                             const getFailureReason = () => {
-                              // Prefer the error message if available (it has more detail)
-                              if (result.error) {
-                                // Remove "Screenshot mismatch" prefix if present
-                                return result.error.replace(
-                                  /^Screenshot mismatch\s*[-–—]?\s*/i,
-                                  '',
-                                );
-                              }
-
-                              // Fall back to errorType if no error message
+                              // Use errorType for simple failure reasons
                               if (result.errorType) {
                                 switch (result.errorType) {
                                   case 'screenshot_mismatch':
-                                    // Don't show "Screenshot mismatch" - just show if diff is missing
-                                    return result.diffPath ? '' : '(no diff image)';
+                                    return 'Screenshot mismatch';
                                   case 'loading_failure':
                                     return 'Loading failure';
                                   case 'network_error':
@@ -740,24 +949,30 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                                 }
                               }
 
-                              // Last resort: infer from available data
-                              if (result.diffPath) {
-                                return '';
-                              }
-
+                              // Fallback to generic failed status
                               return 'Failed';
                             };
 
                             const failureReason = getFailureReason();
 
+                            // Build difference info
+                            const diffInfo = [];
+                            if (result.diffPixels !== undefined) {
+                              diffInfo.push(`${result.diffPixels.toLocaleString()} pixels`);
+                            }
+                            if (result.diffPercent !== undefined) {
+                              diffInfo.push(`${result.diffPercent.toFixed(2)}%`);
+                            }
+                            const differenceText = diffInfo.join(', ') || '-';
+
                             return (
-                              <li
+                              <tr
                                 key={result.storyId}
-                                className={`${styles.failureItem} ${
-                                  isCurrentStory ? styles.failureItemCurrent : ''
+                                className={`${styles.failureRow} ${
+                                  isCurrentStory ? styles.failureRowCurrent : ''
                                 }`}
                               >
-                                <div className={styles.failureContent}>
+                                <td className={styles.tableCell}>
                                   <button
                                     onClick={(e) => handleClickWithRestore(e, result)}
                                     className={`${styles.linkButton} ${
@@ -771,43 +986,34 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
                                           : 'Navigate to story'
                                     }
                                   >
-                                    <span className={styles.failureName}>
-                                      {result.storyName || result.storyId}
-                                    </span>
+                                    {result.storyName || result.storyId}
                                   </button>
-                                  <div className={styles.failureDetails}>
-                                    {result.diffPixels !== undefined && (
-                                      <span className={styles.diffInfo}>
-                                        {result.diffPixels.toLocaleString()} pixels
-                                      </span>
-                                    )}
-                                    {result.diffPercent !== undefined && (
-                                      <span className={styles.diffInfo}>
-                                        {result.diffPercent.toFixed(2)}%
-                                      </span>
-                                    )}
-                                    {failureReason && (
-                                      <span className={styles.failureReason}>{failureReason}</span>
-                                    )}
-                                  </div>
-                                </div>
-                              </li>
+                                </td>
+                                <td className={styles.tableCell}>
+                                  <span className={styles.diffInfo}>{differenceText}</span>
+                                </td>
+                                <td className={styles.tableCell}>
+                                  <span className={styles.failureReason}>
+                                    {failureReason || '-'}
+                                  </span>
+                                </td>
+                              </tr>
                             );
                           });
                       })()}
-                    </ul>
-                  </div>
-                )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
-                {/* All Passed Message */}
-                {results.length > 0 && failedTests === 0 && (
-                  <div className={styles.allPassed}>
-                    <p>✓ All tests passed!</p>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          )}
+              {/* All Passed Message */}
+              {results.length > 0 && failedTests === 0 && (
+                <div className={styles.allPassed}>
+                  <p>✓ All tests passed!</p>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
         </>
       )}
     </>
