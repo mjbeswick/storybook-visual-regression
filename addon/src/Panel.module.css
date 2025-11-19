@@ -253,13 +253,6 @@
   color: #111827;
 }
 
-.failuresSection {
-  margin-top: 20px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 16px;
-}
-
 .failuresSection h4 {
   margin: 0 0 12px 0;
   font-size: 14px;

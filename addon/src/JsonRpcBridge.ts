@@ -143,6 +143,10 @@ export class JsonRpcBridge {
           // Prevent CLI from triggering file system events that affect Vite
           CI: 'true',
           NODE_ENV: 'production',
+          // Additional isolation to prevent build system interference
+          VITE_SKIP_WATCH: 'true',
+          DISABLE_HMR: 'true',
+          SKIP_PREFLIGHT_CHECK: 'true',
         },
         shell: useShell,
       });
