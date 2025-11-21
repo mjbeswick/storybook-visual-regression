@@ -94,8 +94,6 @@ export interface RunParams {
   fullPage?: boolean;
   mutationWait?: number;
   mutationTimeout?: number;
-  snapshotRetries?: number;
-  snapshotDelay?: number;
   grep?: string;
   include?: string;
   exclude?: string;
@@ -113,7 +111,6 @@ export interface RunParams {
   overlayTimeout?: number;
   testTimeout?: number;
   notFoundCheck?: boolean;
-  notFoundRetryDelay?: number;
   installBrowsers?: boolean | string;
   installDeps?: boolean;
 }

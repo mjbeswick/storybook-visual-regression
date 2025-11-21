@@ -321,3 +321,38 @@
   margin: 0;
 }
 
+.notConnected {
+  padding: 24px;
+  text-align: center;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  margin: 16px;
+}
+
+.notConnectedContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.notConnectedIcon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.notConnected h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #991b1b;
+}
+
+.notConnected p {
+  margin: 0;
+  font-size: 14px;
+  color: #7f1d1d;
+  line-height: 1.5;
+}
+

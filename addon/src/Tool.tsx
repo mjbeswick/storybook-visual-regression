@@ -129,20 +129,19 @@ export const Tool: React.FC = () => {
     }
 
     try {
-      // Convert file path to relative path for the web server
-      // Extract the relative path from the full file system path
-      // The image path should be something like: /path/to/project/visual-regression/results/...
-      // We need to extract everything after "visual-regression/"
-      let relativePath = imagePath;
-
+      // Convert file path to relative path using the same logic as CLI results/snapshots
       // Find the "visual-regression" directory in the path
       const visualRegressionIndex = imagePath.indexOf('/visual-regression/');
+      let relativePath: string;
       if (visualRegressionIndex !== -1) {
         // Extract everything after "/visual-regression/"
         relativePath = imagePath.substring(visualRegressionIndex + '/visual-regression/'.length);
+      } else {
+        // Fallback: use the full path as-is
+        relativePath = imagePath;
       }
 
-      // Create the web server URL
+      // Create the web server URL (browsers can't load file:// URLs)
       const imageUrl = `http://localhost:6007/image/${encodeURIComponent(relativePath)}`;
 
       // Simple HTML with just the image

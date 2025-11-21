@@ -19,7 +19,7 @@ type PanelProps = {
 
 export const Panel: React.FC<PanelProps> = ({ active = true }) => {
   const api = useStorybookApi();
-  const { results, isRunning, isUpdating, logs, progress, cancelTest, clearLogs } =
+  const { results, isRunning, isUpdating, isConnected, logs, progress, cancelTest, clearLogs } =
     useTestResults();
 
   // Track current story ID to highlight failures for the current story
@@ -187,8 +187,9 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
           method: 'run',
           params: {
             url: window.location.origin, // Storybook URL
-            grep: '', // Empty grep to run all tests
-            outputDir: `/tmp/storybook-visual-regression-${Date.now()}`, // Use temp directory
+            quiet: true, // Suppress CLI output when running from Storybook
+            grep: '', // Empty string to run all tests (like preview.ts)
+            // Let CLI use other default settings for all tests
           },
         }),
       })
@@ -210,6 +211,16 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
             if (channel) {
               channel.emit(EVENTS.TEST_COMPLETE);
             }
+
+            // After all tests complete, reload all results to get the latest state
+            // Wait a bit for the index to be updated
+            setTimeout(async () => {
+              console.log('[VR Addon Panel] Reloading results after all tests run...');
+              // Emit a custom event to trigger result reload in preview
+              if (channel) {
+                channel.emit('storybook-visual-regression/reload-results');
+              }
+            }, 500);
           }
         })
         .catch((err) => {
@@ -233,16 +244,17 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       return;
     }
     try {
-      channel.emit(EVENTS.RUN_FAILED_TESTS, {});
-      console.log('[VR Addon Panel] RUN_FAILED_TESTS event emitted via channel');
+      // Don't emit events to avoid triggering Storybook updates
+      // channel.emit(EVENTS.RUN_FAILED_TESTS, {});
+      // console.log('[VR Addon Panel] RUN_FAILED_TESTS event emitted via channel');
       // Also send via HTTP to ensure preview receives it
-      fetch(`${getAddonServerUrl()}/emit-event`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: EVENTS.RUN_FAILED_TESTS, data: {} }),
-      }).catch((err) => {
-        console.error('[VR Addon Panel] Error sending RUN_FAILED_TESTS via HTTP:', err);
-      });
+      // fetch(`${getAddonServerUrl()}/emit-event`, {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify({ event: EVENTS.RUN_FAILED_TESTS, data: {} }),
+      // }).catch((err) => {
+      //   console.error('[VR Addon Panel] Error sending RUN_FAILED_TESTS via HTTP:', err);
+      // });
     } catch (error) {
       console.error('[VR Addon Panel] Error emitting RUN_FAILED_TESTS:', error);
     }
@@ -263,9 +275,9 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     if (currentStory) {
       console.log('[VR Addon Panel] Starting baseline update for story:', currentStory.id);
 
-      // Immediately show loading state by emitting UPDATE_STARTED
-      channel.emit(EVENTS.UPDATE_STARTED);
-      console.log('[VR Addon Panel] Emitting UPDATE_STARTED to show loading...');
+      // Don't emit UPDATE_STARTED to avoid triggering Storybook updates
+      // channel.emit(EVENTS.UPDATE_STARTED);
+      // console.log('[VR Addon Panel] Emitting UPDATE_STARTED to show loading...');
 
       // Send RPC request directly to the CLI via preset
       console.log('[VR Addon Panel] Sending RPC request to update baseline...');
@@ -395,10 +407,10 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
         })
         .catch((err) => {
           console.error('[VR Addon Panel] Error sending RPC request:', err);
-          // Emit TEST_COMPLETE on error
-          if (channel) {
-            channel.emit(EVENTS.TEST_COMPLETE);
-          }
+          // Don't emit TEST_COMPLETE to avoid triggering Storybook updates
+          // if (channel) {
+          //   channel.emit(EVENTS.TEST_COMPLETE);
+          // }
         });
     }, 1000); // Delay 1 second to let EventSource stabilize
   };
@@ -411,8 +423,9 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     }
     try {
       cancelTest();
-      channel.emit(EVENTS.CANCEL_TEST);
-      console.log('[VR Addon Panel] CANCEL_TEST event emitted via channel');
+      // Don't emit CANCEL_TEST to avoid triggering Storybook updates
+      // channel.emit(EVENTS.CANCEL_TEST);
+      // console.log('[VR Addon Panel] CANCEL_TEST event emitted via channel');
       // Also send via HTTP to ensure preview receives it
       fetch(`${getAddonServerUrl()}/emit-event`, {
         method: 'POST',
@@ -466,6 +479,10 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
     // Navigate to the story
     try {
       api.selectStory(baseStoryId);
+      // Immediately update currentStoryId to ensure highlighting works
+      // The storyChanged event might not fire immediately or reliably
+      setCurrentStoryId(baseStoryId);
+
       // Show diff after navigation completes
       setTimeout(() => {
         if (nextResult.diffPath || nextResult.errorPath) {
@@ -535,13 +552,13 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
 
     iframe.srcdoc = htmlContent;
 
-    // Emit event to notify Tool component that diff/error is being shown
-    if (channel) {
-      channel.emit(EVENTS.DIFF_SHOWN, {
-        storyId: result.storyId,
-        type: result.errorPath ? 'error' : 'diff',
-      });
-    }
+    // Don't emit DIFF_SHOWN to avoid triggering Storybook updates
+    // if (channel) {
+    //   channel.emit(EVENTS.DIFF_SHOWN, {
+    //     storyId: result.storyId,
+    //     type: result.errorPath ? 'error' : 'diff',
+    //   });
+    // }
   };
 
   // Get latest log messages for display (last 10)
@@ -705,8 +722,20 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
       {!active && null}
       {active && (
         <>
+          {/* Not connected message */}
+          {!isConnected && (
+            <div className={styles.notConnected}>
+              <div className={styles.notConnectedContent}>
+                <div className={styles.notConnectedIcon}>⚠️</div>
+                <h3>Visual Regression Testing Not Available</h3>
+                <p>The visual regression CLI is not connected.</p>
+                <p>Please check that Storybook is running and the CLI is properly configured.</p>
+              </div>
+            </div>
+          )}
+
           {/* Running state with progress */}
-          {(isRunning || isUpdating) && (
+          {isConnected && (isRunning || isUpdating) && (
             <div className={styles.runningContainer}>
               <div className={styles.progressBar}>
                 <div
@@ -771,7 +800,8 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
           )}
 
           {/* Main content */}
-          <ScrollArea vertical>
+          {isConnected && !(isRunning || isUpdating) && (
+            <ScrollArea vertical>
             <div className={styles.section}>
               {/* All buttons in one row */}
               <div className={styles.buttonsRow}>
@@ -1015,6 +1045,7 @@ export const Panel: React.FC<PanelProps> = ({ active = true }) => {
               )}
             </div>
           </ScrollArea>
+          )}
         </>
       )}
     </>

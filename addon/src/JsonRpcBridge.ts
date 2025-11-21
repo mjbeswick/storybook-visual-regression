@@ -128,13 +128,7 @@ export class JsonRpcBridge {
         }
       }
 
-      // Spawn CLI with --json-rpc flag and custom output directory
-      const tempOutputDir = `/tmp/storybook-visual-regression-${Date.now()}`;
-      console.log(`[VR Addon] Spawning CLI from project root: ${projectRoot}`);
-      console.log(`[VR Addon] Using temporary output directory: ${tempOutputDir}`);
-      console.log(`[VR Addon] CLI command: ${command} ${args.join(' ')}`);
-      console.log(`[VR Addon] Working directory: ${projectRoot}`);
-      console.log(`[VR Addon] Current process.cwd(): ${process.cwd()}`);
+      // Spawn CLI with --json-rpc flag (silently to avoid triggering any updates)
       this.process = spawn(command, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: projectRoot,
@@ -145,22 +139,8 @@ export class JsonRpcBridge {
           // Prevent CLI from triggering file system events that affect Vite
           CI: 'true',
           NODE_ENV: 'production',
-          // Additional isolation to prevent build system interference
-          VITE_SKIP_WATCH: 'true',
-          DISABLE_HMR: 'true',
-          SKIP_PREFLIGHT_CHECK: 'true',
-          // Storybook-specific environment variables
+          // Disable HMR during visual regression testing
           STORYBOOK_DISABLE_HMR: 'true',
-          STORYBOOK_SKIP_HMR: 'true',
-          // Prevent any WebSocket or network communication that might trigger HMR
-          DISABLE_WEB_SOCKETS: 'true',
-          NO_HMR: '1',
-          // Playwright-specific settings to prevent HMR triggers
-          PLAYWRIGHT_SKIP_HMR: 'true',
-          BROWSER_HMR_DISABLED: 'true',
-          // Network isolation
-          NETWORK_ISOLATION: 'true',
-          DISABLE_NETWORK_HMR: 'true',
         },
         shell: useShell,
       });
@@ -214,6 +194,16 @@ export class JsonRpcBridge {
           // Provide helpful error message for missing --json-rpc flag
           if (errorMsg.includes('unknown option') && errorMsg.includes('--json-rpc')) {
             errorMsg = `The CLI version does not support --json-rpc mode. Please rebuild your docker image with: npm run docker:build\n\nOriginal error: ${errorMsg}`;
+          }
+
+          // Provide helpful error message for Docker container not found
+          if (errorMsg.includes('docker') && (errorMsg.includes('No such image') || errorMsg.includes('not found'))) {
+            errorMsg = `Docker container not found. Please build the container first:\n\ncd ../storybook-visual-regression && docker build -t storybook-visual-regression .\n\nOr use the local CLI by updating your .storybook/main.ts configuration.\n\nOriginal error: ${errorMsg}`;
+          }
+
+          // Provide helpful error message for Docker command not found
+          if (errorMsg.includes('docker: command not found')) {
+            errorMsg = `Docker is not installed. Please install Docker or use the local CLI by updating your .storybook/main.ts configuration.\n\nOriginal error: ${errorMsg}`;
           }
 
           console.error('[VR Addon] CLI process failed:', errorMsg);

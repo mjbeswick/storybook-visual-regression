@@ -14,6 +14,7 @@ type TestResultsContextType = {
   failedStories: string[];
   isRunning: boolean;
   isUpdating: boolean;
+  isConnected: boolean;
   logs: string[];
   progress: ProgressInfo | null;
   cancelTest: () => void;
@@ -25,6 +26,7 @@ const TestResultsContext = createContext<TestResultsContextType>({
   failedStories: [],
   isRunning: false,
   isUpdating: false,
+  isConnected: false,
   logs: [],
   progress: null,
   cancelTest: () => {},
@@ -38,6 +40,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     failedStories: [] as string[],
     isRunning: false,
     isUpdating: false,
+    isConnected: false,
     logs: [] as string[],
     progress: null as ProgressInfo | null,
   });
@@ -121,8 +124,23 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Also set up EventSource to receive events from preview (via preset)
     // This ensures we receive UPDATE_STARTED and TEST_STARTED even if channel doesn't bridge
     let eventSource: EventSource | null = null;
+    const checkConnection = async () => {
+      try {
+        const response = await fetch(`${getAddonServerUrl()}/health`);
+        const data = await response.json();
+        const isConnected = data.status === 'ok';
+        setState((prev) => ({ ...prev, isConnected }));
+      } catch (error) {
+        setState((prev) => ({ ...prev, isConnected: false }));
+      }
+    };
+
     try {
       eventSource = new EventSource(`${getAddonServerUrl()}/events`);
+      eventSource.onopen = () => {
+        console.log('[VR Addon TestResultsContext] EventSource connected, checking CLI connection...');
+        checkConnection();
+      };
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -133,14 +151,23 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
           } else if (type === EVENTS.TEST_STARTED) {
             console.log('[VR Addon TestResultsContext] Received TEST_STARTED via EventSource');
             handleTestStarted();
+          } else if (type === 'connected') {
+            console.log('[VR Addon TestResultsContext] Received connected event, CLI is ready');
+            setState((prev) => ({ ...prev, isConnected: true }));
           }
         } catch (error) {
           // Ignore parse errors
         }
       };
+      eventSource.onerror = () => {
+        setState((prev) => ({ ...prev, isConnected: false }));
+      };
     } catch (error) {
       console.error('[VR Addon TestResultsContext] Failed to set up EventSource:', error);
     }
+
+    // Also periodically check connection status
+    const connectionCheckInterval = setInterval(checkConnection, 5000);
 
     return () => {
       channel.off(EVENTS.TEST_STARTED, handleTestStarted);
@@ -154,6 +181,7 @@ export const TestResultsProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (eventSource) {
         eventSource.close();
       }
+      clearInterval(connectionCheckInterval);
     };
   }, [api]);
 

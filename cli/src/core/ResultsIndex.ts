@@ -194,7 +194,20 @@ export class ResultsIndexManager {
     const key = this.buildKey(storyId, options?.browser, options?.viewportName);
     const now = new Date().toISOString();
 
-    const existingEntry = this.entriesMap.get(key);
+    // First try to find an existing entry with the exact key (including viewportName)
+    let existingEntry = this.entriesMap.get(key);
+
+    // If no exact match, look for any existing entry for the same storyId/browser
+    // This handles cases where viewport detection is inconsistent between runs
+    if (!existingEntry) {
+      for (const entry of this.index.entries) {
+        if (entry.storyId === storyId && entry.browser === options?.browser) {
+          existingEntry = entry;
+          break;
+        }
+      }
+    }
+
     const resultEntry: ResultEntry = {
       storyId,
       snapshotId,
@@ -215,6 +228,8 @@ export class ResultsIndexManager {
       if (index !== -1) {
         this.index.entries[index] = resultEntry;
       }
+      // Update the entriesMap with the new key (in case viewportName changed)
+      this.entriesMap.delete(this.buildKey(existingEntry.storyId, existingEntry.browser, existingEntry.viewportName));
     } else {
       // New entry - add to array
       this.index.entries.push(resultEntry);
@@ -359,15 +374,14 @@ export class ResultsIndexManager {
 
   /**
    * Clean up entries that no longer have corresponding result files
-   * Also removes entries for passed tests since we don't write files for passed tests anymore
+   * Keeps entries for passed tests for logging purposes
    */
   cleanupOrphanedEntries(resultsBasePath: string): void {
     const orphanedEntries: ResultEntry[] = [];
 
     for (const entry of this.index.entries) {
-      // Remove entries for passed tests since we don't write files for them
+      // Keep entries for passed tests (no files written for them)
       if (entry.status === 'passed') {
-        orphanedEntries.push(entry);
         continue;
       }
 
@@ -388,6 +402,12 @@ export class ResultsIndexManager {
       for (const entry of orphanedEntries) {
         const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
         this.entriesMap.delete(key);
+      }
+
+      // Mark all remaining entries as pending updates to ensure they get written
+      for (const entry of this.index.entries) {
+        const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
+        this.pendingUpdates.set(key, entry);
       }
 
       this.scheduleWrite();
@@ -490,8 +510,9 @@ export class ResultsIndexManager {
   }
 
   /**
-   * Clean up duplicate entries - unique key is storyId + browser + viewport
-   * Keeps the most recent entry per unique combination and removes older duplicates
+   * Clean up duplicate entries - unique key is storyId + browser
+   * Keeps the most recent entry per storyId/browser combination and removes older duplicates
+   * This handles cases where viewport detection is inconsistent between runs
    */
   cleanupDuplicateEntries(): {
     deletedEntries: number;
@@ -500,7 +521,8 @@ export class ResultsIndexManager {
     const duplicates: ResultEntry[] = [];
 
     for (const entry of this.index.entries) {
-      const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
+      // Use storyId + browser as the uniqueness key (ignore viewportName)
+      const key = `${entry.storyId}::browser:${entry.browser || 'chromium'}`;
       const existing = seen.get(key);
 
       if (existing) {
@@ -525,7 +547,7 @@ export class ResultsIndexManager {
       // Remove duplicates from array
       this.index.entries = this.index.entries.filter((entry) => !duplicates.includes(entry));
 
-      // Remove from map (using all possible keys)
+      // Remove from map (using all possible keys for duplicates)
       for (const entry of duplicates) {
         const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
         this.entriesMap.delete(key);
@@ -533,6 +555,13 @@ export class ResultsIndexManager {
 
       // Rebuild entries map to ensure consistency
       this.buildEntriesMap();
+
+      // Mark all remaining entries as pending updates to ensure they get written
+      for (const entry of this.index.entries) {
+        const key = this.buildKey(entry.storyId, entry.browser, entry.viewportName);
+        this.pendingUpdates.set(key, entry);
+      }
+
       this.scheduleWrite();
     }
 

@@ -32,8 +32,6 @@ export const writeRuntimeOptions = (
           fullPage: config.fullPage,
           mutationWait: config.mutationWait,
           mutationTimeout: config.mutationTimeout,
-          snapshotRetries: config.snapshotRetries,
-          snapshotDelay: config.snapshotDelay,
           disableAnimations: config.disableAnimations,
           fixDate: config.fixDate,
           frozenTime: config.frozenTime,

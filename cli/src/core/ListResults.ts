@@ -15,10 +15,33 @@ function createHyperlink(text: string, url: string): string {
 }
 
 /**
- * Convert file path to file:// URL
+ * Format a relative path with ./ prefix for display
  */
-function filePathToUrl(filePath: string): string {
-  // Convert to absolute path and then to file:// URL
+function formatRelativePath(relativePath: string): string {
+  // If the path is already absolute or starts with ./ or ../, return as-is
+  if (
+    path.isAbsolute(relativePath) ||
+    relativePath.startsWith('./') ||
+    relativePath.startsWith('../')
+  ) {
+    return relativePath;
+  }
+  // Otherwise, prefix with ./ to make it clear it's a relative path
+  return `./${relativePath}`;
+}
+
+/**
+ * Convert file path to file:// URL
+ * Always use relative URLs when relativePath is provided
+ */
+function filePathToUrl(filePath: string, relativePath?: string): string {
+  // If we have a relative path, always use it (works for both Docker and local)
+  if (relativePath) {
+    // Use relative file:// URL like file://./path
+    return `file://${relativePath}`;
+  }
+
+  // Fallback: convert to absolute path and then to file:// URL
   const absolutePath = path.resolve(filePath);
   // On Windows, we need to convert backslashes to forward slashes
   const normalizedPath = absolutePath.replace(/\\/g, '/');
@@ -346,13 +369,9 @@ export function listResults(
         // Show snapshot (expected/baseline) path
         if (fs.existsSync(snapshotPath)) {
           const relativeSnapshot = path.relative(basePath, snapshotPath);
-          if (options?.outputFile) {
-            writeLine(`    Snapshot: ${relativeSnapshot}`);
-          } else {
-            const snapshotUrl = filePathToUrl(snapshotPath);
-            const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
-            writeLine(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
-          }
+          const formattedSnapshot = formatRelativePath(relativeSnapshot);
+          const snapshotUrl = filePathToUrl(snapshotPath, formattedSnapshot);
+          writeLine(`    Snapshot: ${chalk.cyan(snapshotUrl)}`);
         }
 
         const actualPath = resultsIndexManager.getResultPath(
@@ -364,24 +383,16 @@ export function listResults(
 
         if (fs.existsSync(actualPath)) {
           const relativeActual = path.relative(basePath, actualPath);
-          if (options?.outputFile) {
-            writeLine(`    Actual: ${relativeActual}`);
-          } else {
-            const actualUrl = filePathToUrl(actualPath);
-            const clickableActual = createHyperlink(relativeActual, actualUrl);
-            writeLine(`    Actual: ${chalk.cyan(clickableActual)}`);
-          }
+          const formattedActual = formatRelativePath(relativeActual);
+          const actualUrl = filePathToUrl(actualPath, formattedActual);
+          writeLine(`    Actual: ${chalk.cyan(actualUrl)}`);
         }
 
         if (fs.existsSync(diffPath)) {
           const relativeDiff = path.relative(basePath, diffPath);
-          if (options?.outputFile) {
-            writeLine(`    Diff: ${relativeDiff}`);
-          } else {
-            const diffUrl = filePathToUrl(diffPath);
-            const clickableDiff = createHyperlink(relativeDiff, diffUrl);
-            writeLine(`    Diff: ${chalk.cyan(clickableDiff)}`);
-          }
+          const formattedDiff = formatRelativePath(relativeDiff);
+          const diffUrl = filePathToUrl(diffPath, formattedDiff);
+          writeLine(`    Diff: ${chalk.cyan(diffUrl)}`);
         }
       } else if (entry.status === 'new') {
         // For new snapshots, show the snapshot path
@@ -394,13 +405,9 @@ export function listResults(
 
         if (fs.existsSync(snapshotPath)) {
           const relativeSnapshot = path.relative(basePath, snapshotPath);
-          if (options?.outputFile) {
-            writeLine(`    Snapshot: ${relativeSnapshot}`);
-          } else {
-            const snapshotUrl = filePathToUrl(snapshotPath);
-            const clickableSnapshot = createHyperlink(relativeSnapshot, snapshotUrl);
-            writeLine(`    Snapshot: ${chalk.cyan(clickableSnapshot)}`);
-          }
+          const formattedSnapshot = formatRelativePath(relativeSnapshot);
+          const snapshotUrl = filePathToUrl(snapshotPath, formattedSnapshot);
+          writeLine(`    Snapshot: ${chalk.cyan(snapshotUrl)}`);
         }
       }
     }
@@ -425,12 +432,12 @@ export function listResults(
  */
 function writeOutputFile(filePath: string, lines: string[]): void {
   try {
-  const content = lines.map((line) => stripAnsi(line)).join('\n');
+    const content = lines.map((line) => stripAnsi(line)).join('\n');
     const dir = path.dirname(filePath);
     if (dir && dir !== '.') {
       fs.mkdirSync(dir, { recursive: true });
     }
-  fs.writeFileSync(filePath, content, 'utf8');
+    fs.writeFileSync(filePath, content, 'utf8');
   } catch (error) {
     console.error(`Failed to write results file to ${filePath}: ${error}`);
     throw error;

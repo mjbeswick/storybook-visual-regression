@@ -28,8 +28,6 @@ export type CliFlags = {
   fullPage?: boolean;
   overlayTimeout?: number;
   testTimeout?: number;
-  snapshotRetries?: number;
-  snapshotDelay?: number;
   mutationWait?: number;
   mutationTimeout?: number;
   domStabilityQuietPeriod?: number;
@@ -41,7 +39,6 @@ export type CliFlags = {
   installBrowsers?: string | boolean;
   installDeps?: boolean;
   notFoundCheck?: boolean;
-  notFoundRetryDelay?: number;
   update?: boolean;
   missingOnly?: boolean;
   failedOnly?: boolean;
@@ -64,7 +61,6 @@ export type RuntimeConfig = VisualRegressionConfig & {
   installBrowsers?: string | boolean;
   installDeps?: boolean;
   notFoundCheck: boolean;
-  notFoundRetryDelay: number;
   update: boolean;
   missingOnly: boolean;
   failedOnly: boolean;
@@ -169,8 +165,6 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     domStabilityMaxWait:
       flags.domStabilityMaxWait ?? fileVisual.domStabilityMaxWait ?? base.domStabilityMaxWait,
     storyLoadDelay: flags.storyLoadDelay ?? fileVisual.storyLoadDelay ?? base.storyLoadDelay,
-    snapshotRetries: flags.snapshotRetries ?? fileVisual.snapshotRetries ?? base.snapshotRetries,
-    snapshotDelay: flags.snapshotDelay ?? fileVisual.snapshotDelay ?? base.snapshotDelay,
     viewportSizes: fileVisual.viewportSizes ?? base.viewportSizes,
     defaultViewport: fileVisual.defaultViewport ?? base.defaultViewport,
     discoverViewports: fileVisual.discoverViewports ?? base.discoverViewports,
@@ -241,7 +235,6 @@ export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
     installBrowsers: flags.installBrowsers,
     installDeps: flags.installDeps,
     notFoundCheck: Boolean(flags.notFoundCheck),
-    notFoundRetryDelay: flags.notFoundRetryDelay ?? 200,
     update: Boolean(flags.update),
     missingOnly: Boolean(flags.missingOnly),
     failedOnly: Boolean(flags.failedOnly),
@@ -287,9 +280,6 @@ export const saveEffectiveConfig = (
   if (flags.domStabilityMaxWait !== undefined)
     visualRegression.domStabilityMaxWait = config.domStabilityMaxWait;
   if (flags.storyLoadDelay !== undefined) visualRegression.storyLoadDelay = config.storyLoadDelay;
-  if (flags.snapshotRetries !== undefined)
-    visualRegression.snapshotRetries = config.snapshotRetries;
-  if (flags.snapshotDelay !== undefined) visualRegression.snapshotDelay = config.snapshotDelay;
   if (flags.include !== undefined) visualRegression.includeStories = config.includeStories;
   if (flags.exclude !== undefined) visualRegression.excludeStories = config.excludeStories;
   if (flags.grep !== undefined) visualRegression.grep = config.grep;

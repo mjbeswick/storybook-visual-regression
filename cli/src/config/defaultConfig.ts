@@ -22,8 +22,6 @@ export type VisualRegressionConfig = {
   domStabilityQuietPeriod?: number;
   domStabilityMaxWait?: number;
   storyLoadDelay?: number;
-  snapshotRetries: number;
-  snapshotDelay: number;
   includeStories?: string[];
   excludeStories?: string[];
   grep?: string;
@@ -76,8 +74,6 @@ export const defaultConfig = (): VisualRegressionConfig => {
     domStabilityQuietPeriod: 200,
     domStabilityMaxWait: 2000,
     storyLoadDelay: 200,
-    snapshotRetries: 1,
-    snapshotDelay: 0,
     includeStories: undefined,
     excludeStories: undefined,
     grep: undefined,

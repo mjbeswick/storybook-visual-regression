@@ -261,7 +261,7 @@ const initializeAddon = async () => {
       await rpcRequest('run', {
         url: getStorybookUrl(),
         grep: '', // Empty grep to run all tests
-        outputDir: `/tmp/storybook-visual-regression-${Date.now()}`, // Use temp directory
+        output: '/tmp/visual-regression-test', // Use temp directory to isolate file writes
       });
 
       // After all tests complete, reload all results

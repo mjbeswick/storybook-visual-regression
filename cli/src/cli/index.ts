@@ -75,8 +75,6 @@ const optsToFlags = (opts: Record<string, unknown>): CliFlags => {
   if (opts.maxDiffPixels !== undefined) flags.maxDiffPixels = Number(opts.maxDiffPixels);
   if (opts.overlayTimeout !== undefined) flags.overlayTimeout = Number(opts.overlayTimeout);
   if (opts.testTimeout !== undefined) flags.testTimeout = Number(opts.testTimeout);
-  if (opts.snapshotRetries !== undefined) flags.snapshotRetries = Number(opts.snapshotRetries);
-  if (opts.snapshotDelay !== undefined) flags.snapshotDelay = Number(opts.snapshotDelay);
   if (opts.mutationWait !== undefined) flags.mutationWait = Number(opts.mutationWait);
   if (opts.mutationTimeout !== undefined) flags.mutationTimeout = Number(opts.mutationTimeout);
   if (opts.domStabilityQuietPeriod !== undefined)
@@ -84,8 +82,6 @@ const optsToFlags = (opts: Record<string, unknown>): CliFlags => {
   if (opts.domStabilityMaxWait !== undefined)
     flags.domStabilityMaxWait = Number(opts.domStabilityMaxWait);
   if (opts.storyLoadDelay !== undefined) flags.storyLoadDelay = Number(opts.storyLoadDelay);
-  if (opts.notFoundRetryDelay !== undefined)
-    flags.notFoundRetryDelay = Number(opts.notFoundRetryDelay);
 
   // Boolean options
   if (opts.quiet) flags.quiet = true;
@@ -173,8 +169,6 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         )
         .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
         .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
-        .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
-        .option('--snapshot-delay <ms>', 'Delay between retries', Number)
         .option(
           '--include <patterns>',
           'Comma-separated include filters (supports wildcards * and normalizes spaces/slashes)',
@@ -197,7 +191,6 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--install-browsers [browser]', 'Install browsers (optionally specify browser)')
         .option('--install-deps', 'Install browser dependencies')
         .option('--not-found-check', 'Check for not found errors')
-        .option('--not-found-retry-delay <ms>', 'Retry delay for not found errors', Number)
         .option(
           '--fix-date [date]',
           'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
@@ -301,8 +294,6 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         )
         .option('--test-timeout <ms>', 'Test timeout in milliseconds (default 60000)', Number)
         .option('--overlay-timeout <ms>', 'Overlay timeout in milliseconds', Number)
-        .option('--snapshot-retries <n>', 'Capture retries (default 1)', Number)
-        .option('--snapshot-delay <ms>', 'Delay between retries', Number)
         .option(
           '--include <patterns>',
           'Comma-separated include filters (supports wildcards * and normalizes spaces/slashes)',
@@ -324,7 +315,6 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
         .option('--install-browsers [browser]', 'Install browsers (optionally specify browser)')
         .option('--install-deps', 'Install browser dependencies')
         .option('--not-found-check', 'Check for not found errors')
-        .option('--not-found-retry-delay <ms>', 'Retry delay for not found errors', Number)
         .option(
           '--fix-date [date]',
           'Fix Date object with fixed date (timestamp or ISO string, or omit for default)',
@@ -504,6 +494,13 @@ const mainWithArgv = async (argv: string[]): Promise<number> => {
 
               // Clean up orphaned entries (entries without files)
               resultsIndexManager.cleanupOrphanedEntries(resultsDir);
+
+              // Clean up duplicate entries (same storyId/browser with different viewportNames)
+              const duplicateCleanup = resultsIndexManager.cleanupDuplicateEntries();
+              if (duplicateCleanup.deletedEntries > 0) {
+                console.log(`Cleaned up ${duplicateCleanup.deletedEntries} duplicate result entr${duplicateCleanup.deletedEntries === 1 ? 'y' : 'ies'}`);
+                cleanedResults = true;
+              }
 
               // Clean up orphaned files (files without entries)
               const fileCleanup = resultsIndexManager.cleanupOrphanedFiles(resultsDir);
