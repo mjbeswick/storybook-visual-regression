@@ -5,7 +5,8 @@
   "main": "dist/cli/index.js",
   "type": "module",
   "bin": {
-    "storybook-visual-regression": "dist/cli/index.js"
+    "storybook-visual-regression": "dist/cli/index.js",
+    "svr": "dist/cli/index.js"
   },
   "files": [
     "dist",

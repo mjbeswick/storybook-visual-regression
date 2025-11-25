@@ -62,6 +62,33 @@ export class JsonRpcBridge {
     this.channel = channel;
 
     return new Promise((resolve, reject) => {
+      // Find project root first (needed for variable expansion)
+      let projectRoot = process.cwd();
+      let currentDir = process.cwd();
+
+      // Walk up directories to find project root
+      for (let i = 0; i < 10; i++) { // Prevent infinite loop
+        try {
+          const packageJsonPath = path.join(currentDir, 'package.json');
+          const gitPath = path.join(currentDir, '.git');
+
+          if (fs.existsSync(packageJsonPath) || fs.existsSync(gitPath)) {
+            projectRoot = currentDir;
+            break;
+          }
+
+          const parentDir = path.dirname(currentDir);
+          if (parentDir === currentDir) {
+            // Reached root directory
+            break;
+          }
+          currentDir = parentDir;
+        } catch (error) {
+          // If we can't access a directory, stop trying
+          break;
+        }
+      }
+
       // Parse CLI command - handle npm scripts and direct commands
       // Always ensure --json-rpc is added (unless already present)
       let command: string;
@@ -91,41 +118,62 @@ export class JsonRpcBridge {
         args = [];
         useShell = true;
       } else {
-        // Direct command - split into command and args
-        const parts = this.cliCommand.split(/\s+/);
+        // Direct command - manually expand shell variables to avoid shell stdin issues
+        // This allows $(pwd) and similar to work while keeping direct stdio access
+        let expandedCommand = this.cliCommand;
+        
+        // Expand $(pwd) and ${PWD}
+        if (expandedCommand.includes('$(pwd)') || expandedCommand.includes('${PWD}')) {
+          expandedCommand = expandedCommand.replace(/\$\(pwd\)/g, projectRoot);
+          expandedCommand = expandedCommand.replace(/\$\{PWD\}/g, projectRoot);
+        }
+        
+        // Expand $PWD
+        if (expandedCommand.includes('$PWD')) {
+          expandedCommand = expandedCommand.replace(/\$PWD/g, projectRoot);
+        }
+        
+        // Split into command and args
+        const parts = expandedCommand.split(/\s+/);
         command = parts[0];
-        if (hasJsonRpc) {
-          args = parts.slice(1);
+        
+        // For Docker commands, ensure -i flag is present to keep stdin open
+        if (command === 'docker' && parts[1] === 'run') {
+          // Check if -i or -it flags are already present
+          const hasInteractive = parts.some(part => 
+            part === '-i' || part === '-it' || part === '-ti' || part.includes('i')
+          );
+          
+          if (!hasInteractive) {
+            // Insert -i flag after 'run'
+            const argsWithoutCommand = parts.slice(1);
+            const runIndex = argsWithoutCommand.findIndex(arg => arg === 'run');
+            if (runIndex >= 0) {
+              argsWithoutCommand.splice(runIndex + 1, 0, '-i');
+            }
+            
+            if (hasJsonRpc) {
+              args = argsWithoutCommand;
+            } else {
+              args = [...argsWithoutCommand, '--json-rpc'];
+            }
+          } else {
+            if (hasJsonRpc) {
+              args = parts.slice(1);
+            } else {
+              args = [...parts.slice(1), '--json-rpc'];
+            }
+          }
         } else {
-          args = [...parts.slice(1), '--json-rpc'];
-        }
-      }
-
-      // Find project root (look for package.json or .git directory)
-      let projectRoot = process.cwd();
-      let currentDir = process.cwd();
-
-      // Walk up directories to find project root
-      for (let i = 0; i < 10; i++) { // Prevent infinite loop
-        try {
-          const packageJsonPath = path.join(currentDir, 'package.json');
-          const gitPath = path.join(currentDir, '.git');
-
-          if (fs.existsSync(packageJsonPath) || fs.existsSync(gitPath)) {
-            projectRoot = currentDir;
-            break;
+          if (hasJsonRpc) {
+            args = parts.slice(1);
+          } else {
+            args = [...parts.slice(1), '--json-rpc'];
           }
-
-          const parentDir = path.dirname(currentDir);
-          if (parentDir === currentDir) {
-            // Reached root directory
-            break;
-          }
-          currentDir = parentDir;
-        } catch (error) {
-          // If we can't access a directory, stop trying
-          break;
         }
+        
+        // Don't use shell - we've already expanded variables manually
+        useShell = false;
       }
 
       // Spawn CLI with --json-rpc flag (silently to avoid triggering any updates)

@@ -362,6 +362,29 @@ export const run = async (config: RuntimeConfig, callbacks?: RunCallbacks): Prom
     }
   }
 
+  // Filter to missing snapshots only if requested (in update mode)
+  if (config.missingOnly && config.update) {
+    logger.debug('Filtering to stories with missing snapshots only');
+    const snapshotRoot = config.resolvePath(config.snapshotPath);
+    const storiesWithMissingSnapshots = storiesToTest.filter((story) => {
+      const snapshotId = story.snapshotId!;
+      const snapshotPath = indexManager.getSnapshotPath(snapshotId, snapshotRoot, story.id);
+      const hasSnapshot = fs.existsSync(snapshotPath);
+      return !hasSnapshot; // Only include stories without snapshots
+    });
+
+    const filteredCount = storiesToTest.length - storiesWithMissingSnapshots.length;
+    if (filteredCount > 0) {
+      logger.info(
+        `Filtered to ${storiesWithMissingSnapshots.length} stor${storiesWithMissingSnapshots.length === 1 ? 'y' : 'ies'} with missing snapshots (skipped ${filteredCount} with existing snapshots)`,
+      );
+    } else if (storiesWithMissingSnapshots.length === 0) {
+      logger.info('No stories with missing snapshots found');
+    }
+
+    storiesToTest = storiesWithMissingSnapshots;
+  }
+
   // Discover viewports if enabled
   logger.debug('Detecting viewport configurations');
   const detected = await detectViewports(config);
