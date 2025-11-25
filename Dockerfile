@@ -5,7 +5,8 @@ COPY cli/ ./
 ENV DOCKER_BUILD=1
 RUN npm ci || npm install
 RUN npm run build
-RUN npm install -g .
+# Do not install the CLI globally in the image. We'll invoke the built CLI via `npx` at runtime
+# to avoid a global install and keep the image smaller and more ephemeral.
 
 # After global install, ensure the correct odiff binary is present for arm64
 RUN ARCH=$(uname -m) && \
@@ -40,5 +41,6 @@ RUN ARCH=$(uname -m) && \
     fi
 
 WORKDIR /work
-# Forward all CLI args directly to the CLI
-ENTRYPOINT ["/bin/sh","-lc","exec storybook-visual-regression \"$@\"","--"]
+# Forward all CLI args directly to the built CLI using `npx --no-install` so we don't
+# need a global install. We call the built entrypoint directly from the copied source.
+ENTRYPOINT ["/bin/sh","-lc","exec npx --no-install /opt/svr/src/cli/dist/cli/index.js \"$@\"","--"]
