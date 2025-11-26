@@ -90,6 +90,24 @@ const normalizePatterns = (val?: string | string[]): string[] | undefined => {
   return list.map((s) => s.trim()).filter(Boolean);
 };
 
+/**
+ * Resolve CLI configuration from multiple sources with explicit precedence
+ * 
+ * Configuration Precedence (highest to lowest):
+ * 1. CLI Flags (e.g., --url, --workers, --log-level)
+ * 2. Environment Variables (e.g., SVR_LOG_LEVEL, SVR_NO_PROGRESS, SVR_DEBUG)
+ * 3. Config File (config.json, visual-regression/config.json, or --config path)
+ * 4. Default Configuration (from defaultConfig.ts)
+ * 
+ * Example precedence chain for logLevel:
+ *   1. CLI flag --log-level takes precedence
+ *   2. Environment variable SVR_LOG_LEVEL if no CLI flag
+ *   3. Config file logLevel property if neither above
+ *   4. Default of 'info' if nothing specified
+ * 
+ * @param flags - Parsed CLI flags
+ * @returns RuntimeConfig with resolved values and configuration metadata
+ */
 export const resolveConfig = (flags: CliFlags): RuntimeConfig => {
   const base = defaultConfig();
 

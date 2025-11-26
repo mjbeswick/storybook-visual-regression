@@ -87,11 +87,30 @@ export class SnapshotIndexManager {
 
         return { version: 1, entries };
       } catch (error) {
-        // If index is corrupted, start fresh
-        console.warn(`Failed to load index.jsonl: ${error}, starting fresh`);
+        // If index is corrupted, back it up and start fresh
+        this.backupCorruptedIndex(error);
       }
     }
     return { version: 1, entries: [] };
+  }
+
+  /**
+   * Back up corrupted index file instead of silently discarding it
+   * This preserves data for recovery and debugging
+   */
+  private backupCorruptedIndex(error: unknown): void {
+    try {
+      if (fs.existsSync(this.indexPath)) {
+        const timestamp = Date.now();
+        const backupPath = `${this.indexPath}.backup.${timestamp}`;
+        fs.renameSync(this.indexPath, backupPath);
+        console.warn(
+          `Index file corrupted, backed up to: ${backupPath}. Error: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    } catch (backupError) {
+      console.error(`Failed to back up corrupted index: ${backupError}`);
+    }
   }
 
   /**

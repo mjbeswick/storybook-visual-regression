@@ -13,7 +13,24 @@ export interface Logger {
   trace: (...args: unknown[]) => void;
 }
 
-// Enhanced logging system with colored output based on log level
+/**
+ * Structured logging system with colored output based on log level
+ * 
+ * Log Levels (in order of verbosity):
+ * - silent: No output
+ * - error: Only errors
+ * - warn: Errors and warnings
+ * - info: Normal operational information (default)
+ * - debug: Detailed debugging information, structured logs
+ * 
+ * Structured Logging:
+ * For debugging, pass objects as additional arguments:
+ *   logger.debug('story_test_started', { storyId, viewport, mode })
+ *   logger.debug('Test completed', { storyId, duration, result: 'passed' })
+ * 
+ * The logger will output these for debug level and above.
+ * Objects help with tracing execution flow and correlating events.
+ */
 export const createLogger = (logLevel: LogLevel): Logger => {
   const levels = ['silent', 'error', 'warn', 'info', 'debug'];
   const currentLevel = levels.indexOf(logLevel);

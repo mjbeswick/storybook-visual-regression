@@ -65,39 +65,23 @@ function parseFixDate(value: boolean | string | number | undefined): Date {
   return new Date(DEFAULT_FIX_DATE);
 }
 
-// Helper to remove empty directories recursively (currently unused but kept for potential future use)
-function _removeEmptyDirectories(dirPath: string, stopAt?: string): void {
-  try {
-    // Normalize paths for comparison (handle different path separators)
-    const normalizedDirPath = path.normalize(dirPath);
-    const normalizedStopAt = stopAt ? path.normalize(stopAt) : undefined;
-
-    // Stop if we've reached the stopAt directory (e.g., resultsPath root)
-    if (normalizedStopAt && normalizedDirPath === normalizedStopAt) {
-      return;
-    }
-
-    // Check if directory exists and is empty
-    if (fs.existsSync(normalizedDirPath)) {
-      const files = fs.readdirSync(normalizedDirPath);
-      if (files.length === 0) {
-        // Directory is empty, remove it
-        fs.rmdirSync(normalizedDirPath);
-        // Recursively try to remove parent directory
-        const parentDir = path.dirname(normalizedDirPath);
-        if (parentDir !== normalizedDirPath) {
-          // Only recurse if we haven't reached the root
-          _removeEmptyDirectories(parentDir, stopAt);
-        }
-      }
-    }
-  } catch (_error) {
-    // Ignore errors (e.g., directory doesn't exist, permission issues)
-    // This is cleanup code, so we don't want to throw
-  }
-}
-
-// Helper to compare images in memory using pixelmatch
+/**
+ * Helper to compare images in memory using pixelmatch
+ * 
+ * Algorithm:
+ * 1. Decodes both actual and expected PNG buffers to pixel data
+ * 2. Compares pixels using pixelmatch with per-pixel threshold (5% color difference)
+ * 3. Counts differing pixels and calculates percentage of total pixels
+ * 4. Determines match based on configured threshold (0-100%)
+ * 5. Generates visual diff image if pixels differ
+ * 
+ * Performance: Entire operation happens in-memory without file I/O
+ * 
+ * @param actualBuffer - PNG bytes from actual screenshot
+ * @param expectedBuffer - PNG bytes from baseline screenshot
+ * @param threshold - Maximum acceptable difference percentage (0-100%)
+ * @returns Match result with diff metrics and optional diff image buffer
+ */
 type InMemoryComparisonResult = {
   match: boolean;
   diffPixels: number;
@@ -283,6 +267,31 @@ type StoryResult = {
 type StoryResults = Record<string, StoryResult>;
 
 // Optimized worker pool for handling thousands of URLs
+/**
+ * WorkerPool - Parallel test execution engine
+ * 
+ * Algorithm:
+ * 1. Maintains a queue of discovered stories to test
+ * 2. Spawns up to maxWorkers concurrent browser instances
+ * 3. Each worker:
+ *    - Launches a Playwright browser instance
+ *    - Navigates to a Storybook story
+ *    - Captures a screenshot
+ *    - Compares to baseline snapshot (in-memory)
+ *    - Reports results and cleans up resources
+ * 4. Monitors system resources:
+ *    - CPU usage (rolling average for display)
+ *    - Memory pressure (throttles spawning at >85% heap usage)
+ *    - Test timeouts (generates DOM dumps for debugging)
+ * 5. Supports cancellation and max-failures early exit
+ * 
+ * Features:
+ * - Dynamic viewport selection from Storybook globals
+ * - In-memory image comparison (no temporary files)
+ * - Progress tracking with ETA estimation
+ * - Graceful resource cleanup on exit
+ * - Memory-aware worker throttling
+ */
 class WorkerPool {
   private queue: DiscoveredStory[] = [];
   private activeWorkers = 0;
@@ -797,14 +806,36 @@ class WorkerPool {
     });
   }
 
+  /**
+   * Check if we should throttle workers based on memory pressure
+   * Returns true if memory usage is too high and we should avoid spawning new workers
+   */
+  private shouldThrottleWorkers(): boolean {
+    const usage = process.memoryUsage();
+    const heapUsedPercent = (usage.heapUsed / usage.heapTotal) * 100;
+    const heapLimitPercent = (usage.heapUsed / usage.heapTotal) * 100;
+
+    // Throttle if heap usage exceeds 85% of total or 90% of limit
+    const shouldThrottle = heapUsedPercent > 85 || heapLimitPercent > 90;
+
+    if (shouldThrottle && this.activeWorkers < this.maxWorkers) {
+      this.log.debug(
+        `Memory pressure detected (heap: ${heapUsedPercent.toFixed(1)}%, limit: ${heapLimitPercent.toFixed(1)}%), throttling worker spawn`,
+      );
+    }
+
+    return shouldThrottle;
+  }
+
   private spawnWorker(staggerLaunch = false) {
     // Continuously spawn workers until we reach capacity or run out of work
-    // Stop spawning if maxFailures is reached or cancelled
+    // Stop spawning if maxFailures is reached, cancelled, or memory pressure detected
     while (
       this.queue.length > 0 &&
       this.activeWorkers < this.maxWorkers &&
       !this.maxFailuresReached &&
-      !this.cancelled
+      !this.cancelled &&
+      !this.shouldThrottleWorkers()
     ) {
       this.activeWorkers++;
       const story = this.queue.shift()!;
@@ -2214,13 +2245,15 @@ export async function runParallelTests(options: {
       spinner.clear();
       log.info(line);
       if (!keepStopped) {
-        spinner = ora(spinnerText).start();
+        // Resume the existing spinner instance instead of creating a new one
+        // This prevents animation restart
+        spinner.start();
       } else {
         // For errors, resume spinner after a short delay to ensure error is visible
         // The spinner will also resume naturally on the next progress update
         setTimeout(() => {
           if (spinner && !spinner.isSpinning) {
-            spinner = ora(spinnerText).start();
+            spinner.start();
           }
         }, 100);
       }
@@ -2345,7 +2378,12 @@ export async function runParallelTests(options: {
     }
 
     spinnerText = ` ${statusParts.filter(Boolean).join(` ${chalk.dim('•')} `)}`;
-    spinner.text = spinnerText;
+    
+    // Update spinner text without restarting animation
+    // Check if text has changed to avoid unnecessary updates that restart the spinner
+    if (spinner.text !== spinnerText) {
+      spinner.text = spinnerText;
+    }
   };
 
   // Progress callback
